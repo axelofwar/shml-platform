@@ -1,0 +1,18 @@
+[Unit]
+Description=Ray Compute and MLflow Platform Services
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=axelofwar
+WorkingDirectory=/home/axelofwar/Desktop/Projects
+ExecStart=/home/axelofwar/Desktop/Projects/start_all_services.sh
+ExecStop=/home/axelofwar/Desktop/Projects/stop_all_services.sh
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

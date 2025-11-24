@@ -1,0 +1,582 @@
+# Ray Compute - ML Job Orchestration System
+
+**GPU-accelerated job orchestration for training, inference, and automated retraining pipelines**
+
+Integrated with MLflow for experiment tracking and model registry.
+
+---
+
+## 🎯 Features
+
+- ✅ **GPU-Aware Scheduling** - Automatic RTX 2070 resource allocation
+- ✅ **Dynamic Auto-Scaling** - Scale workers based on job queue
+- ✅ **Docker Isolation** - Containerized jobs for security and reproducibility
+- ✅ **MLflow Integration** - Automatic experiment tracking and model registry
+- ✅ **Web UI + REST API + Python SDK** - Multiple interfaces for job management
+- ✅ **YOLO Support** - Pre-configured for object detection workloads
+- ✅ **Pipeline Orchestration** - Multi-stage workflows (train → evaluate → retrain)
+- ✅ **Real-time Monitoring** - Ray Dashboard + custom job monitoring
+
+---
+
+## 📋 System Requirements
+
+- Ubuntu 20.04 LTS
+- NVIDIA RTX 2070 (or compatible GPU)
+- 24 CPU cores (AMD Ryzen 9 3900X)
+- 15GB RAM
+- 1.7TB available storage
+- Existing MLflow server running on port 8080
+
+---
+
+## 🚀 Quick Start
+
+### Phase 1: Install Foundation (One-time setup)
+
+```bash
+cd /home/axelofwar/Projects/mlflow-server/ray_compute
+
+# 1. Install NVIDIA drivers
+./scripts/install_nvidia_drivers.sh
+
+# REBOOT REQUIRED after driver installation
+sudo reboot
+
+# 2. After reboot, verify GPU
+nvidia-smi
+
+# 3. Install Docker + NVIDIA Container Toolkit
+./scripts/install_docker_nvidia.sh
+
+# Log out and back in for docker group membership
+# Or run: newgrp docker
+
+# 4. Install Ray and ML libraries
+./scripts/install_ray_cluster.sh
+```
+
+### Phase 2: Build Docker Images
+
+```bash
+cd docker
+./build_images.sh
+
+# This builds two images:
+# - mlflow-compute-gpu:latest (PyTorch + CUDA + YOLO)
+# - mlflow-compute-cpu:latest (CPU-only for data processing)
+```
+
+### Phase 3: Start Ray Cluster
+
+```bash
+cd ../scripts
+./start_ray_head.sh
+
+# Ray Dashboard will be available at:
+# http://localhost:8265
+```
+
+### Phase 4: Start API Server
+
+```bash
+cd ../api
+python3 server.py
+
+# API will be available at:
+# http://localhost:8266
+# Docs: http://localhost:8266/docs
+```
+
+### Phase 5: Submit Your First Job
+
+```python
+from api.client import RayComputeClient, JobType
+
+client = RayComputeClient()
+
+# Simple GPU test job
+job_code = """
+import torch
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"GPU: {torch.cuda.get_device_name(0)}")
+print(f"CUDA version: {torch.version.cuda}")
+"""
+
+job_id = client.submit_job(
+    name="gpu-test",
+    code=job_code,
+    job_type=JobType.CUSTOM,
+    cpu=2,
+    memory_gb=2,
+    gpu=1,
+    mlflow_experiment="test-jobs"
+)
+
+print(f"Job submitted: {job_id}")
+
+# Wait for completion
+result = client.wait_for_job(job_id)
+print(f"Status: {result['status']}")
+
+# Get logs
+logs = client.get_logs(job_id)
+print(logs)
+```
+
+---
+
+## 📖 Usage Examples
+
+### Example 1: YOLO Training
+
+```bash
+cd pipelines
+python3 yolo_training.py
+```
+
+This will:
+
+1. Submit a YOLO training job to GPU worker
+2. Train for 10 epochs on your dataset
+3. Log metrics to MLflow experiment
+4. Save and register model in MLflow Model Registry
+5. Return trained model path
+
+**Monitor:**
+
+- Ray Dashboard: http://localhost:8265
+- MLflow UI: http://localhost:8080
+
+### Example 2: Batch Inference
+
+```bash
+python3 yolo_inference.py
+```
+
+This will:
+
+1. Load trained model from MLflow
+2. Run batch inference on image directory
+3. Save detection results
+4. Log inference metrics to MLflow
+
+### Example 3: Dataset Curation
+
+```bash
+python3 dataset_curation.py
+```
+
+This will:
+
+1. Analyze inference failures
+2. Cluster failure patterns using HDBSCAN
+3. Curate dataset for retraining
+4. Log curated dataset to MLflow
+
+### Example 4: Automated Retraining Pipeline
+
+```bash
+python3 auto_retraining_pipeline.py
+```
+
+This runs a complete 4-stage pipeline:
+
+1. **Inference**: Validate current model
+2. **Analysis**: Identify if retraining needed
+3. **Curation**: Extract hard examples from failures
+4. **Retraining**: Train new model version
+
+---
+
+## 🔧 Configuration
+
+### Resource Allocation
+
+Edit `/opt/ray/ray_config.yaml` to adjust resources:
+
+```yaml
+ray.worker.gpu:
+  resources:
+    CPU: 8 # Cores for GPU jobs
+    memory: 8GB # RAM for GPU jobs
+    GPU: 1 # RTX 2070
+
+ray.worker.cpu:
+  resources:
+    CPU: 6 # Cores for CPU jobs
+    memory: 4GB # RAM for CPU jobs
+    GPU: 0 # No GPU
+```
+
+### Job Defaults
+
+In your code, adjust `ResourceRequirements`:
+
+```python
+from api.client import ResourceRequirements
+
+# Custom resources
+requirements = ResourceRequirements(
+    cpu=12,
+    memory_gb=10,
+    gpu=1,
+    timeout_minutes=360
+)
+```
+
+---
+
+## 📊 Monitoring
+
+### Check System Status
+
+```bash
+./scripts/check_status.sh
+```
+
+Displays:
+
+- Ray cluster status
+- Available resources (CPU/GPU/memory)
+- Active jobs
+- GPU utilization
+- System metrics
+
+### Web Dashboards
+
+| Service       | URL                        | Purpose                         |
+| ------------- | -------------------------- | ------------------------------- |
+| Ray Dashboard | http://localhost:8265      | Job monitoring, logs, resources |
+| API Docs      | http://localhost:8266/docs | REST API documentation          |
+| MLflow UI     | http://localhost:8080      | Experiments, models, artifacts  |
+
+### Resource Usage
+
+```python
+from api.client import RayComputeClient
+
+client = RayComputeClient()
+resources = client.get_resources()
+
+print(f"GPU Utilization: {resources['gpus'][0]['gpu_utilization']}%")
+print(f"GPU Memory Used: {resources['gpus'][0]['memory_used_mb']} MB")
+print(f"Available CPUs: {resources['available']['cpu']}")
+```
+
+---
+
+## 🔌 API Reference
+
+### REST API Endpoints
+
+**Submit Job:**
+
+```bash
+curl -X POST http://localhost:8266/jobs/submit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-job",
+    "job_type": "training",
+    "code": "import torch; print(torch.cuda.is_available())",
+    "requirements": {
+      "cpu": 4,
+      "memory_gb": 8,
+      "gpu": 1
+    }
+  }'
+```
+
+**Get Job Status:**
+
+```bash
+curl http://localhost:8266/jobs/{job_id}
+```
+
+**List Jobs:**
+
+```bash
+curl http://localhost:8266/jobs?status=RUNNING
+```
+
+**Get Logs:**
+
+```bash
+curl http://localhost:8266/jobs/{job_id}/logs
+```
+
+**Cancel Job:**
+
+```bash
+curl -X POST http://localhost:8266/jobs/{job_id}/cancel
+```
+
+### Python SDK
+
+```python
+from api.client import RayComputeClient, submit_training_job
+
+# Quick submit with defaults
+job_id = submit_training_job(
+    name="quick-train",
+    code="print('Training...')",
+    mlflow_experiment="experiments"
+)
+
+# Advanced usage
+client = RayComputeClient()
+
+# Submit custom job
+job_id = client.submit_job(
+    name="custom-job",
+    code=open('my_script.py').read(),
+    job_type=JobType.CUSTOM,
+    cpu=8,
+    gpu=1,
+    env_vars={"DATA_PATH": "/data"},
+    arguments={"epochs": 100}
+)
+
+# Monitor progress
+while True:
+    job = client.get_job(job_id)
+    print(f"Status: {job['status']}")
+    if job['status'] in ['SUCCEEDED', 'FAILED']:
+        break
+    time.sleep(5)
+
+# Get results
+logs = client.get_logs(job_id)
+print(logs)
+```
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│             CLIENT INTERFACES                    │
+│  Web UI | REST API | Python SDK | CLI            │
+└────────────────┬────────────────────────────────┘
+                 │ Tailscale VPN
+┌────────────────▼────────────────────────────────┐
+│           RAY CLUSTER                            │
+│  ┌──────────────────────────────────────────┐   │
+│  │  Ray Head (Scheduler)                    │   │
+│  │  - Job queue management                  │   │
+│  │  - Resource allocation                   │   │
+│  │  - Auto-scaling                          │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────┐    ┌──────────────┐          │
+│  │ GPU Worker   │    │ CPU Worker   │          │
+│  │ RTX 2070     │    │ 12 cores     │          │
+│  │ Docker       │    │ Docker       │          │
+│  └──────────────┘    └──────────────┘          │
+└─────────────────────────────────────────────────┘
+                 │
+┌────────────────▼────────────────────────────────┐
+│         MLFLOW SERVER (EXISTING)                 │
+│  PostgreSQL | Artifacts | Model Registry        │
+└──────────────────────────────────────────────────┘
+```
+
+### Resource Management
+
+**GPU Jobs** (Training, Inference):
+
+- 1 GPU (RTX 2070 - 8GB VRAM)
+- 8 CPU cores
+- 8GB RAM
+- Docker: `mlflow-compute-gpu:latest`
+
+**CPU Jobs** (Dataset Curation, Preprocessing):
+
+- 0 GPU
+- 12 CPU cores
+- 6GB RAM
+- Docker: `mlflow-compute-cpu:latest`
+
+**System Reserved**:
+
+- 4 CPU cores
+- 3GB RAM
+- For Ray head, MLflow, OS
+
+### Auto-Scaling Logic
+
+```python
+if len(queue) > 0 and requires_gpu:
+    spawn_gpu_worker()
+elif len(queue) > 0:
+    spawn_cpu_worker()
+elif idle_time > 10_minutes:
+    kill_idle_workers()
+```
+
+---
+
+## 🔐 Security
+
+### Current Setup (Single User)
+
+- ✅ Tailscale VPN only (no public access)
+- ✅ Docker container isolation
+- ✅ Resource limits enforced
+- ✅ Filesystem sandboxing
+
+### Future: Multi-User
+
+Add authentication to API:
+
+```python
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer
+
+security = HTTPBearer()
+
+@app.post("/jobs/submit")
+async def submit_job(
+    job: JobSubmission,
+    token: str = Depends(security)
+):
+    # Validate token
+    user = validate_token(token)
+
+    # Check user quota
+    if not check_quota(user):
+        raise HTTPException(403, "Quota exceeded")
+
+    # Submit job...
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### GPU Not Detected
+
+```bash
+# Check NVIDIA drivers
+nvidia-smi
+
+# If not working, reinstall
+./scripts/install_nvidia_drivers.sh
+sudo reboot
+
+# Test in Docker
+docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu20.04 nvidia-smi
+```
+
+### Ray Cluster Not Starting
+
+```bash
+# Check Ray status
+ray status
+
+# Restart Ray
+./scripts/stop_ray.sh
+./scripts/start_ray_head.sh
+
+# Check logs
+cat /opt/ray/logs/ray_*.log
+```
+
+### Job Stuck in PENDING
+
+```bash
+# Check available resources
+./scripts/check_status.sh
+
+# View Ray dashboard
+firefox http://localhost:8265
+
+# Check if workers are running
+ray status
+```
+
+### Docker Permission Denied
+
+```bash
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in
+# Or run:
+newgrp docker
+```
+
+---
+
+## 📚 Documentation
+
+- **API Documentation**: http://localhost:8266/docs
+- **Ray Documentation**: https://docs.ray.io
+- **MLflow Documentation**: https://mlflow.org/docs/latest/index.html
+- **YOLO Documentation**: https://docs.ultralytics.com
+
+---
+
+## 🛠️ Maintenance
+
+### Update Docker Images
+
+```bash
+cd docker
+./build_images.sh
+```
+
+### Restart Services
+
+```bash
+# Restart Ray
+./scripts/stop_ray.sh
+./scripts/start_ray_head.sh
+
+# Restart API
+pkill -f "python3 server.py"
+cd api && python3 server.py &
+```
+
+### Clean Up Old Jobs
+
+```bash
+# Delete completed jobs
+python3 -c "
+from api.client import RayComputeClient
+client = RayComputeClient()
+jobs = client.list_jobs(status='SUCCEEDED')
+for job in jobs:
+    client.delete_job(job['job_id'])
+"
+```
+
+---
+
+## 🚦 Next Steps
+
+1. **Test GPU Access**: Run example GPU test job
+2. **Train YOLO Model**: Adapt `yolo_training.py` to your dataset
+3. **Setup Automated Retraining**: Schedule `auto_retraining_pipeline.py`
+4. **Build Web UI**: Deploy React dashboard (Phase 4)
+5. **Enable Multi-User**: Add authentication and quotas
+
+---
+
+## 📞 Support
+
+For issues or questions:
+
+1. Check Ray logs: `cat /opt/ray/logs/ray_*.log`
+2. Check API logs: `journalctl -u ray-compute-api -f`
+3. Check system resources: `./scripts/check_status.sh`
+4. Review Ray Dashboard: http://localhost:8265
+
+---
+
+**Status**: Phase 1-3 Complete ✅  
+**Next**: Phase 4 (Web UI Development)  
+**System**: Ready for training and inference jobs
+
+Enjoy your GPU-accelerated ML compute cluster! 🚀

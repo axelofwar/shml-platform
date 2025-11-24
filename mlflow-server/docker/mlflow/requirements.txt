@@ -1,0 +1,31 @@
+# Core MLflow
+mlflow==2.17.2
+gunicorn==23.0.0
+gevent==24.2.1
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+
+# Compression
+zstandard==0.22.0
+
+# Validation & Schema
+jsonschema==4.20.0
+pydantic==2.5.2
+
+# Monitoring & Metrics
+prometheus-client==0.19.0
+psutil==5.9.6
+
+# Caching
+redis==5.0.1
+hiredis==2.3.2
+
+# Security & Privacy
+cryptography==41.0.7
+
+# Utilities
+python-dotenv==1.0.0
+pyyaml==6.0.1
+click==8.1.7

@@ -1,0 +1,51 @@
+# Docker configuration
+docker-compose.override.yml
+.dockerignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Secrets
+secrets/*.txt
+secrets/*.key
+secrets/*.pem
+!secrets/README.md
+
+# Data directories (persistent volumes)
+data/
+backups/
+logs/
+
+# SSL certificates
+docker/nginx/ssl/*.pem
+docker/nginx/ssl/*.key
+docker/nginx/ssl/*.crt
+
+# Deployment info
+DEPLOYMENT_INFO.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db

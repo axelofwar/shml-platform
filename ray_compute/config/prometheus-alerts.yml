@@ -1,0 +1,107 @@
+groups:
+  - name: ray_compute_alerts
+    interval: 30s
+    rules:
+      # Storage alerts
+      - alert: StorageAlmostFull
+        expr: (node_filesystem_avail_bytes{mountpoint="/opt/ray"} / node_filesystem_size_bytes{mountpoint="/opt/ray"}) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Storage is 90% full"
+          description: "Ray compute storage is at {{ $value | humanizePercentage }} capacity"
+
+      - alert: StorageCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/opt/ray"} / node_filesystem_size_bytes{mountpoint="/opt/ray"}) < 0.05
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Storage is 95% full - CRITICAL"
+          description: "Ray compute storage is at {{ $value | humanizePercentage }} capacity. Immediate action required!"
+
+      # GPU alerts
+      - alert: GPUTemperatureHigh
+        expr: nvidia_gpu_temperature_celsius > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature is high"
+          description: "GPU {{ $labels.gpu }} temperature is {{ $value }}°C"
+
+      - alert: GPUTemperatureCritical
+        expr: nvidia_gpu_temperature_celsius > 85
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU temperature is CRITICAL"
+          description: "GPU {{ $labels.gpu }} temperature is {{ $value }}°C. Throttling may occur!"
+
+      - alert: GPUMemoryHigh
+        expr: (nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes) > 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory usage is high"
+          description: "GPU {{ $labels.gpu }} memory is {{ $value | humanizePercentage }} full"
+
+      # System resource alerts
+      - alert: HighCPUUsage
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # Service health alerts
+      - alert: RayComputeAPIDown
+        expr: up{job="ray-compute-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ray Compute API is down"
+          description: "The Ray Compute API has been down for more than 2 minutes"
+
+      - alert: RayDashboardDown
+        expr: up{job="ray-dashboard"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ray Dashboard is down"
+          description: "The Ray Dashboard has been down for more than 2 minutes"
+
+      - alert: MLflowDown
+        expr: up{job="mlflow"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MLflow server is down"
+          description: "The MLflow server has been down for more than 2 minutes"
+
+      # Job-specific alerts (will be added by API)
+      - alert: LongRunningJob
+        expr: ray_job_runtime_seconds > 518400  # 6 days (approaching 7-day limit)
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job approaching timeout"
+          description: "Job {{ $labels.job_id }} has been running for {{ $value | humanizeDuration }} (approaching 7-day limit)"
