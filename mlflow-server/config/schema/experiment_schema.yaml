@@ -1,0 +1,147 @@
+# PII-PRO MLflow Experiment Schema
+# Privacy-focused computer vision model tracking for face/license plate detection
+
+experiments:
+  Development-Training:
+    required_tags:
+      - model_type        # "yolov8", "resnet50", "mctnn", etc.
+      - dataset_version   # "wider-faces-v1.2", "custom-v3", etc.
+      - developer         # Developer username
+    recommended_tags:
+      - project_name      # "face-detection", "license-plate", "audio-dmca", "music-gen"
+      - hardware          # "rtx3090", "a100", "cpu-only"
+      - input_resolution  # "1920x1080", "1280x720", "640x480"
+    required_metrics:
+      - recall            # CRITICAL for privacy (minimize false negatives)
+      - accuracy
+      - precision
+      - f1_score
+    recommended_metrics:
+      - train_loss
+      - val_loss
+      - false_negative_rate  # Privacy critical
+      - training_time_hours
+
+  Staging-Model-Comparison:
+    required_tags:
+      - baseline_model    # "yolov5s", "resnet50", "previous-v1.2"
+      - candidate_model   # New model being tested
+      - comparison_type   # "baseline-comparison", "ab-test"
+    recommended_tags:
+      - test_resolution   # Resolution used for comparison
+      - test_dataset      # Dataset used for testing
+    required_metrics:
+      - recall_improvement       # Delta vs baseline
+      - accuracy_improvement
+      - fps_improvement          # Performance delta
+    recommended_metrics:
+      - precision_improvement
+      - false_negative_reduction # Privacy improvement
+      - memory_reduction_mb
+      - inference_speedup_percent
+
+  Performance-Benchmarking:
+    required_tags:
+      - resolution        # "1920x1080", "1280x720", "640x480", "3840x2160"
+      - hardware          # Hardware configuration
+      - optimization      # "fp32", "fp16", "int8", "tensorrt", "onnx"
+    recommended_tags:
+      - batch_testing     # "false" (real-time, single frame)
+      - model_version     # Model version being benchmarked
+    required_metrics:
+      - fps               # Frames per second (target: 50-60)
+      - avg_latency_ms    # Average inference time
+      - p95_latency_ms    # 95th percentile latency
+      - p99_latency_ms    # 99th percentile latency
+      - recall            # Must maintain high recall
+    recommended_metrics:
+      - gpu_memory_mb
+      - gpu_utilization_percent
+      - cpu_usage_percent
+      - power_consumption_watts
+      - frames_per_watt   # Efficiency metric
+
+  Production-Candidates:
+    required_tags:
+      - model_version     # Semantic version "1.2.0"
+      - privacy_validated # "true"/"false" - critical for PII-PRO
+      - approver          # Who approved for production
+    recommended_tags:
+      - deployment_target # "edge-device", "cloud", "mobile"
+      - min_fps_requirement # "50", "60"
+      - issue_tracker     # GitHub/Jira ticket
+    required_metrics:
+      - recall            # Production threshold (e.g., >0.95)
+      - fps               # Production threshold (50-60)
+      - false_negative_rate # Must be <0.05
+      - accuracy
+      - precision
+    recommended_metrics:
+      - model_size_mb
+      - startup_time_ms
+      - memory_footprint_mb
+
+  Dataset-Registry:
+    required_tags:
+      - dataset_name      # "wider-faces", "custom-pii-dataset"
+      - dataset_version   # "v1.2", "2024-11-22"
+      - split_type        # "train", "val", "test", "full"
+    recommended_tags:
+      - source_url        # Original dataset source
+      - preprocessing     # "augmented", "normalized", "raw"
+      - annotation_format # "yolo", "coco", "pascal-voc"
+      - privacy_scrubbed  # "true"/"false" - PII removed from metadata
+    recommended_metrics:
+      - num_images
+      - num_annotations
+      - avg_faces_per_image
+      - size_gb
+
+# Model Registry Schema for PII-PRO
+model_registry:
+  required_tags:
+    - model_family      # "face-detection", "license-plate", "audio-dmca", "music-gen"
+    - privacy_validated # "true"/"false" - CRITICAL
+    - technical_owner   # Maintainer
+  recommended_tags:
+    - min_fps           # Minimum FPS requirement
+    - target_hardware   # Deployment hardware
+    - edge_compatible   # Can run on edge devices
+
+# PII-PRO Artifact Organization
+global:
+  artifact_organization:
+    plots:
+      - confusion_matrix.png
+      - precision_recall_curve.png
+      - fps_by_resolution.png         # FPS across resolutions
+      - latency_distribution.png      # Latency histogram
+      - detection_examples.png        # Sample detections
+    datasets:
+      - train_sample.zip              # Sample training data
+      - val_sample.zip                # Sample validation data
+      - test_sample.zip               # Sample test data
+      - labels_statistics.json        # Dataset statistics
+    reports:
+      - model_card.md                 # Model documentation
+      - privacy_assessment.md         # Privacy analysis
+      - benchmark_report.html         # Performance report
+      - comparison_report.html        # A/B test results
+    models:
+      - model.pt                      # PyTorch checkpoint
+      - model.onnx                    # ONNX export (optional)
+      - model_config.yaml             # Model configuration
+      - requirements.txt              # Dependencies
+      
+  # FPS benchmarking resolutions (priority order)
+  standard_resolutions:
+    - "3840x2160"  # 4K
+    - "1920x1080"  # Full HD
+    - "1280x720"   # HD
+    - "640x480"    # SD
+    
+  # Privacy requirements
+  privacy_requirements:
+    min_recall: 0.95                  # Minimize false negatives
+    max_false_negative_rate: 0.05     # Critical for PII detection
+    pii_scrubbing: true               # Remove PII from artifacts

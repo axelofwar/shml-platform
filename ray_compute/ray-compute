@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""
+Simple CLI for Ray Compute
+Quick job submission and monitoring from command line
+"""
+
+import argparse
+import sys
+import json
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from api.client import RayComputeClient, JobType
+
+
+def submit_command(args):
+    """Submit a job"""
+    client = RayComputeClient(args.api_url)
+    
+    # Read code from file or stdin
+    if args.code_file:
+        with open(args.code_file, 'r') as f:
+            code = f.read()
+    else:
+        code = args.code
+    
+    # Parse env vars
+    env_vars = {}
+    if args.env:
+        for env in args.env:
+            key, value = env.split('=', 1)
+            env_vars[key] = value
+    
+    job_id = client.submit_job(
+        name=args.name,
+        code=code,
+        job_type=JobType(args.type),
+        cpu=args.cpu,
+        memory_gb=args.memory,
+        gpu=args.gpu,
+        timeout_minutes=args.timeout,
+        mlflow_experiment=args.experiment,
+        env_vars=env_vars
+    )
+    
+    print(f"✓ Job submitted: {job_id}")
+    
+    if args.wait:
+        print("Waiting for job to complete...")
+        result = client.wait_for_job(job_id)
+        print(f"Status: {result['status']}")
+        
+        if args.logs:
+            logs = client.get_logs(job_id)
+            print("\n" + "=" * 60)
+            print("LOGS")
+            print("=" * 60)
+            print(logs)
+
+
+def list_command(args):
+    """List jobs"""
+    client = RayComputeClient(args.api_url)
+    
+    jobs = client.list_jobs(
+        status=args.status,
+        job_type=JobType(args.type) if args.type else None,
+        limit=args.limit
+    )
+    
+    if args.json:
+        print(json.dumps(jobs, indent=2))
+    else:
+        print(f"{'Job ID':<40} {'Name':<30} {'Type':<15} {'Status':<10}")
+        print("=" * 100)
+        for job in jobs:
+            print(f"{job['job_id']:<40} {job['name']:<30} {job['job_type']:<15} {job['status']:<10}")
+
+
+def status_command(args):
+    """Get job status"""
+    client = RayComputeClient(args.api_url)
+    
+    job = client.get_job(args.job_id)
+    
+    if args.json:
+        print(json.dumps(job, indent=2))
+    else:
+        print(f"Job ID:      {job['job_id']}")
+        print(f"Name:        {job['name']}")
+        print(f"Type:        {job['job_type']}")
+        print(f"Status:      {job['status']}")
+        print(f"Created:     {job['created_at']}")
+        print(f"Started:     {job.get('started_at', 'N/A')}")
+        print(f"Ended:       {job.get('ended_at', 'N/A')}")
+        print(f"Resources:   CPU={job['resources']['cpu']}, RAM={job['resources']['memory_gb']}GB, GPU={job['resources']['gpu']}")
+        if job.get('error'):
+            print(f"Error:       {job['error']}")
+
+
+def logs_command(args):
+    """Get job logs"""
+    client = RayComputeClient(args.api_url)
+    
+    logs = client.get_logs(args.job_id)
+    print(logs)
+
+
+def cancel_command(args):
+    """Cancel a job"""
+    client = RayComputeClient(args.api_url)
+    
+    result = client.cancel_job(args.job_id)
+    print(f"✓ Job cancelled: {result['job_id']}")
+
+
+def resources_command(args):
+    """Get cluster resources"""
+    client = RayComputeClient(args.api_url)
+    
+    resources = client.get_resources()
+    
+    if args.json:
+        print(json.dumps(resources, indent=2))
+    else:
+        print("Cluster Resources:")
+        print(f"  Total CPUs:    {resources['cluster_total']['cpu']}")
+        print(f"  Available:     {resources['available']['cpu']}")
+        print(f"  Total Memory:  {resources['cluster_total']['memory_bytes'] / (1024**3):.1f} GB")
+        print(f"  Available:     {resources['available']['memory_bytes'] / (1024**3):.1f} GB")
+        print(f"  Total GPUs:    {resources['cluster_total']['gpu']}")
+        print(f"  Available:     {resources['available']['gpu']}")
+        
+        if resources['gpus']:
+            print("\nGPU Status:")
+            for gpu in resources['gpus']:
+                print(f"  GPU {gpu['id']}: {gpu['name']}")
+                print(f"    Utilization:  {gpu['gpu_utilization']:.1f}%")
+                print(f"    Memory:       {gpu['memory_used_mb']:.0f} / {gpu['memory_total_mb']:.0f} MB")
+                print(f"    Temperature:  {gpu['temperature']}°C")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Ray Compute CLI - Job orchestration tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('--api-url', default='http://localhost:8266', help='API server URL')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Command')
+    
+    # Submit command
+    submit_parser = subparsers.add_parser('submit', help='Submit a job')
+    submit_parser.add_argument('--name', required=True, help='Job name')
+    submit_parser.add_argument('--code', help='Python code to execute')
+    submit_parser.add_argument('--code-file', help='Python file to execute')
+    submit_parser.add_argument('--type', choices=['training', 'inference', 'dataset_curation', 'pipeline', 'custom'], 
+                               default='custom', help='Job type')
+    submit_parser.add_argument('--cpu', type=int, default=4, help='CPU cores')
+    submit_parser.add_argument('--memory', type=int, default=8, help='Memory in GB')
+    submit_parser.add_argument('--gpu', type=int, default=0, help='Number of GPUs')
+    submit_parser.add_argument('--timeout', type=int, default=120, help='Timeout in minutes')
+    submit_parser.add_argument('--experiment', help='MLflow experiment name')
+    submit_parser.add_argument('--env', action='append', help='Environment variable (KEY=VALUE)')
+    submit_parser.add_argument('--wait', action='store_true', help='Wait for completion')
+    submit_parser.add_argument('--logs', action='store_true', help='Show logs after completion (requires --wait)')
+    submit_parser.set_defaults(func=submit_command)
+    
+    # List command
+    list_parser = subparsers.add_parser('list', help='List jobs')
+    list_parser.add_argument('--status', help='Filter by status')
+    list_parser.add_argument('--type', help='Filter by type')
+    list_parser.add_argument('--limit', type=int, default=20, help='Max results')
+    list_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    list_parser.set_defaults(func=list_command)
+    
+    # Status command
+    status_parser = subparsers.add_parser('status', help='Get job status')
+    status_parser.add_argument('job_id', help='Job ID')
+    status_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    status_parser.set_defaults(func=status_command)
+    
+    # Logs command
+    logs_parser = subparsers.add_parser('logs', help='Get job logs')
+    logs_parser.add_argument('job_id', help='Job ID')
+    logs_parser.set_defaults(func=logs_command)
+    
+    # Cancel command
+    cancel_parser = subparsers.add_parser('cancel', help='Cancel a job')
+    cancel_parser.add_argument('job_id', help='Job ID')
+    cancel_parser.set_defaults(func=cancel_command)
+    
+    # Resources command
+    resources_parser = subparsers.add_parser('resources', help='Get cluster resources')
+    resources_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    resources_parser.set_defaults(func=resources_command)
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    
+    try:
+        args.func(args)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

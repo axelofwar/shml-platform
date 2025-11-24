@@ -1,0 +1,36 @@
+[Unit]
+Description=Ray Compute Head Node
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=%USER%
+Group=%USER%
+WorkingDirectory=/opt/ray
+
+# Start Ray head node
+ExecStart=/usr/local/bin/ray start --head \
+    --port=6379 \
+    --dashboard-host=0.0.0.0 \
+    --dashboard-port=8265 \
+    --num-cpus=4 \
+    --num-gpus=0 \
+    --object-store-memory=2147483648 \
+    --temp-dir=/opt/ray/tmp \
+    --log-style=pretty
+
+# Stop Ray
+ExecStop=/usr/local/bin/ray stop --force
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ray-head
+
+[Install]
+WantedBy=multi-user.target

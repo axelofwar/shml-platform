@@ -1,0 +1,86 @@
+# .copilotignore
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+.next/
+dist/
+build/
+*.js.map
+*.d.ts.map
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Data directories
+data/
+mlflow_data/
+grafana_data/
+
+# Backups
+backups/
+*.backup
+*.bak
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Large binary files
+*.tar.gz
+*.zip
+*.rar
+
+# Secrets
+secrets/
+*.key
+*.crt
+*.pem
+
+# Documentation that doesn't need AI context
+archived/
+old_docs/
+docs/archived/
+DELIVERY_SUMMARY.md
+IMPLEMENTATION_SUMMARY.md
+
+# Package locks (too large)
+package-lock.json
+yarn.lock
+poetry.lock

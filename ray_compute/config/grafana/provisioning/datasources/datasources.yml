@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+  - name: Ray Prometheus
+    type: prometheus
+    access: proxy
+    url: http://ray-prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+    uid: ray-prometheus
+
+  - name: MLflow Prometheus
+    type: prometheus
+    access: proxy
+    url: http://mlflow-prometheus:9090
+    editable: true
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+    uid: mlflow-prometheus

@@ -1,0 +1,965 @@
+# ML Platform - Unified Docker Compose
+# Complete stack: MLflow Server + Ray Compute Platform + Traefik Gateway
+# 
+# Usage:
+#   docker-compose up -d          # Start all services
+#   docker-compose down           # Stop all services
+#   docker-compose restart        # Restart all services
+#   docker-compose logs -f        # View logs
+#
+# Access:
+#   MLflow UI:        http://localhost/mlflow/
+#   Ray Dashboard:    http://localhost/ray/
+#   Traefik:          http://localhost:8090
+#
+# See ACCESS_URLS.md for complete endpoint reference
+
+version: '3.8'
+
+services:
+  #############################################################################
+  # TRAEFIK API GATEWAY
+  #############################################################################
+  
+  traefik:
+    image: traefik:v2.10
+    container_name: ml-platform-traefik
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    command:
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=ml-platform"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--metrics.prometheus=true"
+      - "--ping=true"
+    ports:
+      - "0.0.0.0:80:80"        # HTTP - bind to all IPv4 interfaces
+      - "0.0.0.0:443:443"      # HTTPS
+      - "0.0.0.0:8090:8080"    # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+
+  #############################################################################
+  # SHARED INFRASTRUCTURE
+  #############################################################################
+  
+  # Shared Redis - Used by MLflow (DB 0) and Ray Compute (DB 1)
+  redis:
+    image: redis:7-alpine
+    container_name: ml-platform-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --appendonly yes --save 60 1000
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ml-platform
+    expose:
+      - "6379"
+
+  #############################################################################
+  # SYSTEM MONITORING EXPORTERS
+  #############################################################################
+  
+  # Node Exporter - Host System Metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ml-platform-node-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - ml-platform
+    expose:
+      - "9100"
+    pid: host
+
+  # cAdvisor - Container Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: ml-platform-cadvisor
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - ml-platform
+    expose:
+      - "8080"
+    privileged: true
+    devices:
+      - /dev/kmsg
+
+  #############################################################################
+  # MLFLOW SERVER STACK
+  #############################################################################
+  
+  # PostgreSQL - MLflow Metadata Storage
+  mlflow-postgres:
+    image: postgres:15-alpine
+    container_name: mlflow-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      POSTGRES_DB: mlflow_db
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD_FILE: /run/secrets/mlflow_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - mlflow-postgres-data:/var/lib/postgresql/data
+      - ./mlflow-server/backups/postgres:/backups
+    secrets:
+      - mlflow_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ml-platform
+    expose:
+      - "5432"
+
+  # MLflow Server with Schema Validation
+  mlflow-server:
+    build:
+      context: ./mlflow-server/docker/mlflow
+      dockerfile: Dockerfile
+    container_name: mlflow-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    expose:
+      - "5000"
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:$${DB_PASSWORD}@mlflow-postgres:5432/mlflow_db
+      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+      MLFLOW_ARTIFACTS_DESTINATION: /mlflow/artifacts
+      MLFLOW_HOST: 0.0.0.0
+      MLFLOW_PORT: 5000
+      MLFLOW_WORKERS: 8
+      MLFLOW_WORKER_CONNECTIONS: 2000
+      MLFLOW_WORKER_TIMEOUT: 3600
+      # Schema validation settings
+      MLFLOW_SCHEMA_VALIDATION: "true"
+      MLFLOW_REQUIRE_METADATA: "true"
+      MLFLOW_AUTO_COMPRESS: "true"
+      MLFLOW_COMPRESSION_THRESHOLD_MB: 10
+      MLFLOW_COMPRESSION_FORMAT: zstd
+      # Privacy settings
+      MLFLOW_ALLOW_REFERENCE_PATHS: "true"
+      MLFLOW_SCAN_SENSITIVE_DATA: "true"
+      # Redis connection (DB 0 for MLflow)
+      REDIS_HOST: ml-platform-redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    volumes:
+      - /mlflow/artifacts:/mlflow/artifacts  # Use host /mlflow/artifacts for test compatibility
+      - mlflow-mlruns:/mlflow/mlruns
+      - ./mlflow-server/docker/mlflow/plugins:/mlflow/plugins
+      - ./mlflow-server/config/schema:/mlflow/schema
+      - ./mlflow-server/scripts:/mlflow/scripts:ro
+      - ./mlflow-server/logs/mlflow:/mlflow/logs
+    secrets:
+      - mlflow_db_password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ml-platform
+
+  # Nginx - Reverse Proxy for MLflow
+  mlflow-nginx:
+    image: nginx:alpine
+    container_name: mlflow-nginx
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    expose:
+      - "80"
+    volumes:
+      - ./mlflow-server/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./mlflow-server/docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./mlflow-server/docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./mlflow-server/logs/nginx:/var/log/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=80"
+      
+      # Middleware definitions
+      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.prefixes=/mlflow"
+      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.forceslash=false"
+      - "traefik.http.middlewares.mlflow-ajax-strip.stripprefix.prefixes=/ajax"
+      
+      # External API Router - highest priority, no prefix stripping
+      - "traefik.http.routers.mlflow-api.rule=PathPrefix(`/api/2.0/mlflow`)"
+      - "traefik.http.routers.mlflow-api.entrypoints=web"
+      - "traefik.http.routers.mlflow-api.service=mlflow"
+      - "traefik.http.routers.mlflow-api.priority=400"
+      
+      # AJAX API Router - for UI internal calls
+      - "traefik.http.routers.mlflow-ajax.rule=PathPrefix(`/ajax-api/2.0/mlflow`)"
+      - "traefik.http.routers.mlflow-ajax.entrypoints=web"
+      - "traefik.http.routers.mlflow-ajax.service=mlflow"
+      - "traefik.http.routers.mlflow-ajax.middlewares=mlflow-ajax-strip"
+      - "traefik.http.routers.mlflow-ajax.priority=350"
+      
+      # UI Router - with prefix stripping
+      - "traefik.http.routers.mlflow-ui.rule=PathPrefix(`/mlflow`)"
+      - "traefik.http.routers.mlflow-ui.entrypoints=web"
+      - "traefik.http.routers.mlflow-ui.service=mlflow"
+      - "traefik.http.routers.mlflow-ui.middlewares=mlflow-stripprefix"
+      - "traefik.http.routers.mlflow-ui.priority=10"
+
+  # MLflow API Wrapper - FastAPI with Schema Validation
+  mlflow-api:
+    build:
+      context: ./mlflow-server/api
+      dockerfile: Dockerfile
+    container_name: mlflow-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow-server:5000
+      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - /mlflow/artifacts:/mlflow/artifacts
+      - ./mlflow-server/config/schema:/mlflow/config/schema:ro
+      - ./mlflow-server/api:/app:ro
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
+      
+      # API v1 Router - no prefix stripping
+      - "traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.mlflow-api-v1.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-v1.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-v1.priority=500"
+      
+      # API docs router - routes /api/v1/docs through Traefik
+      - "traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`) || PathPrefix(`/api/v1/openapi.json`)"
+      - "traefik.http.routers.mlflow-api-docs.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-docs.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-docs.priority=450"
+
+  # Prometheus - MLflow Metrics
+  mlflow-prometheus:
+    image: prom/prometheus:latest
+    container_name: mlflow-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    volumes:
+      - ./mlflow-server/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mlflow-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow-prometheus.rule=PathPrefix(`/mlflow-prometheus`)"
+      - "traefik.http.routers.mlflow-prometheus.entrypoints=web"
+      - "traefik.http.services.mlflow-prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.mlflow-prometheus-strip.stripprefix.prefixes=/mlflow-prometheus"
+      - "traefik.http.routers.mlflow-prometheus.middlewares=mlflow-prometheus-strip"
+
+  # Grafana - MLflow Monitoring
+  mlflow-grafana:
+    image: grafana/grafana:latest
+    container_name: mlflow-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      - mlflow-prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/mlflow_grafana_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost/mlflow-grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./mlflow-server/docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./mlflow-server/docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - mlflow-grafana-data:/var/lib/grafana
+    secrets:
+      - mlflow_grafana_password
+    expose:
+      - "3000"
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow-grafana.rule=PathPrefix(`/mlflow-grafana`)"
+      - "traefik.http.routers.mlflow-grafana.entrypoints=web"
+      - "traefik.http.services.mlflow-grafana.loadbalancer.server.port=3000"
+
+  # Adminer - MLflow Database Management
+  mlflow-adminer:
+    build:
+      context: ./mlflow-server/docker/adminer
+      dockerfile: Dockerfile
+    container_name: mlflow-adminer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    depends_on:
+      - mlflow-postgres
+    expose:
+      - "8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mlflow-postgres
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow-adminer.rule=PathPrefix(`/mlflow-adminer`)"
+      - "traefik.http.routers.mlflow-adminer.entrypoints=web"
+      - "traefik.http.services.mlflow-adminer.loadbalancer.server.port=8080"
+
+  # Backup Service - MLflow Automated Backups
+  mlflow-backup:
+    build:
+      context: ./mlflow-server/docker/backup
+      dockerfile: Dockerfile
+    container_name: mlflow-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      - mlflow-postgres
+    environment:
+      BACKUP_SCHEDULE: "0 2 * * *"  # Daily at 2 AM
+      BACKUP_RETENTION_DAYS: 90
+      BACKUP_RETENTION_PRODUCTION: 0
+      POSTGRES_HOST: mlflow-postgres
+      POSTGRES_DB: mlflow_db
+      POSTGRES_USER: mlflow
+    volumes:
+      - ./mlflow-server/backups:/backups
+      - mlflow-artifacts:/mlflow/artifacts:ro
+    secrets:
+      - mlflow_db_password
+    networks:
+      - ml-platform
+
+  #############################################################################
+  # RAY COMPUTE PLATFORM
+  #############################################################################
+  
+  # PostgreSQL - Ray Metadata Storage
+  ray-postgres:
+    image: postgres:15-alpine
+    container_name: ray-compute-db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      POSTGRES_DB: ray_compute
+      POSTGRES_USER: ray_compute
+      POSTGRES_PASSWORD_FILE: /run/secrets/ray_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ray-postgres-data:/var/lib/postgresql/data
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ray_compute -d ray_compute"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    secrets:
+      - ray_db_password
+    expose:
+      - "5432"
+
+  # Ray Head Node with GPU support
+  ray-head:
+    image: rayproject/ray:2.9.0-gpu
+    container_name: ray-head
+    restart: unless-stopped
+    shm_size: '4gb'
+    command: >
+      ray start --head
+      --port=6379
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --num-cpus=8
+      --num-gpus=1
+      --object-store-memory=4000000000
+      --block
+    environment:
+      - RAY_memory_monitor_refresh_ms=0
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+      - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
+    volumes:
+      - ./ray_compute/data/ray:/tmp/ray
+      - ./ray_compute/data/job_workspaces:/opt/ray/job_workspaces
+      - nvidia-mps:/tmp/nvidia-mps
+    networks:
+      - ml-platform
+    expose:
+      - "6379"   # Ray client
+      - "8265"   # Ray dashboard
+      - "10001"  # Ray serve
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 12G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ray", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-dashboard.rule=PathPrefix(`/ray`)"
+      - "traefik.http.routers.ray-dashboard.entrypoints=web"
+      - "traefik.http.services.ray-dashboard.loadbalancer.server.port=8265"
+      - "traefik.http.middlewares.ray-stripprefix.stripprefix.prefixes=/ray"
+      - "traefik.http.routers.ray-dashboard.middlewares=ray-stripprefix"
+      - "traefik.http.routers.ray-dashboard.priority=100"
+
+  # Ray Compute API Server
+  ray-compute-api:
+    build:
+      context: ./ray_compute
+      dockerfile: Dockerfile.api
+    container_name: ray-compute-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      # Database
+      - POSTGRES_HOST=ray-compute-db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ray_compute
+      - POSTGRES_USER=ray_compute
+      - POSTGRES_PASSWORD_FILE=/run/secrets/ray_db_password
+      
+      # Redis (shared with MLflow, using DB 1)
+      - REDIS_HOST=ml-platform-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=1
+      
+      # Ray Cluster
+      - RAY_ADDRESS=http://ray-head:8265
+      
+      # MLflow
+      - MLFLOW_TRACKING_URI=http://mlflow-nginx:80
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_SECRET_KEY=${RAY_API_SECRET_KEY:-change-me-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      
+      # Job Configuration
+      - JOB_WORKSPACE=/opt/ray/job_workspaces
+      - ARTIFACT_RETENTION_HOURS=24
+      
+      # Auth
+      - API_KEY_ENABLED=false
+      
+      # Monitoring
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+      
+      # Logging
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./ray_compute/logs:/app/logs
+      - ./ray_compute/data/artifacts:/app/artifacts
+      - ./ray_compute/data/job_workspaces:/opt/ray/job_workspaces
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    secrets:
+      - ray_db_password
+    expose:
+      - "8000"
+    networks:
+      - ml-platform
+    depends_on:
+      ray-postgres:
+        condition: service_healthy
+      ray-head:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-api.rule=PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)"
+      - "traefik.http.routers.ray-api.entrypoints=web"
+      - "traefik.http.services.ray-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.ray-api-strip.stripprefix.prefixes=/api/ray,/api/compute"
+      - "traefik.http.routers.ray-api.middlewares=ray-api-strip"
+      - "traefik.http.routers.ray-api.priority=300"
+
+  # Prometheus - Ray Metrics
+  ray-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ray-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./ray_compute/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ray_compute/config/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ray-prometheus-data:/prometheus
+    networks:
+      - ml-platform
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-prometheus.rule=PathPrefix(`/ray-prometheus`)"
+      - "traefik.http.routers.ray-prometheus.entrypoints=web"
+      - "traefik.http.services.ray-prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.ray-prometheus-strip.stripprefix.prefixes=/ray-prometheus"
+      - "traefik.http.routers.ray-prometheus.middlewares=ray-prometheus-strip"
+
+  # Grafana - Ray Monitoring
+  ray-grafana:
+    image: grafana/grafana:10.2.2
+    container_name: ray-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/ray_grafana_password
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=http://localhost/ray-grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+    volumes:
+      - ./ray_compute/config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ray_compute/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ray-grafana-data:/var/lib/grafana
+    secrets:
+      - ray_grafana_password
+    networks:
+      - ml-platform
+    expose:
+      - "3000"
+    depends_on:
+      - ray-prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-grafana.rule=PathPrefix(`/ray-grafana`)"
+      - "traefik.http.routers.ray-grafana.entrypoints=web"
+      - "traefik.http.routers.ray-grafana.service=ray-grafana"
+      - "traefik.http.routers.ray-grafana.priority=150"
+      - "traefik.http.services.ray-grafana.loadbalancer.server.port=3000"
+
+  #############################################################################
+  # AUTHENTIK OAUTH PROVIDER
+  #############################################################################
+  
+  # PostgreSQL for Authentik
+  authentik-db:
+    image: postgres:15-alpine
+    container_name: authentik-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:-AiSolutions2350!}
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for Authentik
+  authentik-redis:
+    image: redis:7-alpine
+    container_name: authentik-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    command: --save 60 1 --loglevel warning
+    volumes:
+      - authentik-redis:/data
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Authentik Server
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.8
+    container_name: authentik-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-changeme-generate-a-real-secret-key}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-AiSolutions2350!}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_AVATARS: "gravatar,initials"
+    volumes:
+      - authentik-media:/media
+      - authentik-custom-templates:/templates
+    networks:
+      - ml-platform
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ak healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # Authentik Worker
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.8
+    container_name: authentik-worker
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-changeme-generate-a-real-secret-key}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-AiSolutions2350!}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      - authentik-media:/media
+      - authentik-certs:/certs
+      - authentik-custom-templates:/templates
+    networks:
+      - ml-platform
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+#############################################################################
+# SECRETS
+#############################################################################
+
+secrets:
+  mlflow_db_password:
+    file: ./mlflow-server/secrets/db_password.txt
+  mlflow_grafana_password:
+    file: ./mlflow-server/secrets/grafana_password.txt
+  ray_db_password:
+    file: ./ray_compute/secrets/db_password.txt
+  ray_grafana_password:
+    file: ./ray_compute/secrets/grafana_password.txt
+
+#############################################################################
+# VOLUMES
+#############################################################################
+
+volumes:
+  # Shared
+  redis-data:
+    name: ml-platform-redis-data
+  
+  # MLflow
+  mlflow-postgres-data:
+    name: mlflow-postgres-data
+  mlflow-artifacts:
+    name: mlflow-artifacts
+  mlflow-mlruns:
+    name: mlflow-mlruns
+  mlflow-prometheus-data:
+    name: mlflow-prometheus-data
+  mlflow-grafana-data:
+    name: mlflow-grafana-data
+  
+  # Ray
+  ray-postgres-data:
+    name: ray-postgres-data
+  ray-prometheus-data:
+    name: ray-prometheus-data
+  ray-grafana-data:
+    name: ray-grafana-data
+  nvidia-mps:
+    name: nvidia-mps
+  
+  # Authentik
+  authentik-db:
+    name: authentik-postgres-data
+  authentik-redis:
+    name: authentik-redis-data
+  authentik-media:
+    name: authentik-media
+  authentik-certs:
+    name: authentik-certs
+  authentik-custom-templates:
+    name: authentik-custom-templates
+
+#############################################################################
+# NETWORKS
+#############################################################################
+
+networks:
+  ml-platform:
+    name: ml-platform
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

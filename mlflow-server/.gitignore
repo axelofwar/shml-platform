@@ -1,0 +1,120 @@
+# Sensitive configuration files
+*.env
+.env
+.env.*
+.env.local
+!.env.example
+*.local.env
+*.secret
+.secrets/
+secrets/
+
+# Password and credential files
+*.pass
+.pgpass*
+*_db_pass
+*.credentials
+
+# SSH keys and certificates
+*.pem
+*.key
+id_rsa*
+*.pub
+authorized_keys
+
+# Local configuration overrides
+config/local_*.sh
+config/*_local.sh
+mlflow_server/config/local_*.sh
+mlflow_server/config/*_local.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+*.out
+
+# Backups
+*.bak
+*.backup
+*.old
+*~
+
+# Database dumps
+*.sql
+*.dump
+*.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MLflow artifacts (local only)
+mlruns/
+mlartifacts/
+
+# Archived and old documentation
+archived/
+*.old
+*.backup.md
+
+# System files
+.Trash-*/
+Thumbs.db
+
+# Docker deployment data directories
+data/
+backups/
+logs/
+
+# Secrets and sensitive files
+secrets/*.txt
+secrets/*.key
+secrets/*.pem
+docker/nginx/ssl/*.pem
+docker/nginx/ssl/*.key
+docker/nginx/ssl/*.crt
+
+# Deployment information
+DEPLOYMENT_INFO.txt
+CURRENT_DEPLOYMENT.md
+
+# Docker overrides
+docker-compose.override.yml
+.env.credentials

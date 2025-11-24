@@ -1,0 +1,28 @@
+[Unit]
+Description=Ray Compute API Server
+After=network.target ray-head.service
+Requires=ray-head.service
+
+[Service]
+Type=simple
+User=%USER%
+Group=%USER%
+WorkingDirectory=%WORKDIR%/api
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Start API server
+ExecStart=/usr/bin/python3 server.py
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ray-compute-api
+
+[Install]
+WantedBy=multi-user.target

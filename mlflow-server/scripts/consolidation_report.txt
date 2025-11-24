@@ -1,0 +1,98 @@
+Dataset Consolidation Report
+================================================================================
+
+Current State:
+----------------------------------------
+synthetic-data:
+  Files: 1
+  Size: 2.5GB
+    - synthetic.tar.zst (2.5GB)
+
+WIDER-val:
+  Files: 1
+  Size: 345.9MB
+    - WIDER_val.zip (345.9MB)
+
+WIDER-train:
+  Files: 4
+  Size: 1.4GB
+    - downloads_WIDER_train.zip.part003 (47.7MB)
+    - downloads_WIDER_train.zip.part002 (450.0MB)
+    - downloads_WIDER_train.zip.part001 (450.0MB)
+    - downloads_WIDER_train.zip.part000 (450.0MB)
+
+WIDER-test:
+  Files: 4
+  Size: 1.7GB
+    - downloads_WIDER_test.zip.part003 (408.7MB)
+    - downloads_WIDER_test.zip.part002 (450.0MB)
+    - downloads_WIDER_test.zip.part001 (450.0MB)
+    - downloads_WIDER_test.zip.part000 (450.0MB)
+
+WIDER-split:
+  Files: 1
+  Size: 3.4MB
+    - wider_face_split.zip (3.4MB)
+
+downloads:
+  Files: 2
+  Size: 552.5MB
+    - downloads.tar.xz (551.2MB)
+    - downloads.tar.xz (1.3MB)
+
+
+Proposed Consolidation:
+----------------------------------------
+WIDER-face-train-v1.0:
+  Description: WIDER Face training dataset (consolidated)
+  Files: 4
+  Size: 1.4GB
+  Tags:
+    artifact_type: dataset
+    dataset_name: WIDER-face-train
+    dataset_version: 1.0
+    dataset_type: face_detection
+    split: train
+
+WIDER-face-test-v1.0:
+  Description: WIDER Face test dataset (consolidated)
+  Files: 4
+  Size: 1.7GB
+  Tags:
+    artifact_type: dataset
+    dataset_name: WIDER-face-test
+    dataset_version: 1.0
+    dataset_type: face_detection
+    split: test
+
+WIDER-face-val-v1.0:
+  Description: WIDER Face validation dataset
+  Files: 1
+  Size: 345.9MB
+  Tags:
+    artifact_type: dataset
+    dataset_name: WIDER-face-val
+    dataset_version: 1.0
+    dataset_type: face_detection
+    split: validation
+
+WIDER-face-split-v1.0:
+  Description: WIDER Face dataset split metadata
+  Files: 1
+  Size: 3.4MB
+  Tags:
+    artifact_type: dataset
+    dataset_name: WIDER-face-split
+    dataset_version: 1.0
+    dataset_type: metadata
+
+synthetic-data-v1.0:
+  Description: Synthetic training data
+  Files: 1
+  Size: 2.5GB
+  Tags:
+    artifact_type: dataset
+    dataset_name: synthetic-data
+    dataset_version: 1.0
+    dataset_type: synthetic
+

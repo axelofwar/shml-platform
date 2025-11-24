@@ -1,0 +1,14 @@
+[Unit]
+Description=ML Platform (MLflow + Ray)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/axelofwar/Desktop/Projects
+ExecStart=/home/axelofwar/Desktop/Projects/start_all.sh
+ExecStop=/home/axelofwar/Desktop/Projects/stop_all.sh
+
+[Install]
+WantedBy=multi-user.target
