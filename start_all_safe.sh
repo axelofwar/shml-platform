@@ -50,13 +50,13 @@ monitor_startup() {
         
         if [ $elapsed -gt $MAX_WAIT_TIME ]; then
             print_status "$RED" "⏱️  Timeout waiting for services to become healthy"
-            docker-compose ps
+            docker compose ps
             return 1
         fi
         
         # Get service status
-        local unhealthy_count=$(docker-compose ps --services --filter "status=starting" --filter "status=unhealthy" 2>/dev/null | wc -l)
-        local running_count=$(docker-compose ps --services --filter "status=running" 2>/dev/null | wc -l)
+        local unhealthy_count=$(docker compose ps --services --filter "status=starting" --filter "status=unhealthy" 2>/dev/null | wc -l)
+        local running_count=$(docker compose ps --services --filter "status=running" 2>/dev/null | wc -l)
         
         echo -ne "\r⏳ Elapsed: ${elapsed}s | Running: ${running_count} | Checking health..."
         
@@ -78,19 +78,19 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null; then
-    print_status "$RED" "Error: docker-compose is required but not found"
+if ! docker compose version &> /dev/null; then
+    print_status "$RED" "Error: docker compose is required but not found"
     exit 1
 fi
 
-print_status "$GREEN" "✓ Docker and docker-compose available"
+print_status "$GREEN" "✓ Docker and docker compose available"
 
 # Step 2: Stop any running services
 print_status "$BLUE" "\nStep 2: Stopping any running services..."
 print_status "$BLUE" "---------------------------------------"
 
-# First, stop and remove all containers managed by docker-compose
-docker-compose down --remove-orphans 2>&1 | grep -v "WARNING: The following deploy" || true
+# First, stop and remove all containers managed by docker compose
+docker compose down --remove-orphans 2>&1 | grep -v "WARNING: The following deploy" || true
 
 # Then, forcibly remove any orphaned containers with our service names
 print_status "$BLUE" "Checking for orphaned containers..."
@@ -111,7 +111,7 @@ print_status "$BLUE" "\nStep 3: Starting infrastructure services..."
 print_status "$BLUE" "---------------------------------------"
 print_status "$YELLOW" "Starting: traefik, redis, postgres databases..."
 
-docker-compose up -d traefik redis mlflow-postgres ray-postgres authentik-db authentik-redis node-exporter cadvisor 2>&1 | grep -v "WARNING:" | tail -5
+docker compose up -d traefik redis mlflow-postgres ray-postgres authentik-db authentik-redis node-exporter cadvisor 2>&1 | grep -v "WARNING:" | tail -5
 
 sleep 10
 print_status "$GREEN" "✓ Infrastructure services started"
@@ -121,7 +121,7 @@ print_status "$BLUE" "\nStep 4: Starting core application services..."
 print_status "$BLUE" "---------------------------------------"
 print_status "$YELLOW" "Starting: mlflow-server, ray-head, authentik-server..."
 
-docker-compose up -d mlflow-server ray-head authentik-server 2>&1 | grep -v "WARNING:" | tail -5
+docker compose up -d mlflow-server ray-head authentik-server 2>&1 | grep -v "WARNING:" | tail -5
 
 print_status "$BLUE" "Waiting for core services to become healthy (this may take 60-90 seconds)..."
 sleep 30
@@ -131,7 +131,7 @@ print_status "$BLUE" "\nStep 5: Starting API and dependent services..."
 print_status "$BLUE" "---------------------------------------"
 print_status "$YELLOW" "Starting: mlflow-api, mlflow-nginx, ray-compute-api, authentik-worker..."
 
-docker-compose up -d mlflow-nginx mlflow-api ray-compute-api authentik-worker 2>&1 | grep -v "WARNING:" | tail -5
+docker compose up -d mlflow-nginx mlflow-api ray-compute-api authentik-worker 2>&1 | grep -v "WARNING:" | tail -5
 
 sleep 20
 
@@ -140,7 +140,7 @@ print_status "$BLUE" "\nStep 6: Starting monitoring services..."
 print_status "$BLUE" "---------------------------------------"
 print_status "$YELLOW" "Starting: prometheus, grafana, adminer..."
 
-docker-compose up -d mlflow-prometheus mlflow-grafana ray-prometheus ray-grafana mlflow-adminer 2>&1 | grep -v "WARNING:" | tail -5
+docker compose up -d mlflow-prometheus mlflow-grafana ray-prometheus ray-grafana mlflow-adminer 2>&1 | grep -v "WARNING:" | tail -5
 
 sleep 10
 
@@ -148,7 +148,7 @@ sleep 10
 print_status "$BLUE" "\nStep 7: Checking final service status..."
 print_status "$BLUE" "---------------------------------------"
 
-docker-compose ps 2>&1 | grep -v "WARNING: The following deploy"
+docker compose ps 2>&1 | grep -v "WARNING: The following deploy"
 
 echo ""
 print_status "$BLUE" "Checking service health..."
@@ -184,7 +184,7 @@ if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
     echo ""
     
     LAN_IP=$(hostname -I | awk '{print $1}')
-    TAILSCALE_HOST="axelofwar-dev-terminal-1.tail38b60a.ts.net"
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.90.57.39")
     
     echo "  🌐 Local Access:"
     echo "    MLflow UI:          http://localhost/mlflow/"
@@ -196,14 +196,14 @@ if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
     echo "    MLflow UI:          http://${LAN_IP}/mlflow/"
     echo "    Ray Dashboard:      http://${LAN_IP}/ray/"
     echo ""
-    echo "  🔐 VPN Access (Tailscale):"
-    echo "    MLflow UI:          http://${TAILSCALE_HOST}/mlflow/"
-    echo "    Ray Dashboard:      http://${TAILSCALE_HOST}/ray/"
+    echo "  🔐 VPN Access (Tailscale - ${TAILSCALE_IP}):"
+    echo "    MLflow UI:          http://${TAILSCALE_IP}/mlflow/"
+    echo "    Ray Dashboard:      http://${TAILSCALE_IP}/ray/"
     echo ""
     print_status "$BLUE" "📊 Management:"
-    echo "    View logs:          docker-compose logs -f [service-name]"
-    echo "    Check status:       docker-compose ps"
-    echo "    Stop all:           docker-compose down"
+    echo "    View logs:          docker compose logs -f [service-name]"
+    echo "    Check status:       docker compose ps"
+    echo "    Stop all:           docker compose down"
     echo ""
     
     # Test API endpoint
@@ -226,8 +226,8 @@ else
     done
     echo ""
     print_status "$BLUE" "To investigate:"
-    echo "  docker-compose logs [service-name]"
-    echo "  docker-compose ps"
+    echo "  docker compose logs [service-name]"
+    echo "  docker compose ps"
     echo ""
     exit 1
 fi
