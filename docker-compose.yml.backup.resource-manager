@@ -8,7 +8,7 @@ services:
       resources:
         limits:
           cpus: '1.49'
-          memory: 537M
+          memory: 385M
         reservations:
           cpus: '0.25'
           memory: 128M
@@ -53,7 +53,7 @@ services:
       resources:
         limits:
           cpus: '1.34'
-          memory: 537M
+          memory: 385M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -81,7 +81,7 @@ services:
       resources:
         limits:
           cpus: '0.42'
-          memory: 154M
+          memory: 109M
         reservations:
           cpus: '0.05'
           memory: 32M
@@ -107,7 +107,7 @@ services:
       resources:
         limits:
           cpus: '0.47'
-          memory: 186M
+          memory: 141M
         reservations:
           cpus: '0.1'
           memory: 64M
@@ -132,7 +132,7 @@ services:
       resources:
         limits:
           cpus: '1.49'
-          memory: 665M
+          memory: 513M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -167,7 +167,7 @@ services:
       resources:
         limits:
           cpus: '1.5'
-          memory: 839M
+          memory: 717M
         reservations:
           cpus: '0.5'
           memory: 512M
@@ -194,8 +194,8 @@ services:
       MLFLOW_COMPRESSION_FORMAT: zstd
       MLFLOW_ALLOW_REFERENCE_PATHS: 'true'
       MLFLOW_SCAN_SENSITIVE_DATA: 'true'
-      MLFLOW_ALLOWED_HOSTS: localhost,127.0.0.1,mlflow-server,mlflow-nginx,10.0.0.163,100.78.129.124,axelofwar-dev-terminal-1,axelofwar-dev-terminal-1.tail38b60a.ts.net
-      MLFLOW_CORS_ALLOWED_ORIGINS: http://axelofwar-dev-terminal-1.tail38b60a.ts.net,https://axelofwar-dev-terminal-1.tail38b60a.ts.net,http://10.0.0.163
+      MLFLOW_ALLOWED_HOSTS: localhost,127.0.0.1,mlflow-server,mlflow-nginx,${SERVER_IP},${TAILSCALE_IP},axelofwar-server,axelofwar-server.tail38b60a.ts.net
+      MLFLOW_CORS_ALLOWED_ORIGINS: http://${TAILSCALE_IP},https://${TAILSCALE_IP},http://localhost,http://${SERVER_IP}
       REDIS_HOST: ml-platform-redis
       REDIS_PORT: 6379
       REDIS_DB: 0
@@ -228,7 +228,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 268M
+          memory: 192M
         reservations:
           cpus: '0.1'
           memory: 64M
@@ -282,7 +282,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 460M
+          memory: 384M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -320,7 +320,7 @@ services:
     - traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)
     - traefik.http.routers.mlflow-api-v1.entrypoints=web
     - traefik.http.routers.mlflow-api-v1.service=mlflow-api-service
-    - traefik.http.routers.mlflow-api-v1.priority=500
+    - traefik.http.routers.mlflow-api-v1.priority=2147483647
     - traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`)
       || PathPrefix(`/api/v1/openapi.json`)
     - traefik.http.routers.mlflow-api-docs.entrypoints=web
@@ -334,7 +334,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -364,7 +364,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -403,7 +403,7 @@ services:
       resources:
         limits:
           cpus: '0.42'
-          memory: 186M
+          memory: 141M
         reservations:
           cpus: '0.05'
           memory: 64M
@@ -425,12 +425,14 @@ services:
       context: ./mlflow-server/docker/backup
       dockerfile: Dockerfile
     container_name: mlflow-backup
-    restart: unless-stopped
+    restart: 'no'
+    profiles:
+    - backup
     deploy:
       resources:
         limits:
           cpus: '0.47'
-          memory: 250M
+          memory: 205M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -458,7 +460,7 @@ services:
       resources:
         limits:
           cpus: '1.49'
-          memory: 665M
+          memory: 513M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -491,9 +493,9 @@ services:
     image: ml-platform-ray-head:2.9.0-gpu-mlflow
     container_name: ray-head
     restart: unless-stopped
-    shm_size: 4gb
+    shm_size: 2gb
     command: 'ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265
-      --num-cpus=8 --num-gpus=1 --object-store-memory=4000000000 --block
+      --num-cpus=4 --num-gpus=1 --object-store-memory=1000000000 --block
 
       '
     environment:
@@ -554,7 +556,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 716M
+          memory: 640M
         reservations:
           cpus: '0.25'
           memory: 512M
@@ -625,7 +627,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -670,7 +672,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -722,7 +724,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -749,7 +751,7 @@ services:
       resources:
         limits:
           cpus: '0.67'
-          memory: 268M
+          memory: 192M
         reservations:
           cpus: '0.05'
           memory: 64M
@@ -773,7 +775,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 460M
+          memory: 384M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -817,7 +819,7 @@ services:
       resources:
         limits:
           cpus: '0.47'
-          memory: 250M
+          memory: 205M
         reservations:
           cpus: '0.1'
           memory: 128M

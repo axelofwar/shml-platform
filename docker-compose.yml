@@ -1,14 +1,13 @@
-version: '3.8'
 services:
   traefik:
-    image: traefik:v2.10
+    image: traefik:v2.11
     container_name: ml-platform-traefik
     restart: unless-stopped
     deploy:
       resources:
         limits:
           cpus: '1.49'
-          memory: 537M
+          memory: 385M
         reservations:
           cpus: '0.25'
           memory: 128M
@@ -53,7 +52,7 @@ services:
       resources:
         limits:
           cpus: '1.34'
-          memory: 537M
+          memory: 385M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -81,7 +80,7 @@ services:
       resources:
         limits:
           cpus: '0.42'
-          memory: 154M
+          memory: 109M
         reservations:
           cpus: '0.05'
           memory: 32M
@@ -107,7 +106,7 @@ services:
       resources:
         limits:
           cpus: '0.47'
-          memory: 186M
+          memory: 141M
         reservations:
           cpus: '0.1'
           memory: 64M
@@ -132,7 +131,7 @@ services:
       resources:
         limits:
           cpus: '1.49'
-          memory: 665M
+          memory: 513M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -167,7 +166,7 @@ services:
       resources:
         limits:
           cpus: '1.5'
-          memory: 839M
+          memory: 717M
         reservations:
           cpus: '0.5'
           memory: 512M
@@ -194,8 +193,6 @@ services:
       MLFLOW_COMPRESSION_FORMAT: zstd
       MLFLOW_ALLOW_REFERENCE_PATHS: 'true'
       MLFLOW_SCAN_SENSITIVE_DATA: 'true'
-      MLFLOW_ALLOWED_HOSTS: localhost,127.0.0.1,mlflow-server,mlflow-nginx,${SERVER_IP},${TAILSCALE_IP},axelofwar-dev-terminal-1,axelofwar-dev-terminal-1.tail38b60a.ts.net
-      MLFLOW_CORS_ALLOWED_ORIGINS: http://axelofwar-dev-terminal-1.tail38b60a.ts.net,https://axelofwar-dev-terminal-1.tail38b60a.ts.net,http://localhost
       REDIS_HOST: ml-platform-redis
       REDIS_PORT: 6379
       REDIS_DB: 0
@@ -228,7 +225,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 268M
+          memory: 192M
         reservations:
           cpus: '0.1'
           memory: 64M
@@ -282,7 +279,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 460M
+          memory: 384M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -320,10 +317,6 @@ services:
     - traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)
     - traefik.http.routers.mlflow-api-v1.entrypoints=web
     - traefik.http.routers.mlflow-api-v1.service=mlflow-api-service
-    # CRITICAL: Priority 2147483647 (max int32) ensures this router takes precedence over
-    # Traefik's internal API dashboard (priority 2147483646 at /api/*). Without this max
-    # priority, /api/v1/* requests return 404 from the Traefik API instead of reaching
-    # mlflow-api. See copilot instructions for details on Traefik routing best practices.
     - traefik.http.routers.mlflow-api-v1.priority=2147483647
     - traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`)
       || PathPrefix(`/api/v1/openapi.json`)
@@ -338,7 +331,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -368,7 +361,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -407,7 +400,7 @@ services:
       resources:
         limits:
           cpus: '0.42'
-          memory: 186M
+          memory: 141M
         reservations:
           cpus: '0.05'
           memory: 64M
@@ -424,22 +417,19 @@ services:
     - traefik.http.routers.mlflow-adminer.rule=PathPrefix(`/mlflow-adminer`)
     - traefik.http.routers.mlflow-adminer.entrypoints=web
     - traefik.http.services.mlflow-adminer.loadbalancer.server.port=8080
-  # DISABLED: Missing Docker secrets (mlflow_db_password, aws_access_key_id, aws_secret_access_key)
-  # caused continuous restart loops. This is a non-critical service - enable only when backups
-  # are needed and secrets are properly configured. See STARTUP_ANALYSIS.md for details.
   mlflow-backup:
     build:
       context: ./mlflow-server/docker/backup
       dockerfile: Dockerfile
     container_name: mlflow-backup
-    restart: "no"
+    restart: 'no'
     profiles:
-      - backup
+    - backup
     deploy:
       resources:
         limits:
           cpus: '0.47'
-          memory: 250M
+          memory: 205M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -467,7 +457,7 @@ services:
       resources:
         limits:
           cpus: '1.49'
-          memory: 665M
+          memory: 513M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -501,20 +491,14 @@ services:
     container_name: ray-head
     restart: unless-stopped
     shm_size: 2gb
-    # CRITICAL: Ray resource allocation must fit within container memory limits below.
-    # --num-cpus=4: Reduced from 8 for stability (system has Ryzen 9 3900X with 24 threads)
-    # --object-store-memory=1000000000 (1GB): Reduced from 4GB to prevent memory errors
-    # Calculation: 1GB object store + 2GB shm + ~1GB Ray overhead = ~4GB total (see memory limit below)
-    # Previous 4GB object store in 2GB container caused "memory available is less than -112%" error.
-    # See STARTUP_ANALYSIS.md and Ray copilot instructions for resource allocation patterns.
     command: 'ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265
-      --num-cpus=4 --num-gpus=1 --object-store-memory=1000000000 --block
+      --num-cpus=8 --num-gpus=2 --object-store-memory=536870912 --block
 
       '
     environment:
     - RAY_memory_monitor_refresh_ms=0
-    - CUDA_VISIBLE_DEVICES=0
-    - NVIDIA_VISIBLE_DEVICES=0
+    - CUDA_VISIBLE_DEVICES=0,1
+    - NVIDIA_VISIBLE_DEVICES=0,1
     - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
     - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
     - MLFLOW_TRACKING_URI=http://mlflow-server:5000
@@ -532,16 +516,14 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4.0'  # Matches --num-cpus above
-          # CRITICAL: 4G accommodates 1GB object store + 2GB shm + ~1GB overhead.
-          # Previous 2G limit with 4GB object store caused startup failures.
-          memory: 4G
+          cpus: '2.0'
+          memory: 2G
         reservations:
           cpus: '1.0'
           memory: 2G
           devices:
           - driver: nvidia
-            count: 1
+            device_ids: ['0', '1']
             capabilities:
             - gpu
     healthcheck:
@@ -571,7 +553,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 716M
+          memory: 640M
         reservations:
           cpus: '0.25'
           memory: 512M
@@ -642,7 +624,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -687,7 +669,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -739,7 +721,7 @@ services:
       resources:
         limits:
           cpus: '0.72'
-          memory: 332M
+          memory: 256M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -766,7 +748,7 @@ services:
       resources:
         limits:
           cpus: '0.67'
-          memory: 268M
+          memory: 192M
         reservations:
           cpus: '0.05'
           memory: 64M
@@ -790,7 +772,7 @@ services:
       resources:
         limits:
           cpus: '0.87'
-          memory: 460M
+          memory: 384M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -834,7 +816,7 @@ services:
       resources:
         limits:
           cpus: '0.47'
-          memory: 250M
+          memory: 205M
         reservations:
           cpus: '0.1'
           memory: 128M
