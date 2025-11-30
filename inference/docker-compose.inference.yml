@@ -1,0 +1,199 @@
+# Inference Stack - Qwen3-VL + Z-Image + Gateway
+# Integrates with existing ml-platform network
+# RTX 2070 (cuda:0) = Qwen3-VL (always loaded)
+# RTX 3090 (cuda:1) = Z-Image (on-demand, yields to training)
+# NOTE: Uses shared-postgres from main docker-compose.yml (database: inference)
+
+services:
+  # ==========================================================================
+  # inference-postgres REMOVED - consolidated into shared-postgres
+  # The 'inference' database is created by postgres/init-databases.sh
+  # ==========================================================================
+
+  # ==========================================================================
+  # Qwen3-VL - LLM for Planning/Architecture (RTX 2070 - Always Available)
+  # ==========================================================================
+  qwen3-vl-api:
+    build:
+      context: ./qwen3-vl
+      dockerfile: Dockerfile
+    container_name: qwen3-vl-api
+    restart: unless-stopped
+    environment:
+      - MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
+      - QUANTIZATION=int4
+      - DEVICE=cuda:0
+      - MAX_NEW_TOKENS=4096
+      - HF_HOME=/models
+      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=1
+      - UNLOAD_TIMEOUT_SECONDS=0
+    volumes:
+      - model-cache:/models:ro
+      - ./logs/qwen3-vl:/app/logs
+    networks:
+      - ml-platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 12G
+        reservations:
+          cpus: "2.0"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qwen3-vl.rule=PathPrefix(`/api/llm`)"
+      - "traefik.http.routers.qwen3-vl.priority=2147483647"
+      - "traefik.http.routers.qwen3-vl.entrypoints=web"
+      - "traefik.http.services.qwen3-vl.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.qwen3-strip.stripprefix.prefixes=/api/llm"
+      - "traefik.http.routers.qwen3-vl.middlewares=qwen3-strip"
+    # No postgres dependency - qwen3-vl doesn't need DB directly
+
+  # ==========================================================================
+  # Z-Image - Image Generation (RTX 3090 - On-Demand, Yields to Training)
+  # ==========================================================================
+  z-image-api:
+    build:
+      context: ./z-image
+      dockerfile: Dockerfile
+    container_name: z-image-api
+    restart: unless-stopped
+    environment:
+      - MODEL_ID=Tongyi-MAI/Z-Image-Turbo
+      - DEVICE=cuda:1
+      - DTYPE=bfloat16
+      - NUM_INFERENCE_STEPS=8
+      - HF_HOME=/models
+      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=1
+      - UNLOAD_TIMEOUT_SECONDS=300
+      - YIELD_TO_TRAINING=true
+    volumes:
+      - model-cache:/models:ro
+      - z-image-outputs:/outputs
+      - ./logs/z-image:/app/logs
+    networks:
+      - ml-platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 24G
+        reservations:
+          cpus: "2.0"
+          memory: 16G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.z-image.rule=PathPrefix(`/api/image`)"
+      - "traefik.http.routers.z-image.priority=2147483647"
+      - "traefik.http.routers.z-image.entrypoints=web"
+      - "traefik.http.services.z-image.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.z-image-strip.stripprefix.prefixes=/api/image"
+      - "traefik.http.routers.z-image.middlewares=z-image-strip"
+    # No postgres dependency - z-image doesn't need DB directly
+    # No postgres dependency - z-image doesn't need DB directly
+
+  # ==========================================================================
+  # Inference Gateway - Queue, Rate Limiting, Chat History
+  # Uses shared-postgres from main docker-compose.yml
+  # ==========================================================================
+  inference-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: inference-gateway
+    restart: unless-stopped
+    environment:
+      - QWEN3_VL_URL=http://qwen3-vl-api:8000
+      - Z_IMAGE_URL=http://z-image-api:8000
+      - REDIS_HOST=ml-platform-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+      - POSTGRES_HOST=shared-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - MAX_QUEUE_SIZE=20
+      - MAX_CONCURRENT_REQUESTS=3
+      - RATE_LIMIT_REQUESTS=60
+      - RATE_LIMIT_WINDOW_SECONDS=60
+      - BACKUP_COMPRESSION=zstd
+      - BACKUP_RETENTION_DAYS=90
+    volumes:
+      - ./backups:/backups
+      - ./logs/gateway:/app/logs
+    networks:
+      - ml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.inference.rule=PathPrefix(`/inference`)"
+      - "traefik.http.routers.inference.priority=2147483647"
+      - "traefik.http.routers.inference.entrypoints=web"
+      - "traefik.http.services.inference.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.inference-strip.stripprefix.prefixes=/inference"
+      - "traefik.http.routers.inference.middlewares=inference-strip"
+    depends_on:
+      qwen3-vl-api:
+        condition: service_started
+      z-image-api:
+        condition: service_started
+
+volumes:
+  # inference-postgres-data removed - using shared-postgres
+  model-cache:
+    name: hf-model-cache
+  z-image-outputs:
+    name: z-image-outputs
+
+networks:
+  ml-platform:
+    external: true
+
+secrets:
+  shared_db_password:
+    file: ../secrets/shared_db_password.txt

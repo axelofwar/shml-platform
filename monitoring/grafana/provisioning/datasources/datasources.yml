@@ -1,0 +1,36 @@
+# Unified Grafana Datasources
+# Single Prometheus instance for all metrics
+
+apiVersion: 1
+
+datasources:
+  # Primary datasource - Unified Prometheus
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: "2.48.0"
+    uid: unified-prometheus
+
+  # PostgreSQL datasource for direct queries (optional)
+  # Uncomment if you need direct DB access for dashboards
+  # - name: MLflow PostgreSQL
+  #   type: postgres
+  #   access: proxy
+  #   url: mlflow-postgres:5432
+  #   database: mlflow_db
+  #   user: mlflow
+  #   secureJsonData:
+  #     password: ${MLFLOW_DB_PASSWORD}
+  #   jsonData:
+  #     sslmode: disable
+  #     maxOpenConns: 5
+  #     maxIdleConns: 2
+  #   uid: mlflow-postgres

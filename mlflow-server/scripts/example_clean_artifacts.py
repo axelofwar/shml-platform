@@ -4,6 +4,7 @@ Example training script with proper artifact organization.
 Demonstrates best practices for logging artifacts to MLflow with clean organization.
 """
 
+import os
 import mlflow
 import yaml
 from pathlib import Path
@@ -12,8 +13,9 @@ from pathlib import Path
 def train_model_with_clean_artifacts():
     """Train model and log artifacts in organized structure."""
     
-    # Configuration
-    TRACKING_URI = "http://100.69.227.36:8080"
+    # Configuration - use environment variable or localhost
+    tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
+    TRACKING_URI = f"http://{tailscale_ip}:8080"
     mlflow.set_tracking_uri(TRACKING_URI)
     mlflow.set_experiment("model-registry-v2")
     
@@ -215,7 +217,8 @@ def train_model_with_clean_artifacts():
 def log_dataset_reference():
     """Example: Log a dataset reference (not the actual files)."""
     
-    TRACKING_URI = "http://100.69.227.36:8080"
+    tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
+    TRACKING_URI = f"http://{tailscale_ip}:8080"
     mlflow.set_tracking_uri(TRACKING_URI)
     mlflow.set_experiment("dataset-registry")
     
