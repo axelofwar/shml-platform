@@ -22,7 +22,9 @@ def _read_password() -> str:
         with open(POSTGRES_PASSWORD_FILE, 'r') as f:
             return f.read().strip()
     except FileNotFoundError:
-        return "inference_password"  # Fallback for dev
+        raise FileNotFoundError(
+            f"PostgreSQL password file not found at {POSTGRES_PASSWORD_FILE}. Refusing to use insecure fallback password. Please provide the password file."
+        )
 
 
 class ChatHistoryDB:
