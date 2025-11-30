@@ -67,8 +67,9 @@ def test_full_training():
         }
     )
     
+    tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
     print(f"✅ Job submitted: {job_id}")
-    print(f"   Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
+    print(f"   Dashboard: http://{tailscale_ip}/ray/#/jobs/{job_id}")
     print()
     
     # Monitor job
@@ -120,9 +121,9 @@ def test_full_training():
         print("  ✓ Job visible in Ray Dashboard")
         print()
         print("Access Points:")
-        print(f"  - Ray Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
-        print(f"  - Ray Grafana: http://100.90.57.39/ray-grafana/")
-        print(f"  - MLflow UI: http://100.90.57.39/mlflow/")
+        print(f"  - Ray Dashboard: http://{tailscale_ip}/ray/#/jobs/{job_id}")
+        print(f"  - Ray Grafana: http://{tailscale_ip}/ray-grafana/")
+        print(f"  - MLflow UI: http://{tailscale_ip}/mlflow/")
         return True
     else:
         print(f"\n❌ Job failed with status: {status}")

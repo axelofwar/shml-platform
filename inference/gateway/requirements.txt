@@ -1,0 +1,15 @@
+# Inference Gateway requirements
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Async clients
+httpx>=0.25.0
+redis>=5.0.0
+asyncpg>=0.29.0
+
+# Compression
+zstandard>=0.22.0
+
+# Utilities
+python-multipart>=0.0.6

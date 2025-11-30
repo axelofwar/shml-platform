@@ -1,6 +1,11 @@
 #!/bin/bash
 # Verify platform is ready for OAuth configuration
 
+# Load environment variables if .env exists
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | grep -v '^$' | xargs)
+fi
+
 echo "=========================================="
 echo "  OAuth Readiness Check"
 echo "=========================================="
@@ -56,7 +61,7 @@ if [ $checks_passed -eq $checks_total ]; then
     echo
     echo "Next steps:"
     echo "  1. Open Authentik: http://localhost:9000/"
-    echo "  2. Login: akadmin / AiSolutions2350!"
+    echo "  2. Login: akadmin / <your AUTHENTIK_BOOTSTRAP_PASSWORD from .env>"
     echo "  3. Follow: cat OAUTH_QUICKSTART.md"
     echo
     exit 0

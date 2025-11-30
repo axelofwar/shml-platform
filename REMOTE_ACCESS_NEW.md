@@ -13,7 +13,7 @@ LAN_IP=10.0.0.163
 HOSTNAME=axelofwar-server
 
 # Tailscale VPN (Recommended for remote access)
-TAILSCALE_IP=100.90.57.39
+TAILSCALE_IP=<TAILSCALE_IP>
 ```
 
 ---
@@ -23,45 +23,45 @@ TAILSCALE_IP=100.90.57.39
 ### Via Tailscale VPN (Recommended)
 | Service | URL | Purpose |
 |---------|-----|---------|
-| **MLflow UI** | `http://100.90.57.39/mlflow/` | Experiment tracking dashboard |
-| **MLflow API** | `http://100.90.57.39/api/2.0/mlflow/` | Standard MLflow REST API |
-| **Ray Dashboard** | `http://100.90.57.39/ray/` | Job monitoring & cluster status |
-| **Traefik Dashboard** | `http://100.90.57.39:8090/` | Gateway routing & health |
-| **Authentik** | `http://100.90.57.39:9000/` | OAuth authentication |
+| **MLflow UI** | `http://<TAILSCALE_IP>/mlflow/` | Experiment tracking dashboard |
+| **MLflow API** | `http://<TAILSCALE_IP>/api/2.0/mlflow/` | Standard MLflow REST API |
+| **Ray Dashboard** | `http://<TAILSCALE_IP>/ray/` | Job monitoring & cluster status |
+| **Traefik Dashboard** | `http://<TAILSCALE_IP>:8090/` | Gateway routing & health |
+| **Authentik** | `http://<TAILSCALE_IP>:9000/` | OAuth authentication |
 
 ### Via Local Network
-Replace `100.90.57.39` with `10.0.0.163` in the URLs above.
+Replace `<TAILSCALE_IP>` with `10.0.0.163` in the URLs above.
 
 ---
 
 ## 🔐 Credentials
 
 ### MLflow Database
-- **Host:** 100.90.57.39:5432
+- **Host:** <TAILSCALE_IP>:5432
 - **Database:** mlflow_db
 - **User:** mlflow
 - **Password:** `gNz8APgrUF8Q3hMe2sQXQK8DPGHs3CGcVhoPLbcqvi4=`
 
 ### MLflow Grafana
-- **URL:** http://100.90.57.39/grafana/
+- **URL:** http://<TAILSCALE_IP>/grafana/
 - **User:** admin
-- **Password:** `AiSolutions2350!`
+- **Password:** `<your-password-from-.env>`
 
 ### Ray Database
-- **Host:** 100.90.57.39:5433
+- **Host:** <TAILSCALE_IP>:5433
 - **Database:** ray_compute
 - **User:** ray_compute
 - **Password:** `VlzT9Rg374pYWpjUGGV3QSUTWg7JVdhl`
 
 ### Ray Grafana
-- **URL:** http://100.90.57.39/ray-grafana/
+- **URL:** http://<TAILSCALE_IP>/ray-grafana/
 - **User:** admin
 - **Password:** `oVkbwOk7AtELl2xz`
 
 ### Authentik OAuth
-- **URL:** http://100.90.57.39:9000/
+- **URL:** http://<TAILSCALE_IP>:9000/
 - **Admin User:** akadmin
-- **Admin Password:** `AiSolutions2350!`
+- **Admin Password:** `<your-password-from-.env>`
 - **Client ID:** ray-compute-api
 - **Client Secret:** `5fPlqHZ7xHRmnG7Lf93YhAy5GCLPXX9iaUXp1GpCxIZ9pTk3FwDeGEsXSUUBUJGDBEeWwIVkE1n9DY87pcY2rhJDhnNXVLmBPvyrUm6zZmX7XSIf62IIDHsUJ2YUhfq2`
 
@@ -93,8 +93,8 @@ pip install mlflow==2.9.2 ray[default]==2.9.0 requests pandas numpy scikit-learn
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-export MLFLOW_TRACKING_URI="http://100.90.57.39/mlflow"
-export RAY_ADDRESS="http://100.90.57.39:8265"
+export MLFLOW_TRACKING_URI="http://<TAILSCALE_IP>/mlflow"
+export RAY_ADDRESS="http://<TAILSCALE_IP>:8265"
 
 # Apply changes
 source ~/.bashrc
@@ -107,14 +107,14 @@ import requests
 import mlflow
 
 # Test MLflow
-response = requests.get("http://100.90.57.39/api/2.0/mlflow/experiments/search",
+response = requests.get("http://<TAILSCALE_IP>/api/2.0/mlflow/experiments/search",
                        headers={"Content-Type": "application/json"},
                        json={"max_results": 1})
 print(f"MLflow Status: {response.status_code}")
 print(f"Experiments: {len(response.json().get('experiments', []))}")
 
 # Test Ray
-response = requests.get("http://100.90.57.39:8265/api/version")
+response = requests.get("http://<TAILSCALE_IP>:8265/api/version")
 print(f"Ray Version: {response.json()}")
 ```
 
@@ -131,7 +131,7 @@ from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 
 # Configure tracking
-mlflow.set_tracking_uri("http://100.90.57.39/mlflow")
+mlflow.set_tracking_uri("http://<TAILSCALE_IP>/mlflow")
 mlflow.set_experiment("my-experiment")
 
 # Load data
@@ -159,7 +159,7 @@ with mlflow.start_run(run_name="rf-model"):
 import mlflow
 from mlflow.tracking import MlflowClient
 
-mlflow.set_tracking_uri("http://100.90.57.39/mlflow")
+mlflow.set_tracking_uri("http://<TAILSCALE_IP>/mlflow")
 client = MlflowClient()
 
 # Register model
@@ -192,7 +192,7 @@ predictions = model.predict(X_test)
 from ray.job_submission import JobSubmissionClient
 
 # Connect to cluster
-client = JobSubmissionClient("http://100.90.57.39:8265")
+client = JobSubmissionClient("http://<TAILSCALE_IP>:8265")
 
 # Submit job
 job_id = client.submit_job(
@@ -204,7 +204,7 @@ job_id = client.submit_job(
 )
 
 print(f"Job ID: {job_id}")
-print(f"Monitor: http://100.90.57.39/ray/#/jobs/{job_id}")
+print(f"Monitor: http://<TAILSCALE_IP>/ray/#/jobs/{job_id}")
 
 # Wait for completion
 import time
@@ -264,7 +264,7 @@ Submit from remote machine:
 ```python
 from ray.job_submission import JobSubmissionClient
 
-client = JobSubmissionClient("http://100.90.57.39:8265")
+client = JobSubmissionClient("http://<TAILSCALE_IP>:8265")
 
 job_id = client.submit_job(
     entrypoint="python gpu_train.py",
@@ -309,7 +309,7 @@ sudo docker exec ray-head ray status
 
 # From remote Python client
 from ray.job_submission import JobSubmissionClient
-client = JobSubmissionClient("http://100.90.57.39:8265")
+client = JobSubmissionClient("http://<TAILSCALE_IP>:8265")
 print(client.get_version())
 ```
 
@@ -354,12 +354,12 @@ sudo docker compose up -d [service-name]
 1. **Check Tailscale:**
    ```bash
    tailscale status
-   ping 100.90.57.39
+   ping <TAILSCALE_IP>
    ```
 
 2. **Test Basic Connectivity:**
    ```bash
-   curl -I http://100.90.57.39/mlflow/
+   curl -I http://<TAILSCALE_IP>/mlflow/
    ```
 
 3. **Check Service Status:**
@@ -374,7 +374,7 @@ sudo docker compose up -d [service-name]
 sudo docker compose logs mlflow-server
 
 # Test API directly
-curl -X POST http://100.90.57.39/api/2.0/mlflow/experiments/search \
+curl -X POST http://<TAILSCALE_IP>/api/2.0/mlflow/experiments/search \
   -H "Content-Type: application/json" \
   -d '{"max_results": 1}'
 ```
@@ -387,7 +387,7 @@ sudo docker compose logs ray-head
 
 # View job logs via Python
 from ray.job_submission import JobSubmissionClient
-client = JobSubmissionClient("http://100.90.57.39:8265")
+client = JobSubmissionClient("http://<TAILSCALE_IP>:8265")
 print(client.get_job_logs("your-job-id"))
 ```
 

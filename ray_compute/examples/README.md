@@ -42,14 +42,14 @@ sudo docker exec ray-compute-api python3 /tmp/test_full_training.py
 
 ### From Remote Machine
 
-If accessing via Tailscale (100.90.57.39):
+If accessing via Tailscale (${TAILSCALE_IP:-localhost}):
 
 ```python
 from ray.job_submission import JobSubmissionClient
 import os
 
 # Connect to Ray via Tailscale
-client = JobSubmissionClient("http://100.90.57.39/ray/api")
+client = JobSubmissionClient("http://${TAILSCALE_IP:-localhost}/ray/api")
 
 # Upload local directory with training scripts
 script_dir = "/path/to/local/scripts"
@@ -67,7 +67,7 @@ job_id = client.submit_job(
 
 # Monitor job
 print(f"Job ID: {job_id}")
-print(f"Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
+print(f"Dashboard: http://${TAILSCALE_IP:-localhost}/ray/#/jobs/{job_id}")
 ```
 
 ## Important Notes
@@ -124,29 +124,29 @@ runtime_env={
 
 ### Ray Dashboard
 - Local: http://localhost/ray/#/jobs
-- Tailscale: http://100.90.57.39/ray/#/jobs
+- Tailscale: http://${TAILSCALE_IP:-localhost}/ray/#/jobs
 - View job status, logs, and resource usage
 
 ### Ray Grafana
 - Local: http://localhost/ray-grafana/
-- Tailscale: http://100.90.57.39/ray-grafana/
-- Login: admin / AiSolutions2350!
+- Tailscale: http://${TAILSCALE_IP:-localhost}/ray-grafana/
+- Login: admin / <your-password-from-.env>
 - Monitor GPU usage, system metrics
 
 ### MLflow UI
 - Local: http://localhost/mlflow/
-- Tailscale: http://100.90.57.39/mlflow/
-- Login: mlflow / AiSolutions2350!
+- Tailscale: http://${TAILSCALE_IP:-localhost}/mlflow/
+- Login: mlflow / <your-password-from-.env>
 - Track experiments, datasets, model registry
 
 ## Access URLs
 
 | Service | Local | Tailscale (Remote) | Credentials |
 |---------|-------|-------------------|-------------|
-| Ray Dashboard | http://localhost/ray/ | http://100.90.57.39/ray/ | N/A |
-| Ray Grafana | http://localhost/ray-grafana/ | http://100.90.57.39/ray-grafana/ | admin / AiSolutions2350! |
-| MLflow | http://localhost/mlflow/ | http://100.90.57.39/mlflow/ | mlflow / AiSolutions2350! |
-| Traefik | http://localhost/dashboard/ | http://100.90.57.39/dashboard/ | N/A |
+| Ray Dashboard | http://localhost/ray/ | http://${TAILSCALE_IP:-localhost}/ray/ | N/A |
+| Ray Grafana | http://localhost/ray-grafana/ | http://${TAILSCALE_IP:-localhost}/ray-grafana/ | admin / <your-password-from-.env> |
+| MLflow | http://localhost/mlflow/ | http://${TAILSCALE_IP:-localhost}/mlflow/ | mlflow / <your-password-from-.env> |
+| Traefik | http://localhost/dashboard/ | http://${TAILSCALE_IP:-localhost}/dashboard/ | N/A |
 
 ## Troubleshooting
 
@@ -205,8 +205,8 @@ job_id = client.submit_job(
 )
 
 print(f"✅ pii-pro training job submitted: {job_id}")
-print(f"   Ray Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
-print(f"   MLflow: http://100.90.57.39/mlflow/#/experiments")
+print(f"   Ray Dashboard: http://${TAILSCALE_IP:-localhost}/ray/#/jobs/{job_id}")
+print(f"   MLflow: http://${TAILSCALE_IP:-localhost}/mlflow/#/experiments")
 ```
 
 ## System Info

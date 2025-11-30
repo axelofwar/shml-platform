@@ -48,21 +48,21 @@
 
 ### Network
 - **LAN IP:** 10.0.0.163
-- **Tailscale IP:** 100.90.57.39 (VPN)
+- **Tailscale IP:** <TAILSCALE_IP> (VPN)
 
 ### Quick Access URLs
 ```bash
 # MLflow
-http://100.90.57.39/mlflow/          # UI
-http://100.90.57.39/api/2.0/mlflow/  # API
+http://<TAILSCALE_IP>/mlflow/          # UI
+http://<TAILSCALE_IP>/api/2.0/mlflow/  # API
 
 # Ray
-http://100.90.57.39/ray/             # Dashboard
-http://100.90.57.39:8265             # Direct access
+http://<TAILSCALE_IP>/ray/             # Dashboard
+http://<TAILSCALE_IP>:8265             # Direct access
 
 # Monitoring
-http://100.90.57.39:8090/            # Traefik
-http://100.90.57.39:9000/            # Authentik
+http://<TAILSCALE_IP>:8090/            # Traefik
+http://<TAILSCALE_IP>:9000/            # Authentik
 ```
 
 ---
@@ -70,9 +70,9 @@ http://100.90.57.39:9000/            # Authentik
 ## �� Important Passwords
 
 All passwords preserved from original setup:
-- **MLflow Grafana:** `AiSolutions2350!`
+- **MLflow Grafana:** `<your-password-from-.env>`
 - **Ray Grafana:** `oVkbwOk7AtELl2xz`
-- **Authentik Admin:** `AiSolutions2350!`
+- **Authentik Admin:** `<your-password-from-.env>`
 - **Databases:** See `.env` file
 
 ---
@@ -88,8 +88,8 @@ All passwords preserved from original setup:
 
 2. **Set environment:**
    ```bash
-   export MLFLOW_TRACKING_URI="http://100.90.57.39/mlflow"
-   export RAY_ADDRESS="http://100.90.57.39:8265"
+   export MLFLOW_TRACKING_URI="http://<TAILSCALE_IP>/mlflow"
+   export RAY_ADDRESS="http://<TAILSCALE_IP>:8265"
    ```
 
 3. **Test connection:**
@@ -204,7 +204,7 @@ sudo docker exec ray-head ray status
 
 1. **New IPs:**
    - Old Tailscale: `axelofwar-dev-terminal-1`
-   - New Tailscale: `100.90.57.39` (axelofwar-server)
+   - New Tailscale: `<TAILSCALE_IP>` (axelofwar-server)
 
 2. **GPU Upgrade:**
    - Added: RTX 3090 Ti (24GB)
