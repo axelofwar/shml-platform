@@ -4,6 +4,11 @@
 
 set -e
 
+# Load environment variables if .env exists
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | grep -v '^$' | xargs)
+fi
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -111,7 +116,10 @@ echo ""
 
 # Test Grafana logins
 echo "Grafana Logins:"
-PASSWORD='AiSolutions2350!'
+PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
+if [ -z "$PASSWORD" ]; then
+    echo -e "${YELLOW}⚠${NC} GRAFANA_ADMIN_PASSWORD not set, skipping login tests"
+else
 mlflow_grafana_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost/grafana/login \
   -H "Content-Type: application/json" \
   -d "{\"user\":\"admin\",\"password\":\"$PASSWORD\"}")
@@ -132,6 +140,7 @@ if [ "$ray_grafana_code" == "200" ]; then
 else
     echo -e "${RED}✗${NC} Ray Grafana login failed (HTTP $ray_grafana_code)"
     ((failed++))
+fi
 fi
 
 echo ""

@@ -188,9 +188,9 @@ sudo docker exec ray-compute-api python3 /tmp/test_full_training.py
 
 ### Access URLs
 ```
-✓ Ray Dashboard: http://100.90.57.39/ray/#/jobs
-✓ Ray Grafana: http://100.90.57.39/ray-grafana/ (admin / AiSolutions2350!)
-✓ MLflow: http://100.90.57.39/mlflow/ (mlflow / AiSolutions2350!)
+✓ Ray Dashboard: http://<TAILSCALE_IP>/ray/#/jobs
+✓ Ray Grafana: http://<TAILSCALE_IP>/ray-grafana/ (admin / <your-password-from-.env>)
+✓ MLflow: http://<TAILSCALE_IP>/mlflow/ (mlflow / <your-password-from-.env>)
 ```
 
 ## Monitoring

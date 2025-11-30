@@ -1,0 +1,258 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Platform Health Overview",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "DOWN"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"mlflow-server\"}", "refId": "A", "legendFormat": "MLflow Server"}],
+      "title": "MLflow Server",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "DOWN"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 4, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"mlflow-api\"}", "refId": "A", "legendFormat": "MLflow API"}],
+      "title": "MLflow API",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "DOWN"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 8, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"ray-head\"}", "refId": "A", "legendFormat": "Ray Head"}],
+      "title": "Ray Head",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 0, "text": "DOWN"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 12, "y": 1},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"ray-compute-api\"}", "refId": "A", "legendFormat": "Ray API"}],
+      "title": "Ray API",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "orange", "index": 0, "text": "OFFLINE"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 16, "y": 1},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"qwen3-vl-api\"} or vector(0)", "refId": "A", "legendFormat": "LLM API"}],
+      "title": "LLM API",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "blue", "index": 0, "text": "STANDBY"}}, "type": "value"},
+            {"options": {"1": {"color": "green", "index": 1, "text": "LOADED"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 3, "w": 4, "x": 20, "y": 1},
+      "id": 6,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"expr": "up{job=\"z-image-api\"} or vector(0)", "refId": "A", "legendFormat": "Image Gen"}],
+      "title": "Image Gen",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 4},
+      "id": 101,
+      "panels": [],
+      "title": "System Resources",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": true},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+          "unit": "percent",
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 5},
+      "id": 10,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "100 - (avg(irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "refId": "A", "legendFormat": "CPU Usage"}],
+      "title": "CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": true},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]},
+          "unit": "percent",
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 5},
+      "id": 11,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "refId": "A", "legendFormat": "Memory Usage"}],
+      "title": "Memory Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": true},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 85}]},
+          "unit": "percent",
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
+      "id": 12,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "(1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})) * 100", "refId": "A", "legendFormat": "Disk Usage"}],
+      "title": "Disk Usage",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13},
+      "id": 102,
+      "panels": [],
+      "title": "Container Resources",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": true},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "id": 20,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "container_memory_usage_bytes{name=~\"mlflow.*|ray.*|qwen.*|z-image.*|inference.*\"}", "refId": "A", "legendFormat": "{{name}}"}],
+      "title": "Container Memory Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": true},
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "id": 21,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "rate(container_cpu_usage_seconds_total{name=~\"mlflow.*|ray.*|qwen.*|z-image.*|inference.*\"}[5m]) * 100", "refId": "A", "legendFormat": "{{name}}"}],
+      "title": "Container CPU Usage",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["overview", "platform", "ml-platform"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ML Platform Overview",
+  "uid": "platform-overview",
+  "version": 1
+}

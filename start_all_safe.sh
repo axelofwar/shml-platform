@@ -109,9 +109,10 @@ print_status "$GREEN" "✓ All services stopped and cleaned up"
 # Step 3: Start infrastructure services
 print_status "$BLUE" "\nStep 3: Starting infrastructure services..."
 print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: traefik, redis, postgres databases..."
+print_status "$YELLOW" "Starting: traefik, redis, shared-postgres, authentik databases..."
 
-docker compose up -d traefik redis mlflow-postgres ray-postgres authentik-db authentik-redis node-exporter cadvisor 2>&1 | grep -v "WARNING:" | tail -5
+# Note: shared-postgres replaces mlflow-postgres + ray-postgres + inference-postgres
+docker compose up -d traefik redis shared-postgres authentik-db authentik-redis node-exporter cadvisor 2>&1 | grep -v "WARNING:" | tail -5
 
 sleep 10
 print_status "$GREEN" "✓ Infrastructure services started"
@@ -135,17 +136,48 @@ docker compose up -d mlflow-nginx mlflow-api ray-compute-api authentik-worker 2>
 
 sleep 20
 
-# Step 6: Start monitoring services
+# Step 6: Start monitoring services (adminer only in dev profile)
 print_status "$BLUE" "\nStep 6: Starting monitoring services..."
 print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: prometheus, grafana, adminer..."
+print_status "$YELLOW" "Starting: unified prometheus, grafana..."
 
-docker compose up -d mlflow-prometheus mlflow-grafana ray-prometheus ray-grafana mlflow-adminer 2>&1 | grep -v "WARNING:" | tail -5
+docker compose up -d prometheus grafana 2>&1 | grep -v "WARNING:" | tail -5
 
 sleep 10
 
-# Step 7: Final status check
-print_status "$BLUE" "\nStep 7: Checking final service status..."
+# Step 7: Start inference stack (optional - requires GPU)
+print_status "$BLUE" "\nStep 7: Starting inference stack (if available)..."
+print_status "$BLUE" "---------------------------------------"
+
+# Check if inference docker-compose exists
+if [ -f "./inference/docker-compose.inference.yml" ]; then
+    # Check if GPU is available
+    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+        print_status "$YELLOW" "GPU detected, starting inference services..."
+        
+        # Note: inference-postgres removed - uses shared-postgres from main stack
+        print_status "$YELLOW" "Starting LLM service (Qwen3-VL on RTX 2070)..."
+        docker compose -f ./inference/docker-compose.inference.yml up -d qwen3-vl-api 2>&1 | grep -v "WARNING:" | tail -3 || true
+        
+        print_status "$YELLOW" "Starting inference gateway..."
+        docker compose -f ./inference/docker-compose.inference.yml up -d inference-gateway 2>&1 | grep -v "WARNING:" | tail -3 || true
+        
+        # Z-Image is on-demand, don't start by default
+        print_status "$BLUE" "Note: Z-Image (image generation) is on-demand and will load when first requested"
+        
+        sleep 10
+        print_status "$GREEN" "✓ Inference stack started"
+    else
+        print_status "$YELLOW" "⚠ No GPU detected - skipping inference services"
+        print_status "$BLUE" "  To start inference manually when GPU available:"
+        print_status "$BLUE" "  ./inference/scripts/start_inference.sh"
+    fi
+else
+    print_status "$YELLOW" "⚠ Inference stack not found - skipping"
+fi
+
+# Step 8: Final status check
+print_status "$BLUE" "\nStep 8: Checking final service status..."
 print_status "$BLUE" "---------------------------------------"
 
 docker compose ps 2>&1 | grep -v "WARNING: The following deploy"
@@ -155,7 +187,7 @@ print_status "$BLUE" "Checking service health..."
 echo ""
 
 # Check critical services
-CRITICAL_SERVICES=("ml-platform-traefik" "mlflow-server" "mlflow-postgres" "ray-head")
+CRITICAL_SERVICES=("ml-platform-traefik" "mlflow-server" "shared-postgres" "ray-head")
 FAILED_SERVICES=()
 
 for service in "${CRITICAL_SERVICES[@]}"; do
@@ -184,7 +216,7 @@ if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
     echo ""
     
     LAN_IP=$(hostname -I | awk '{print $1}')
-    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.90.57.39")
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "${TAILSCALE_IP:-localhost}")
     
     echo "  🌐 Local Access:"
     echo "    MLflow UI:          http://localhost/mlflow/"
@@ -200,11 +232,33 @@ if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
     echo "    MLflow UI:          http://${TAILSCALE_IP}/mlflow/"
     echo "    Ray Dashboard:      http://${TAILSCALE_IP}/ray/"
     echo ""
+    
+    # Check if inference stack is running
+    if docker ps --filter "name=qwen3-vl-api" --filter "status=running" | grep -q "qwen3-vl-api"; then
+        echo "  🤖 Inference Stack (Local LLM & Image Gen):"
+        echo "    LLM Health:         http://localhost/api/llm/health"
+        echo "    LLM Completions:    http://localhost/api/llm/v1/chat/completions"
+        echo "    Image Generation:   http://localhost/api/image/v1/generate"
+        echo "    Gateway Status:     http://localhost/inference/health"
+        echo "    Conversations:      http://localhost/inference/conversations"
+        echo ""
+    fi
+    
     print_status "$BLUE" "📊 Management:"
     echo "    View logs:          docker compose logs -f [service-name]"
     echo "    Check status:       docker compose ps"
     echo "    Stop all:           docker compose down"
     echo ""
+    
+    # Check if inference is running, add inference-specific commands
+    if [ -f "./inference/docker-compose.inference.yml" ]; then
+        echo "  🤖 Inference Management:"
+        echo "    Start inference:    ./inference/scripts/start_inference.sh"
+        echo "    Stop inference:     ./inference/scripts/stop_inference.sh"
+        echo "    Yield GPU:          ./inference/scripts/yield_gpu_for_training.sh"
+        echo "    Inference logs:     docker compose -f ./inference/docker-compose.inference.yml logs -f"
+        echo ""
+    fi
     
     # Test API endpoint
     print_status "$BLUE" "🧪 Testing MLflow API..."
@@ -212,6 +266,21 @@ if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
         print_status "$GREEN" "  ✓ MLflow API is responding"
     else
         print_status "$YELLOW" "  ⚠ MLflow API not responding yet (may need more time)"
+    fi
+    
+    # Test inference endpoints if running
+    if docker ps --filter "name=qwen3-vl-api" --filter "status=running" | grep -q "qwen3-vl-api"; then
+        print_status "$BLUE" "🧪 Testing Inference API..."
+        if curl -s -m 5 http://localhost/api/llm/health > /dev/null 2>&1; then
+            print_status "$GREEN" "  ✓ LLM API is responding"
+        else
+            print_status "$YELLOW" "  ⚠ LLM API not responding yet (model may be loading)"
+        fi
+        if curl -s -m 3 http://localhost/inference/health > /dev/null 2>&1; then
+            print_status "$GREEN" "  ✓ Inference Gateway is responding"
+        else
+            print_status "$YELLOW" "  ⚠ Inference Gateway not responding yet"
+        fi
     fi
     
     exit 0

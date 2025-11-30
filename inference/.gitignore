@@ -1,0 +1,16 @@
+# Inference Stack - Git Ignore
+# Add these patterns to root .gitignore
+
+# Model cache (large files, ~30GB)
+inference/data/
+inference/data/models/
+
+# Secrets
+inference/secrets/
+
+# Outputs
+inference/backups/
+inference/logs/
+
+# Generated images
+z-image-outputs/

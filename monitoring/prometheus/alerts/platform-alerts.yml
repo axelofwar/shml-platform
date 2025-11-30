@@ -1,0 +1,257 @@
+# Alert rules for all services
+# Loaded by unified Prometheus
+
+groups:
+  # ==========================================================================
+  # Infrastructure Alerts
+  # ==========================================================================
+  - name: infrastructure
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 80% for 5 minutes"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 85%"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Less than 15% disk space remaining"
+
+  # ==========================================================================
+  # Container Alerts
+  # ==========================================================================
+  - name: containers
+    rules:
+      - alert: ContainerDown
+        expr: up{job=~"mlflow.*|ray.*|inference.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been unreachable for 2 minutes"
+
+      - alert: ContainerHighMemory
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} high memory"
+          description: "Container is using >90% of its memory limit"
+
+  # ==========================================================================
+  # MLflow Alerts
+  # ==========================================================================
+  - name: mlflow
+    rules:
+      - alert: MLflowServerDown
+        expr: up{job="mlflow-server"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          stack: mlflow
+        annotations:
+          summary: "MLflow Server is down"
+          description: "MLflow tracking server is unreachable"
+
+      - alert: MLflowAPIDown
+        expr: up{job="mlflow-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          stack: mlflow
+        annotations:
+          summary: "MLflow API is down"
+          description: "MLflow enhanced API is unreachable"
+
+      - alert: MLflowHighLatency
+        expr: histogram_quantile(0.95, rate(mlflow_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          stack: mlflow
+        annotations:
+          summary: "MLflow high latency"
+          description: "95th percentile latency is above 2 seconds"
+
+  # ==========================================================================
+  # Ray Compute Alerts
+  # ==========================================================================
+  - name: ray
+    rules:
+      - alert: RayHeadDown
+        expr: up{job="ray-head"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          stack: ray
+        annotations:
+          summary: "Ray head node is down"
+          description: "Ray cluster head is unreachable"
+
+      - alert: RayClusterDown
+        expr: up{job="ray-cluster"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          stack: ray
+        annotations:
+          summary: "Ray cluster metrics unavailable"
+          description: "No Ray nodes are reporting metrics"
+
+      - alert: RayAPIDown
+        expr: up{job="ray-compute-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          stack: ray
+        annotations:
+          summary: "Ray Compute API is down"
+          description: "Ray job submission API is unreachable"
+
+      - alert: RayJobQueueBacklog
+        expr: ray_pending_jobs > 10
+        for: 10m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "Ray job queue backlog"
+          description: "More than 10 jobs pending for 10+ minutes"
+
+      # Autoscaler and Node Alerts
+      - alert: RayNodeDead
+        expr: ray_node_death_total > 0
+        for: 1m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "Ray node died"
+          description: "A Ray worker node has died unexpectedly"
+
+      - alert: RayObjectStoreMemoryHigh
+        expr: (ray_object_store_memory{Type="Used"} / ray_object_store_memory{Type="Total"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "Ray object store memory high"
+          description: "Object store memory usage above 90%"
+
+      - alert: RayWorkerMemoryHigh
+        expr: ray_node_mem_used / ray_node_mem_total > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "Ray worker memory high"
+          description: "Worker node memory usage above 90%"
+
+      - alert: RayGPUUtilizationLow
+        expr: ray_node_gpus_utilization < 20
+        for: 30m
+        labels:
+          severity: info
+          stack: ray
+        annotations:
+          summary: "Ray GPU underutilized"
+          description: "GPU utilization below 20% for 30 minutes - consider scaling down"
+
+      - alert: RayTasksPending
+        expr: ray_tasks{State="PENDING"} > 100
+        for: 10m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "Ray tasks backlog"
+          description: "More than 100 tasks pending for 10+ minutes"
+
+      - alert: RayActorRestartHigh
+        expr: increase(ray_actor_restarts_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          stack: ray
+        annotations:
+          summary: "High Ray actor restart rate"
+          description: "More than 5 actor restarts in 5 minutes"
+
+  # ==========================================================================
+  # Inference Alerts
+  # ==========================================================================
+  - name: inference
+    rules:
+      - alert: LLMServiceDown
+        expr: up{job="qwen3-vl-api"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          stack: inference
+        annotations:
+          summary: "LLM service is down"
+          description: "Qwen3-VL API is unreachable for 5 minutes"
+
+      - alert: InferenceGatewayDown
+        expr: up{job="inference-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          stack: inference
+        annotations:
+          summary: "Inference gateway is down"
+          description: "Inference gateway API is unreachable"
+
+      - alert: InferenceQueueBacklog
+        expr: inference_queue_pending > 50
+        for: 5m
+        labels:
+          severity: warning
+          stack: inference
+        annotations:
+          summary: "Inference queue backlog"
+          description: "More than 50 requests pending"
+
+  # ==========================================================================
+  # GPU Alerts
+  # ==========================================================================
+  - name: gpu
+    rules:
+      - alert: GPUMemoryHigh
+        expr: nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes > 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory usage high on {{ $labels.gpu }}"
+          description: "GPU memory usage above 95%"
+
+      - alert: GPUTemperatureHigh
+        expr: nvidia_gpu_temperature_celsius > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature high on {{ $labels.gpu }}"
+          description: "GPU temperature above 85°C"
