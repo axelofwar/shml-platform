@@ -16,7 +16,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "2"))  # Separate from MLflow (0) and Ray (1)
 
 # PostgreSQL settings (chat history)
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "inference-postgres")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "shared-postgres")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 POSTGRES_DB = os.getenv("POSTGRES_DB", "inference")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "inference")
