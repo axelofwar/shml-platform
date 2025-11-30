@@ -25,8 +25,9 @@ def test_simple_gpu():
         entrypoint_num_cpus=1,
     )
     
+    tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
     print(f"✅ Job submitted: {job_id}")
-    print(f"   Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
+    print(f"   Dashboard: http://{tailscale_ip}/ray/#/jobs/{job_id}")
     print()
     
     # Wait for completion

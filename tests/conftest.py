@@ -13,6 +13,17 @@ TEST_HOSTS = {
     "vpn": "http://${TAILSCALE_IP}"
 }
 
+# Inference stack endpoints
+INFERENCE_ENDPOINTS = {
+    "gateway_health": "/inference/health",
+    "llm_health": "/api/llm/health",
+    "image_health": "/api/image/health",
+    "llm_completions": "/api/llm/v1/chat/completions",
+    "image_generate": "/api/image/v1/generate",
+    "queue_status": "/inference/queue/status",
+    "conversations": "/inference/conversations"
+}
+
 # Set MLflow artifact directory to a temp directory accessible to tests
 # This prevents permission issues when trying to write to /mlflow
 os.environ.setdefault("MLFLOW_ARTIFACT_ROOT", tempfile.gettempdir() + "/mlflow-test-artifacts")
@@ -60,6 +71,135 @@ def incomplete_tags() -> Dict[str, str]:
         # Missing: developer, environment, etc.
     }
 
+
+# ============================================================================
+# Inference Stack Fixtures
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def inference_base_url() -> str:
+    """Get base URL for inference endpoints"""
+    return os.getenv("INFERENCE_URL", TEST_HOSTS["local"])
+
+
+@pytest.fixture(scope="session")
+def inference_endpoints() -> Dict[str, str]:
+    """Provide inference endpoint paths"""
+    return INFERENCE_ENDPOINTS
+
+
+@pytest.fixture(scope="session")
+def llm_url(inference_base_url: str) -> str:
+    """Get LLM API URL"""
+    return f"{inference_base_url}/api/llm"
+
+
+@pytest.fixture(scope="session")
+def image_url(inference_base_url: str) -> str:
+    """Get image generation API URL"""
+    return f"{inference_base_url}/api/image"
+
+
+@pytest.fixture(scope="session")
+def gateway_url(inference_base_url: str) -> str:
+    """Get inference gateway URL"""
+    return f"{inference_base_url}/inference"
+
+
+@pytest.fixture
+def sample_chat_request() -> Dict:
+    """Sample chat completion request"""
+    return {
+        "model": "qwen3-vl-8b",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello, can you help me plan a project?"}
+        ],
+        "max_tokens": 256,
+        "temperature": 0.7
+    }
+
+
+@pytest.fixture
+def sample_image_request() -> Dict:
+    """Sample image generation request"""
+    return {
+        "prompt": "A beautiful sunset over mountains, photorealistic, 8k",
+        "negative_prompt": "blurry, low quality, cartoon",
+        "width": 1024,
+        "height": 1024,
+        "num_inference_steps": 8,
+        "guidance_scale": 1.0
+    }
+
+
+@pytest.fixture
+def mock_chat_response() -> Dict:
+    """Mock chat completion response for testing without GPU"""
+    import time
+    return {
+        "id": "chatcmpl-mock-123",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "qwen3-vl-8b",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "I'd be happy to help you plan your project! Let's start by understanding the scope and goals."
+                },
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 25,
+            "completion_tokens": 20,
+            "total_tokens": 45
+        }
+    }
+
+
+@pytest.fixture
+def mock_image_response() -> Dict:
+    """Mock image generation response for testing without GPU"""
+    import time
+    import base64
+    # 1x1 pixel transparent PNG
+    mock_image = base64.b64encode(
+        b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+        b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00'
+        b'\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    ).decode()
+    
+    return {
+        "id": "img-mock-123",
+        "created": int(time.time()),
+        "data": [
+            {
+                "url": None,
+                "b64_json": mock_image,
+                "revised_prompt": None
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def mock_health_response() -> Dict:
+    """Mock healthy service response"""
+    return {
+        "status": "healthy",
+        "service": "mock-service",
+        "model_loaded": True,
+        "gpu_available": True,
+        "gpu_memory_used_mb": 6500,
+        "gpu_memory_total_mb": 8192,
+        "uptime_seconds": 3600,
+        "version": "1.0.0"
+    }
+
+
 def pytest_addoption(parser):
     """Add custom command line options"""
     parser.addoption(
@@ -84,6 +224,8 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "local: test local access")
     config.addinivalue_line("markers", "lan: test LAN access")
     config.addinivalue_line("markers", "vpn: test VPN access")
+    config.addinivalue_line("markers", "inference: test inference stack")
+    config.addinivalue_line("markers", "gpu: test requires GPU")
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection based on options"""

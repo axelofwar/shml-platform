@@ -30,7 +30,7 @@ class RemoteComputeClient:
         Initialize remote compute client
         
         Args:
-            server_url: Server URL (e.g., "http://100.69.227.36:8266")
+            server_url: Server URL (e.g., "http://localhost:8266" or use TAILSCALE_IP env var)
         """
         self.server_url = server_url.rstrip('/')
         self.session = requests.Session()

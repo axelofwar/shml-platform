@@ -255,8 +255,9 @@ def main():
     print("Remote Ray Compute Server Validation")
     print("="*60)
     
-    # Get server URL
-    default_url = "http://100.69.227.36:8266"
+    # Get server URL from environment or argument
+    tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
+    default_url = f"http://{tailscale_ip}:8266"
     
     if len(sys.argv) > 1:
         server_url = sys.argv[1]

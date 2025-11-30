@@ -245,11 +245,11 @@ Projects/
 
 ## Credentials
 
-All passwords set to: `AiSolutions2350!`
+All passwords set to: `<your-password-from-.env>`
 
-- MLflow Grafana: admin / AiSolutions2350!
-- Ray Grafana: admin / AiSolutions2350!
-- Authentik: akadmin / AiSolutions2350!
+- MLflow Grafana: admin / <your-password-from-.env>
+- Ray Grafana: admin / <your-password-from-.env>
+- Authentik: akadmin / <your-password-from-.env>
 
 Stored in:
 - `ml-platform/mlflow-server/secrets/grafana_password.txt`
