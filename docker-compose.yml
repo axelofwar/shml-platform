@@ -507,8 +507,6 @@ services:
     - ml-platform
 
   # ray-postgres removed - consolidated into shared-postgres
-    expose:
-    - '5432'
   ray-head:
     build:
       context: ./ray_compute/docker
