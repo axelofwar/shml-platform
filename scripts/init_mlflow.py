@@ -165,14 +165,17 @@ for exp in all_experiments:
         if tags_str:
             print(f"    Tags: {tags_str}")
 
+# Get Tailscale IP from environment or use localhost
+tailscale_ip = os.getenv("TAILSCALE_IP", "localhost")
+
 print()
 print("=" * 70)
 print("✅ MLflow initialization complete!")
 print("=" * 70)
 print()
 print("Access Points:")
-print(f"  - UI: http://100.90.57.39/mlflow/")
-print(f"  - API: http://100.90.57.39/api/2.0/mlflow/")
+print(f"  - UI: http://{tailscale_ip}/mlflow/")
+print(f"  - API: http://{tailscale_ip}/api/2.0/mlflow/")
 print()
 print("Next Steps:")
 print("  1. Start training runs with mlflow.start_run()")

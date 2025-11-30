@@ -2,15 +2,15 @@
 
 ## Issues Identified
 
-### 1. ✅ Ray Dashboard (http://100.90.57.39/ray/)
+### 1. ✅ Ray Dashboard (http://<TAILSCALE_IP>/ray/)
 **Status:** WORKING
 - Dashboard accessible and loading correctly
-- Jobs page accessible at http://100.90.57.39/ray/#/jobs
+- Jobs page accessible at http://<TAILSCALE_IP>/ray/#/jobs
 - **Issue:** Job submissions are failing
   - Jobs fail immediately after submission
   - Need to test job submission with proper runtime environment
 
-### 2. ⚠️ MLflow UI (http://100.90.57.39/mlflow/)
+### 2. ⚠️ MLflow UI (http://<TAILSCALE_IP>/mlflow/)
 **Status:** PARTIALLY WORKING
 - UI is accessible and loading
 - **Configured Features:**
@@ -25,17 +25,17 @@
   - Need to register initial datasets
   - Model registry is empty (no registered models yet)
 
-### 3. ❌ MLflow Grafana (http://100.90.57.39/mlflow-grafana/)
+### 3. ❌ MLflow Grafana (http://<TAILSCALE_IP>/mlflow-grafana/)
 **Status:** LOGIN FAILING
 - Service accessible (302 redirect to login)
 - **Issue:** Password authentication failing
   - Password file exists: `/mlflow-server/secrets/grafana_password.txt`
-  - Contains: `AiSolutions2350!`
+  - Contains: `<your-password-from-.env>`
   - Grafana environment variable: `GF_SECURITY_ADMIN_PASSWORD_FILE`
   - Login returns 401 Unauthorized
 - **Root Cause:** Grafana may not be reading the password file correctly or admin password was already initialized
 
-### 4. ❌ Ray Grafana (http://100.90.57.39/ray-grafana/)
+### 4. ❌ Ray Grafana (http://<TAILSCALE_IP>/ray-grafana/)
 **Status:** LOGIN FAILING  
 - Service accessible (302 redirect to login)
 - **Issue:** Same as MLflow Grafana
@@ -43,7 +43,7 @@
   - Contains: `oVkbwOk7AtELl2xz`
   - Login failing with 401
 
-### 5. ❌ Authentik (http://100.90.57.39:9000/)
+### 5. ❌ Authentik (http://<TAILSCALE_IP>:9000/)
 **Status:** NOT WORKING (404 Error)
 - Service is running and healthy
 - Port 9000 is accessible
@@ -52,7 +52,7 @@
   - Need to run initial setup wizard or configure default flows
   - Missing bootstrap configuration
 
-### 6. ✅ Traefik Dashboard (http://100.90.57.39:8090/)
+### 6. ✅ Traefik Dashboard (http://<TAILSCALE_IP>:8090/)
 **Status:** WORKING
 - Dashboard accessible
 - Shows all configured routers and services
@@ -70,7 +70,7 @@
 **Solution:**
 ```bash
 # Reset MLflow Grafana
-sudo docker exec mlflow-grafana grafana-cli admin reset-admin-password AiSolutions2350!
+sudo docker exec mlflow-grafana grafana-cli admin reset-admin-password <your-password-from-.env>
 
 # Reset Ray Grafana
 sudo docker exec ray-grafana grafana-cli admin reset-admin-password oVkbwOk7AtELl2xz
@@ -98,7 +98,7 @@ sudo docker exec -it authentik-server ak create_admin_group
 
 **Alternative:** Update `.env` with proper Authentik bootstrap config:
 ```env
-AUTHENTIK_BOOTSTRAP_PASSWORD=AiSolutions2350!
+AUTHENTIK_BOOTSTRAP_PASSWORD=<your-password-from-.env>
 AUTHENTIK_BOOTSTRAP_EMAIL=admin@aiSolutions.com
 AUTHENTIK_BOOTSTRAP_TOKEN=<generate-secure-token>
 ```
@@ -184,21 +184,21 @@ print(client.get_job_logs(job_id))
 ## Access Information (Corrected)
 
 ### Working URLs:
-- **Ray Dashboard:** http://100.90.57.39/ray/
-- **MLflow UI:** http://100.90.57.39/mlflow/
-- **Traefik Dashboard:** http://100.90.57.39:8090/
+- **Ray Dashboard:** http://<TAILSCALE_IP>/ray/
+- **MLflow UI:** http://<TAILSCALE_IP>/mlflow/
+- **Traefik Dashboard:** http://<TAILSCALE_IP>:8090/
 
 ### Requires Password Reset:
-- **MLflow Grafana:** http://100.90.57.39/mlflow-grafana/
+- **MLflow Grafana:** http://<TAILSCALE_IP>/mlflow-grafana/
   - Username: `admin`
-  - Password: `AiSolutions2350!` (after reset)
+  - Password: `<your-password-from-.env>` (after reset)
 
-- **Ray Grafana:** http://100.90.57.39/ray-grafana/
+- **Ray Grafana:** http://<TAILSCALE_IP>/ray-grafana/
   - Username: `admin`
   - Password: `oVkbwOk7AtELl2xz` (after reset)
 
 ### Requires Configuration:
-- **Authentik:** http://100.90.57.39:9000/
+- **Authentik:** http://<TAILSCALE_IP>:9000/
   - Needs bootstrap configuration
   - Default admin setup required
 
@@ -208,7 +208,7 @@ print(client.get_job_logs(job_id))
 
 After applying fixes:
 
-- [ ] MLflow Grafana login works with `admin/AiSolutions2350!`
+- [ ] MLflow Grafana login works with `admin/<your-password-from-.env>`
 - [ ] Ray Grafana login works with `admin/oVkbwOk7AtELl2xz`
 - [ ] MLflow shows default experiments (face-detection-training, etc.)
 - [ ] Authentik loads without 404 error

@@ -12,7 +12,7 @@ NC='\033[0m'
 if [ -z "$1" ]; then
     echo "Usage: ./update_passwords.sh <new_password>"
     echo ""
-    echo "Example: ./update_passwords.sh AiSolutions2350!"
+    echo "Example: ./update_passwords.sh \$(openssl rand -base64 24)"
     echo ""
     echo "This will update passwords for:"
     echo "  - MLflow Grafana (admin)"

@@ -1,9 +1,9 @@
 ````instructions
 # GitHub Copilot Instructions - ML Platform (Root)
 
-**Last Updated:** 2025-11-23  
-**Version:** 0.1.0  
-**License:** MIT  
+**Last Updated:** 2025-11-23
+**Version:** 0.1.0
+**License:** MIT
 **Project:** Unified ML Platform (MLflow + Ray Compute + Traefik)
 
 ---
@@ -18,7 +18,7 @@
 
 ### Current Documentation Files (17 TOTAL - DO NOT EXCEED)
 
-**Root Level (11 core docs):**
+**Root Level (13 core docs):**
 1. `README.md` - Project overview, quick start, all services status
 2. `ARCHITECTURE.md` - System design, infrastructure, service topology
 3. `API_REFERENCE.md` - All API documentation (MLflow, Ray, Traefik)
@@ -27,9 +27,11 @@
 6. `LESSONS_LEARNED.md` - Critical patterns (Traefik priority, Ray memory, Docker networking, startup)
 7. `REMOTE_QUICK_REFERENCE.md` - Remote access guide (public, no credentials)
 8. `NEW_GPU_SETUP.md` - GPU configuration (exportable to remote machines)
-9. `mlflow-server/README.md` - MLflow-specific operations
-10. `ray_compute/README.md` - Ray-specific operations
-11. **Copilot instructions:** This file + subproject copilot-instructions.md
+9. `MONETIZATION_STRATEGY.md` - Revenue streams, pricing models, B2B/B2C strategies (SHARED with pii-pro)
+10. `SELF_HOSTED_PREMIUM_FEATURES.md` - Supabase-like features (PostgREST, MinIO, Meilisearch, etc.)
+11. `mlflow-server/README.md` - MLflow-specific operations
+12. `ray_compute/README.md` - Ray-specific operations
+13. **Copilot instructions:** This file + subproject copilot-instructions.md
 
 **Project Files (6 files):**
 - `LICENSE` - MIT License
@@ -39,7 +41,7 @@
 - `.gitignore` - Git ignore rules (350+ lines)
 - `REMOTE_ACCESS_COMPLETE.sh` - Credentials script (git-ignored)
 
-**TOTAL: 17 files (3 files below 20-file limit)**
+**TOTAL: 19 files (1 file below 20-file limit)**
 
 ---
 
@@ -63,7 +65,7 @@
 
 2. **ALWAYS respond with:**
    ```
-   "I'll add [topic] to [existing-file.md] in the [section] section instead of creating a new file. 
+   "I'll add [topic] to [existing-file.md] in the [section] section instead of creating a new file.
    This keeps us under the 20-file documentation limit (currently 17 files)."
    ```
 
@@ -82,7 +84,7 @@
 ```
 User: "Create a DEPLOYMENT_GUIDE.md"
 ❌ Bad: Create the file
-✅ Good: "I'll add deployment information to README.md under 'Deployment' section. 
+✅ Good: "I'll add deployment information to README.md under 'Deployment' section.
           This prevents exceeding our 20-file limit (currently 17 files)."
 
 User: "Document the backup process in a new file"
@@ -97,7 +99,7 @@ User: "Create an OAuth troubleshooting guide"
 
 User: "Make a QUICK_START.md"
 ❌ Bad: Create the file
-✅ Good: "The quick start is already in README.md under 'Quick Start' section. 
+✅ Good: "The quick start is already in README.md under 'Quick Start' section.
           I'll enhance that section instead of creating a duplicate."
 ```
 
@@ -169,6 +171,15 @@ ml-platform/
 │   ├── docker-compose.gateway.yml # Gateway configuration
 │   └── traefik.yml                # Traefik config
 │
+├── inference/                     # Local LLM + Image Gen
+│   ├── docker-compose.inference.yml
+│   ├── qwen3-vl/                  # Qwen3-VL-8B service
+│   ├── z-image/                   # Z-Image-Turbo service
+│   ├── gateway/                   # Queue, rate limit, history
+│   ├── scripts/                   # start/stop/download
+│   ├── secrets/                   # Git-ignored
+│   └── data/models/               # Git-ignored, HuggingFace cache
+│
 ├── scripts/                       # Platform scripts
 │   ├── start_all.sh
 │   ├── stop_all.sh
@@ -210,7 +221,13 @@ ml-platform/
 **Traefik Gateway (1 service):**
 - traefik (reverse proxy, load balancer)
 
-**Total: 19 containers, 16/16 services healthy**
+**Inference Stack (4 services):**
+- qwen3-vl-api (LLM, RTX 2070, INT4 quantized)
+- z-image-api (Image Gen, RTX 3090, on-demand)
+- inference-gateway (queue, rate limit, history)
+- inference-postgres (chat history DB)
+
+**Total: 23 containers (19 core + 4 inference)**
 
 ### Network Architecture
 
@@ -222,7 +239,45 @@ ml-platform network (shared)
 ├── ray-compute-api - :8000
 ├── ray-compute-ui - :3002
 ├── authentik - :9000
+├── qwen3-vl-api - :8000 (via /api/llm)
+├── z-image-api - :8000 (via /api/image)
+├── inference-gateway - :8000 (via /inference)
 └── monitoring services
+```
+
+---
+
+## 🤖 Inference Stack (Local LLM + Image Generation)
+
+### GPU Allocation Strategy
+- **RTX 2070 (cuda:0, 8GB)**: Qwen3-VL-8B-INT4 - always loaded
+- **RTX 3090 (cuda:1, 24GB)**: Z-Image - on-demand, yields to training
+
+### Key Endpoints
+```
+/api/llm/v1/chat/completions  - OpenAI-compatible LLM
+/api/llm/health               - Qwen3-VL status
+/api/image/v1/generate        - Image generation
+/api/image/yield-to-training  - Free RTX 3090 for training
+/inference/health             - Gateway status
+/inference/conversations      - Chat history
+/inference/queue/status       - Request queue
+```
+
+### Privacy Guarantees
+- `TRANSFORMERS_OFFLINE=1` - No outbound connections
+- Models cached locally after one-time download
+- Chat history in local PostgreSQL only
+- Tailscale VPN required for remote access
+- No telemetry, no prompt logging
+
+### Resource Management
+```bash
+# Before training on RTX 3090:
+curl -X POST http://localhost/api/image/yield-to-training
+
+# Z-Image auto-unloads after 5min idle
+# Z-Image auto-reloads on next request
 ```
 
 ---
@@ -267,7 +322,7 @@ ml-platform network (shared)
 
 ### 1. Traefik Router Priority
 
-**Problem:** Traefik internal API intercepts `/api/*` requests  
+**Problem:** Traefik internal API intercepts `/api/*` requests
 **Solution:** Application routers MUST use priority `2147483647` (max int32)
 
 ```yaml
@@ -278,7 +333,7 @@ labels:
 
 ### 2. Ray Memory Allocation
 
-**Problem:** Ray head crashes with memory errors  
+**Problem:** Ray head crashes with memory errors
 **Solution:** Follow memory calculation rule
 
 ```
@@ -287,7 +342,7 @@ container_memory ≥ object_store_memory + shm_size + 1GB
 
 ### 3. Docker Networking (Ubuntu apt docker.io)
 
-**Problem:** Containers can't communicate after Docker reinstall  
+**Problem:** Containers can't communicate after Docker reinstall
 **Solution:** Disable bridge netfilter
 
 ```bash
@@ -297,7 +352,7 @@ sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=0
 
 ### 4. Service Startup Order
 
-**Problem:** Race conditions, orphaned containers  
+**Problem:** Race conditions, orphaned containers
 **Solution:** Use phased startup with cleanup
 
 ```bash
@@ -660,7 +715,7 @@ docker logs authentik-server
 
 ---
 
-**Last Updated:** November 23, 2025  
+**Last Updated:** November 23, 2025
 **Next Update:** When documentation structure changes or new patterns discovered
 
 **REMEMBER: <20 FILES TOTAL. CURRENT: 17 FILES. NEVER EXCEED THIS LIMIT.**

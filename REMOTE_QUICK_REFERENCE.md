@@ -21,14 +21,16 @@ PLATFORM_HOST="${SERVER_IP}"
 
 ## 🔗 Service URLs
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **MLflow UI** | `http://${TAILSCALE_IP}/mlflow/` | Experiment tracking UI |
-| **MLflow API** | `http://${TAILSCALE_IP}/api/2.0/mlflow/` | Standard REST API |
-| **Custom API** | `http://${TAILSCALE_IP}/api/v1/` | Enhanced API endpoints |
-| **Ray Dashboard** | `http://${TAILSCALE_IP}/ray/` | Job monitoring |
-| **Ray Jobs** | `http://${TAILSCALE_IP}:8265` | Job submission endpoint |
-| **Traefik** | `http://${TAILSCALE_IP}:8090` | Gateway dashboard |
+| Service           | URL                                      | Purpose                          |
+| ----------------- | ---------------------------------------- | -------------------------------- |
+| **MLflow UI**     | `http://${TAILSCALE_IP}/mlflow/`         | Experiment tracking UI           |
+| **MLflow API**    | `http://${TAILSCALE_IP}/api/2.0/mlflow/` | Standard REST API                |
+| **Custom API**    | `http://${TAILSCALE_IP}/api/v1/`         | Enhanced API endpoints           |
+| **Ray Dashboard** | `http://${TAILSCALE_IP}/ray/`            | Job monitoring                   |
+| **Ray Jobs API**  | `http://${TAILSCALE_IP}/ray/api/jobs/`   | Job submission (**via Traefik**) |
+| **Traefik**       | `http://${TAILSCALE_IP}:8090`            | Gateway dashboard                |
+
+> **Note:** Port 8265 is NOT exposed. Use the Traefik-proxied endpoint at `/ray/api/jobs/`.
 
 ---
 
@@ -82,13 +84,13 @@ X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target)
 with mlflow.start_run():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train, y_train)
-    
+
     accuracy = model.score(X_test, y_test)
-    
+
     mlflow.log_param("n_estimators", 100)
     mlflow.log_metric("accuracy", accuracy)
     mlflow.sklearn.log_model(model, "model")
-    
+
 print(f"✓ Logged to http://${TAILSCALE_IP}/mlflow/")
 ```
 
@@ -96,34 +98,62 @@ print(f"✓ Logged to http://${TAILSCALE_IP}/mlflow/")
 
 ## 🚀 Ray Job Submission
 
+### Via REST API (Recommended)
+
+Port 8265 is not exposed externally. Use the Traefik-proxied Jobs API:
+
 ```python
-from ray.job_submission import JobSubmissionClient
+import requests
+import time
 
-client = JobSubmissionClient("http://${TAILSCALE_IP}:8265")
+RAY_URL = "http://${TAILSCALE_IP}/ray"
 
-# Submit job
-job_id = client.submit_job(
-    entrypoint="python train.py",
-    runtime_env={
-        "working_dir": "./",
+# Submit a job
+job_id = f"my-job-{int(time.time())}"
+job_data = {
+    "entrypoint": "python train.py",
+    "submission_id": job_id,
+    "runtime_env": {
         "pip": ["mlflow==2.9.2", "scikit-learn"],
         "env_vars": {
             "MLFLOW_TRACKING_URI": "http://mlflow-server:5000"  # Internal DNS
         }
-    }
-)
+    },
+    "metadata": {"project": "my-project"}
+}
 
-print(f"Job submitted: {job_id}")
-print(f"Monitor at: http://${TAILSCALE_IP}/ray/#/jobs/{job_id}")
+response = requests.post(f"{RAY_URL}/api/jobs/", json=job_data, timeout=10)
+result = response.json()
+print(f"Submitted: {result.get('submission_id')}")
 
 # Check status
-status = client.get_job_status(job_id)
-print(f"Status: {status}")
+time.sleep(2)
+status = requests.get(f"{RAY_URL}/api/jobs/{job_id}", timeout=5).json()
+print(f"Status: {status.get('status')}")
 
 # Get logs
-logs = client.get_job_logs(job_id)
-print(logs)
+logs = requests.get(f"{RAY_URL}/api/jobs/{job_id}/logs", timeout=5).json()
+print(f"Logs: {logs.get('logs', '')}")
 ```
+
+### Via Ray JobSubmissionClient (Requires Port 8265)
+
+> **Note:** This method does NOT work currently as port 8265 is not exposed.
+
+```python
+# This will NOT work without port 8265 access:
+from ray.job_submission import JobSubmissionClient
+client = JobSubmissionClient("http://${TAILSCALE_IP}:8265")  # ❌ Port not exposed
+```
+
+### ⚠️ Known Issue: GPU Access in Job Containers
+
+Ray job containers currently **don't have GPU passthrough**:
+
+- Main Ray container: Has GPU access ✅
+- Job containers: No CUDA available ❌
+
+Until this is fixed on the server, GPU training jobs will fail.
 
 ---
 
@@ -156,18 +186,32 @@ curl http://${TAILSCALE_IP}/api/v1/experiments
 curl http://${TAILSCALE_IP}/api/v1/experiments/1
 ```
 
-### Ray API
+### Ray API (via Traefik)
 
 ```bash
 # List jobs
-curl http://${TAILSCALE_IP}:8265/api/jobs
+curl http://${TAILSCALE_IP}/ray/api/jobs/
+
+# Submit job
+curl -X POST http://${TAILSCALE_IP}/ray/api/jobs/ \
+  -H "Content-Type: application/json" \
+  -d '{"entrypoint": "echo hello", "submission_id": "test-123"}'
 
 # Get job status
-curl http://${TAILSCALE_IP}:8265/api/jobs/<job-id>
+curl http://${TAILSCALE_IP}/ray/api/jobs/<job-id>
 
-# Cluster info
-curl http://${TAILSCALE_IP}:8265/api/version
+# Get job logs
+curl http://${TAILSCALE_IP}/ray/api/jobs/<job-id>/logs
+
+# Cluster version
+curl http://${TAILSCALE_IP}/ray/api/version
+
+# Cluster status
+curl http://${TAILSCALE_IP}/ray/api/cluster_status
 ```
+
+> **Note:** Direct port 8265 access (e.g., `http://${TAILSCALE_IP}:8265/api/jobs`) is NOT available.
+> Always use the Traefik-proxied endpoint at `/ray/api/`.
 
 ---
 
@@ -176,11 +220,13 @@ curl http://${TAILSCALE_IP}:8265/api/version
 ### For Ray Jobs (running on cluster):
 
 Use **internal Docker DNS** for MLflow:
+
 ```python
 MLFLOW_TRACKING_URI = "http://mlflow-server:5000"  # ✅ Correct
 ```
 
 NOT external URL:
+
 ```python
 MLFLOW_TRACKING_URI = "http://${TAILSCALE_IP}/mlflow"  # ❌ Wrong from inside Ray
 ```
@@ -208,6 +254,7 @@ System has: **1x NVIDIA RTX 2070 (8GB VRAM)**
 ## 🔐 Credentials
 
 **See `REMOTE_ACCESS_COMPLETE.sh` for:**
+
 - Database passwords
 - Grafana credentials
 - OAuth secrets
@@ -220,6 +267,7 @@ System has: **1x NVIDIA RTX 2070 (8GB VRAM)**
 ## 📚 Documentation
 
 On platform host machine:
+
 - `ARCHITECTURE.md` - System design
 - `API_REFERENCE.md` - Complete API docs
 - `RAY_JOB_SUBMISSION_GUIDE.md` - Ray usage
@@ -271,6 +319,7 @@ curl -X POST http://${TAILSCALE_IP}/api/2.0/mlflow/experiments/search \
 **Uptime:** Stable, auto-restart enabled
 
 **For complete reference including all credentials:**
+
 ```bash
 cat REMOTE_ACCESS_COMPLETE.sh | less
 ```

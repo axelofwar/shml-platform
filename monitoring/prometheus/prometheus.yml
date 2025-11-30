@@ -1,0 +1,201 @@
+# Unified Prometheus Configuration
+# Consolidates mlflow-prometheus + ray-prometheus into single instance
+# Created: 2025-11-28
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "ml-platform"
+    environment: "production"
+
+# Alertmanager configuration (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # - 'alertmanager:9093'  # Uncomment if you add Alertmanager
+
+# Load alert rules from all services
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
+scrape_configs:
+  # ==========================================================================
+  # Infrastructure Metrics
+  # ==========================================================================
+
+  # Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+    relabel_configs:
+      - target_label: service
+        replacement: "prometheus"
+
+  # Traefik Gateway metrics
+  - job_name: "traefik"
+    static_configs:
+      - targets: ["traefik:8080"]
+    relabel_configs:
+      - target_label: service
+        replacement: "traefik-gateway"
+
+  # Node Exporter - Host system metrics
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+    relabel_configs:
+      - target_label: service
+        replacement: "host-system"
+      - target_label: instance
+        replacement: "ml-platform-host"
+
+  # cAdvisor - Container metrics
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    relabel_configs:
+      - target_label: service
+        replacement: "containers"
+
+  # ==========================================================================
+  # MLflow Stack Metrics
+  # ==========================================================================
+
+  # MLflow Server
+  - job_name: "mlflow-server"
+    static_configs:
+      - targets: ["mlflow-server:5000"]
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "mlflow-server"
+      - target_label: stack
+        replacement: "mlflow"
+
+  # MLflow API (FastAPI)
+  - job_name: "mlflow-api"
+    static_configs:
+      - targets: ["mlflow-api:8000"]
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "mlflow-api"
+      - target_label: stack
+        replacement: "mlflow"
+
+  # MLflow PostgreSQL (via postgres_exporter if added)
+  # - job_name: 'mlflow-postgres'
+  #   static_configs:
+  #     - targets: ['mlflow-postgres:5432']
+  #   relabel_configs:
+  #     - target_label: service
+  #       replacement: 'mlflow-postgres'
+  #     - target_label: stack
+  #       replacement: 'mlflow'
+
+  # ==========================================================================
+  # Ray Compute Stack Metrics
+  # ==========================================================================
+
+  # Ray Cluster - HTTP Service Discovery (auto-discovers all Ray nodes)
+  # This allows Prometheus to dynamically find all Ray nodes as the cluster scales
+  # See: https://docs.ray.io/en/latest/cluster/metrics.html
+  - job_name: "ray-cluster"
+    http_sd_configs:
+      - url: "http://ray-head:8265/api/prometheus/sd"
+        refresh_interval: 60s
+    relabel_configs:
+      - target_label: stack
+        replacement: "ray"
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):(\d+)'
+        replacement: "${1}"
+
+  # Ray Head Node Dashboard - Direct metrics endpoint
+  - job_name: "ray-head"
+    static_configs:
+      - targets: ["ray-head:8080"] # metrics-export-port
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "ray-head"
+      - target_label: stack
+        replacement: "ray"
+
+  # Ray Dashboard API metrics
+  - job_name: "ray-dashboard"
+    static_configs:
+      - targets: ["ray-head:8265"]
+    metrics_path: "/api/prometheus_metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "ray-dashboard"
+      - target_label: stack
+        replacement: "ray"
+
+  # Ray Compute API (FastAPI)
+  - job_name: "ray-compute-api"
+    static_configs:
+      - targets: ["ray-compute-api:8000"]
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "ray-compute-api"
+      - target_label: stack
+        replacement: "ray"
+
+  # ==========================================================================
+  # Inference Stack Metrics (when running)
+  # ==========================================================================
+
+  # Qwen3-VL LLM API
+  - job_name: "qwen3-vl-api"
+    static_configs:
+      - targets: ["qwen3-vl-api:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s # Less frequent for inference
+    scrape_timeout: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: "qwen3-vl-api"
+      - target_label: stack
+        replacement: "inference"
+
+  # Z-Image API (on-demand, may not be running)
+  - job_name: "z-image-api"
+    static_configs:
+      - targets: ["z-image-api:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: "z-image-api"
+      - target_label: stack
+        replacement: "inference"
+
+  # Inference Gateway
+  - job_name: "inference-gateway"
+    static_configs:
+      - targets: ["inference-gateway:8000"]
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "inference-gateway"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # Redis Metrics (shared instance)
+  # ==========================================================================
+
+  # Redis Exporter (if added)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+  #   relabel_configs:
+  #     - target_label: service
+  #       replacement: 'redis'

@@ -29,10 +29,10 @@ pip install ray[default]==2.9.0
 
 ```bash
 # Check you can reach the server
-ping 100.90.57.39
+ping <TAILSCALE_IP>
 
 # Test Ray API endpoint
-curl http://100.90.57.39/ray/api/version
+curl http://<TAILSCALE_IP>/ray/api/version
 ```
 
 ## Submit Jobs
@@ -43,7 +43,7 @@ curl http://100.90.57.39/ray/api/version
 cd sfml-platform/ray_compute/examples
 
 # Edit test_simple_gpu.py to use Tailscale IP
-sed -i 's/ray-head:8265/100.90.57.39\/ray\/api/g' test_simple_gpu.py
+sed -i 's/ray-head:8265/<TAILSCALE_IP>\/ray\/api/g' test_simple_gpu.py
 
 # Run test
 python3 test_simple_gpu.py
@@ -55,7 +55,7 @@ python3 test_simple_gpu.py
 cd sfml-platform/ray_compute/examples
 
 # Edit test_full_training.py
-sed -i 's/ray-head:8265/100.90.57.39\/ray\/api/g' test_full_training.py
+sed -i 's/ray-head:8265/<TAILSCALE_IP>\/ray\/api/g' test_full_training.py
 
 # Run training job
 python3 test_full_training.py
@@ -73,7 +73,7 @@ from ray.job_submission import JobSubmissionClient
 import time
 
 # Connect to Ray via Tailscale
-client = JobSubmissionClient("http://100.90.57.39/ray/api")
+client = JobSubmissionClient("http://<TAILSCALE_IP>/ray/api")
 
 # Submit job
 job_id = client.submit_job(
@@ -95,7 +95,7 @@ job_id = client.submit_job(
 )
 
 print(f"Job ID: {job_id}")
-print(f"Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
+print(f"Dashboard: http://<TAILSCALE_IP>/ray/#/jobs/{job_id}")
 
 # Monitor job status
 while True:
@@ -118,9 +118,9 @@ print(logs)
 ### Ray Dashboard
 ```bash
 # Open in browser
-xdg-open http://100.90.57.39/ray/#/jobs
+xdg-open http://<TAILSCALE_IP>/ray/#/jobs
 # or
-open http://100.90.57.39/ray/#/jobs  # macOS
+open http://<TAILSCALE_IP>/ray/#/jobs  # macOS
 ```
 
 View:
@@ -131,10 +131,10 @@ View:
 
 ### Ray Grafana
 ```bash
-xdg-open http://100.90.57.39/ray-grafana/
+xdg-open http://<TAILSCALE_IP>/ray-grafana/
 ```
 
-Login: `admin` / `AiSolutions2350!`
+Login: `admin` / `<your-password-from-.env>`
 
 Dashboards:
 - GPU usage over time
@@ -143,10 +143,10 @@ Dashboards:
 
 ### MLflow UI
 ```bash
-xdg-open http://100.90.57.39/mlflow/
+xdg-open http://<TAILSCALE_IP>/mlflow/
 ```
 
-Login: `mlflow` / `AiSolutions2350!`
+Login: `mlflow` / `<your-password-from-.env>`
 
 Access:
 - Experiment tracking
@@ -163,7 +163,7 @@ pip install ray[default]==2.9.0
 
 # Submit job
 ray job submit \
-  --address http://100.90.57.39/ray/api \
+  --address http://<TAILSCALE_IP>/ray/api \
   --working-dir /path/to/local/scripts \
   --runtime-env-json '{"pip": ["torch"]}' \
   --num-gpus 1 \
@@ -171,13 +171,13 @@ ray job submit \
   -- python training_script.py
 
 # List jobs
-ray job list --address http://100.90.57.39/ray/api
+ray job list --address http://<TAILSCALE_IP>/ray/api
 
 # Get job status
-ray job status <job-id> --address http://100.90.57.39/ray/api
+ray job status <job-id> --address http://<TAILSCALE_IP>/ray/api
 
 # Get job logs
-ray job logs <job-id> --address http://100.90.57.39/ray/api
+ray job logs <job-id> --address http://<TAILSCALE_IP>/ray/api
 ```
 
 ## Using with MLflow Integration
@@ -191,7 +191,7 @@ Submit training job with MLflow integration
 from ray.job_submission import JobSubmissionClient
 import time
 
-client = JobSubmissionClient("http://100.90.57.39/ray/api")
+client = JobSubmissionClient("http://<TAILSCALE_IP>/ray/api")
 
 # Training script that logs to MLflow
 training_code = """
@@ -200,7 +200,7 @@ import torch
 import time
 
 # Connect to MLflow
-mlflow.set_tracking_uri("http://100.90.57.39/mlflow")
+mlflow.set_tracking_uri("http://<TAILSCALE_IP>/mlflow")
 mlflow.set_experiment("face-detection-training")
 
 with mlflow.start_run(run_name="remote_training"):
@@ -232,8 +232,8 @@ job_id = client.submit_job(
 )
 
 print(f"Job: {job_id}")
-print(f"Ray: http://100.90.57.39/ray/#/jobs/{job_id}")
-print(f"MLflow: http://100.90.57.39/mlflow/#/experiments/1")
+print(f"Ray: http://<TAILSCALE_IP>/ray/#/jobs/{job_id}")
+print(f"MLflow: http://<TAILSCALE_IP>/mlflow/#/experiments/1")
 ```
 
 ## Upload Training Data
@@ -265,7 +265,7 @@ job_id = client.submit_job(
 # Register dataset in MLflow (one time)
 import mlflow
 
-mlflow.set_tracking_uri("http://100.90.57.39/mlflow")
+mlflow.set_tracking_uri("http://<TAILSCALE_IP>/mlflow")
 
 dataset = mlflow.data.from_pandas(
     df,
@@ -279,7 +279,7 @@ mlflow.log_input(dataset, context="training")
 """
 import mlflow
 
-mlflow.set_tracking_uri("http://100.90.57.39/mlflow")
+mlflow.set_tracking_uri("http://<TAILSCALE_IP>/mlflow")
 client = mlflow.tracking.MlflowClient()
 
 # Get dataset
@@ -292,7 +292,7 @@ dataset_info = client.search_datasets(filter_string="name='my-training-dataset'"
 
 ```bash
 # Copy dataset to server via SSH/SCP
-scp -r ./my_dataset/ axelofwar@100.90.57.39:/path/to/shared/storage/
+scp -r ./my_dataset/ axelofwar@<TAILSCALE_IP>:/path/to/shared/storage/
 
 # In job, reference the path
 job_id = client.submit_job(
@@ -313,10 +313,10 @@ job_id = client.submit_job(
 tailscale status
 
 # Check you can reach server
-ping 100.90.57.39
+ping <TAILSCALE_IP>
 
 # Test Ray API
-curl -v http://100.90.57.39/ray/api/version
+curl -v http://<TAILSCALE_IP>/ray/api/version
 ```
 
 ### Job Submission Failures
@@ -325,7 +325,7 @@ curl -v http://100.90.57.39/ray/api/version
 # Check Ray cluster status
 from ray.job_submission import JobSubmissionClient
 
-client = JobSubmissionClient("http://100.90.57.39/ray/api")
+client = JobSubmissionClient("http://<TAILSCALE_IP>/ray/api")
 print("Connected to Ray cluster!")
 
 # List recent jobs
@@ -333,7 +333,7 @@ print("Connected to Ray cluster!")
 ```
 
 ```bash
-ray job list --address http://100.90.57.39/ray/api
+ray job list --address http://<TAILSCALE_IP>/ray/api
 ```
 
 ### GPU Not Available
@@ -359,7 +359,7 @@ Submit pii-pro YOLOv8 training to remote cluster
 from ray.job_submission import JobSubmissionClient
 import time
 
-client = JobSubmissionClient("http://100.90.57.39/ray/api")
+client = JobSubmissionClient("http://<TAILSCALE_IP>/ray/api")
 
 job_id = client.submit_job(
     entrypoint="python train_yolo.py --config yolov8n.yaml",
@@ -372,7 +372,7 @@ job_id = client.submit_job(
             "mlflow==2.9.2",
         ],
         "env_vars": {
-            "MLFLOW_TRACKING_URI": "http://100.90.57.39/mlflow",
+            "MLFLOW_TRACKING_URI": "http://<TAILSCALE_IP>/mlflow",
             "EXPERIMENT_NAME": "face-detection-training",
             "DATASET_PATH": "mlflow-artifacts:/datasets/widerface/v1",
         }
@@ -389,20 +389,20 @@ job_id = client.submit_job(
 
 print(f"✅ pii-pro training submitted!")
 print(f"   Job ID: {job_id}")
-print(f"   Ray Dashboard: http://100.90.57.39/ray/#/jobs/{job_id}")
-print(f"   MLflow Experiments: http://100.90.57.39/mlflow/#/experiments")
-print(f"   Grafana Monitoring: http://100.90.57.39/ray-grafana/")
+print(f"   Ray Dashboard: http://<TAILSCALE_IP>/ray/#/jobs/{job_id}")
+print(f"   MLflow Experiments: http://<TAILSCALE_IP>/mlflow/#/experiments")
+print(f"   Grafana Monitoring: http://<TAILSCALE_IP>/ray-grafana/")
 ```
 
 ## Access URLs
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Ray Dashboard | http://100.90.57.39/ray/ | N/A |
-| Ray API | http://100.90.57.39/ray/api | N/A |
-| Ray Grafana | http://100.90.57.39/ray-grafana/ | admin / AiSolutions2350! |
-| MLflow | http://100.90.57.39/mlflow/ | mlflow / AiSolutions2350! |
-| Traefik Dashboard | http://100.90.57.39/dashboard/ | N/A |
+| Ray Dashboard | http://<TAILSCALE_IP>/ray/ | N/A |
+| Ray API | http://<TAILSCALE_IP>/ray/api | N/A |
+| Ray Grafana | http://<TAILSCALE_IP>/ray-grafana/ | admin / <your-password-from-.env> |
+| MLflow | http://<TAILSCALE_IP>/mlflow/ | mlflow / <your-password-from-.env> |
+| Traefik Dashboard | http://<TAILSCALE_IP>/dashboard/ | N/A |
 
 ## Resources
 
@@ -424,4 +424,4 @@ For issues:
 **Last Updated:** November 24, 2025  
 **Platform Version:** 0.2.0  
 **Ray Version:** 2.9.0-gpu  
-**Server:** axelofwar-server (100.90.57.39)
+**Server:** axelofwar-server (<TAILSCALE_IP>)
