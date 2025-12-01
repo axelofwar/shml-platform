@@ -1,92 +1,57 @@
-# MLflow Server - Integrated with ML Platform
-# Updated for shared network and Traefik API Gateway
-# Access: http://localhost/mlflow (via Traefik)
+# MLflow Server - Experiment Tracking & Model Registry
+# Depends on: shared infrastructure (shared-postgres, ml-platform-redis, traefik)
+# Can be started standalone: docker compose -f mlflow-server/docker-compose.yml up
+# Or via main: docker compose up (includes this file)
 
 services:
-  # PostgreSQL - Metadata Storage
-  postgres:
-    image: postgres:15-alpine
-    container_name: mlflow-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mlflow_db
-      POSTGRES_USER: mlflow
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./backups/postgres:/backups
-    secrets:
-      - db_password
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ml-platform
-
-  # Shared Redis - Used by MLflow (DB 0) and Ray Compute (DB 1)
-  redis:
-    image: redis:7-alpine
-    container_name: ml-platform-redis
-    restart: unless-stopped
-    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru --appendonly yes
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    networks:
-      - ml-platform
-    # No ports exposed - internal communication only
-    expose:
-      - "6379"
-
-  # MLflow Server with Schema Validation
-  mlflow:
+  # ==========================================================================
+  # MLFLOW TRACKING SERVER
+  # ==========================================================================
+  mlflow-server:
     build:
       context: ./docker/mlflow
       dockerfile: Dockerfile
     container_name: mlflow-server
     restart: unless-stopped
-    # Remove port exposure - accessed via Nginx only
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 717M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     expose:
       - "5000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:$${DB_PASSWORD}@postgres:5432/mlflow_db
-      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
-      MLFLOW_ARTIFACTS_DESTINATION: /mlflow/artifacts
-      MLFLOW_HOST: 0.0.0.0
-      MLFLOW_PORT: 5000
-      MLFLOW_WORKERS: 8
-      MLFLOW_WORKER_CONNECTIONS: 2000
-      MLFLOW_WORKER_TIMEOUT: 3600
-      # Schema validation settings
+      # Database (uses shared-postgres from infra)
+      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@shared-postgres:5432/mlflow_db"
+      MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
+      MLFLOW_ARTIFACTS_DESTINATION: "/mlflow/artifacts"
+      # Server Configuration
+      MLFLOW_HOST: "0.0.0.0"
+      MLFLOW_PORT: "5000"
+      MLFLOW_WORKERS: "8"
+      MLFLOW_WORKER_CONNECTIONS: "2000"
+      MLFLOW_WORKER_TIMEOUT: "3600"
+      # Schema & Validation
       MLFLOW_SCHEMA_VALIDATION: "true"
       MLFLOW_REQUIRE_METADATA: "true"
       MLFLOW_AUTO_COMPRESS: "true"
-      MLFLOW_COMPRESSION_THRESHOLD_MB: 10
-      MLFLOW_COMPRESSION_FORMAT: zstd
-      # Privacy settings
+      MLFLOW_COMPRESSION_THRESHOLD_MB: "10"
+      MLFLOW_COMPRESSION_FORMAT: "zstd"
       MLFLOW_ALLOW_REFERENCE_PATHS: "true"
       MLFLOW_SCAN_SENSITIVE_DATA: "true"
-      # Redis connection (DB 0 for MLflow)
-      REDIS_HOST: ml-platform-redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
+      # Cache (uses ml-platform-redis from infra)
+      REDIS_HOST: "ml-platform-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
     volumes:
-      - ./data/mlflow/artifacts:/mlflow/artifacts
-      - ./data/mlflow/mlruns:/mlflow/mlruns
+      - /mlflow/artifacts:/mlflow/artifacts
+      - mlflow-mlruns:/mlflow/mlruns
       - ./docker/mlflow/plugins:/mlflow/plugins
       - ./config/schema:/mlflow/schema
+      - ./scripts:/mlflow/scripts:ro
       - ./logs/mlflow:/mlflow/logs
     secrets:
       - db_password
@@ -99,15 +64,24 @@ services:
     networks:
       - ml-platform
 
-  # Nginx - Reverse Proxy for MLflow
-  nginx:
+  # ==========================================================================
+  # MLFLOW NGINX REVERSE PROXY
+  # ==========================================================================
+  mlflow-nginx:
     image: nginx:alpine
     container_name: mlflow-nginx
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.72'
+          memory: 192M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     depends_on:
-      mlflow:
+      mlflow-server:
         condition: service_healthy
-    # Remove host port exposure - accessed via Traefik
     expose:
       - "80"
     volumes:
@@ -124,166 +98,127 @@ services:
     networks:
       - ml-platform
     labels:
-      # Enable Traefik
       - "traefik.enable=true"
-      
-      # MLflow service
       - "traefik.http.services.mlflow.loadbalancer.server.port=80"
-      
-      # Middleware to strip /mlflow prefix for UI (but keep static-files)
-      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.prefixes=/mlflow"
-      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.forceslash=false"
-      
-      # Middleware to strip only /mlflow from static files paths
-      - "traefik.http.middlewares.mlflow-static-rewrite.replacepathregex.regex=^/mlflow/(static-files/.*)"
-      - "traefik.http.middlewares.mlflow-static-rewrite.replacepathregex.replacement=/$${1}"
-      
-      # External API Router - highest priority, no prefix stripping
+      # API Routes (highest priority)
       - "traefik.http.routers.mlflow-api.rule=PathPrefix(`/api/2.0/mlflow`)"
       - "traefik.http.routers.mlflow-api.entrypoints=web"
       - "traefik.http.routers.mlflow-api.service=mlflow"
       - "traefik.http.routers.mlflow-api.priority=400"
-      
-      # AJAX API Router - for UI internal calls, strip /ajax prefix
+      # AJAX API Routes
       - "traefik.http.middlewares.mlflow-ajax-strip.stripprefix.prefixes=/ajax"
       - "traefik.http.routers.mlflow-ajax.rule=PathPrefix(`/ajax-api/2.0/mlflow`)"
       - "traefik.http.routers.mlflow-ajax.entrypoints=web"
       - "traefik.http.routers.mlflow-ajax.service=mlflow"
       - "traefik.http.routers.mlflow-ajax.middlewares=mlflow-ajax-strip"
       - "traefik.http.routers.mlflow-ajax.priority=350"
-      
-      # Static files router - strip /mlflow but keep /static-files
-      - "traefik.http.routers.mlflow-static.rule=PathPrefix(`/mlflow/static-files`)"
-      - "traefik.http.routers.mlflow-static.entrypoints=web"
-      - "traefik.http.routers.mlflow-static.service=mlflow"
-      - "traefik.http.routers.mlflow-static.middlewares=mlflow-static-rewrite"
-      - "traefik.http.routers.mlflow-static.priority=200"
-      
-      # UI Router - with prefix stripping (lowest priority)
+      # UI Routes
+      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.prefixes=/mlflow"
+      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.forceslash=false"
       - "traefik.http.routers.mlflow-ui.rule=PathPrefix(`/mlflow`)"
       - "traefik.http.routers.mlflow-ui.entrypoints=web"
       - "traefik.http.routers.mlflow-ui.service=mlflow"
       - "traefik.http.routers.mlflow-ui.middlewares=mlflow-stripprefix"
       - "traefik.http.routers.mlflow-ui.priority=10"
 
-  # Prometheus - Metrics Collection
-  prometheus:
-    image: prom/prometheus:latest
+  # ==========================================================================
+  # MLFLOW REST API
+  # ==========================================================================
+  mlflow-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mlflow-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.87'
+          memory: 384M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    environment:
+      # MLflow Connection
+      MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
+      MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
+      # OAuth (optional)
+      OAUTH_ENABLED: ${OAUTH_ENABLED:-false}
+      AUTHENTIK_URL: ${AUTHENTIK_INTERNAL_URL:-http://authentik-server:9000}
+      MLFLOW_OAUTH_CLIENT_ID: ${MLFLOW_OAUTH_CLIENT_ID}
+      MLFLOW_OAUTH_CLIENT_SECRET: ${MLFLOW_OAUTH_CLIENT_SECRET}
+    volumes:
+      - /mlflow/artifacts:/mlflow/artifacts
+      - ./config/schema:/mlflow/config/schema:ro
+      - ./api:/app:ro
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
+      # Custom API routes (highest priority to override MLflow native API)
+      - "traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.mlflow-api-v1.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-v1.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-v1.priority=2147483647"
+      # API Documentation
+      - "traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`) || PathPrefix(`/api/v1/openapi.json`)"
+      - "traefik.http.routers.mlflow-api-docs.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-docs.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-docs.priority=450"
+
+  # ==========================================================================
+  # MLFLOW PROMETHEUS - Service-Specific Metrics (30d retention)
+  # ==========================================================================
+  mlflow-prometheus:
+    image: prom/prometheus:v2.48.0
     container_name: mlflow-prometheus
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.8'
+          memory: 384M
+        reservations:
+          cpus: '0.15'
+          memory: 192M
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
     volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./data/prometheus:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mlflow-prometheus-data:/prometheus
     expose:
       - "9090"
     networks:
       - ml-platform
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
-      - "traefik.http.routers.prometheus.entrypoints=web"
-      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
-      - "traefik.http.middlewares.prometheus-stripprefix.stripprefix.prefixes=/prometheus"
-      - "traefik.http.routers.prometheus.middlewares=prometheus-stripprefix"
-
-  # Grafana - Monitoring Dashboards
-  grafana:
-    image: grafana/grafana:latest
-    container_name: mlflow-grafana
-    restart: unless-stopped
     depends_on:
-      - prometheus
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: http://localhost/grafana
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-    volumes:
-      - ./data/grafana:/var/lib/grafana
-      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-    secrets:
-      - grafana_password
-    expose:
-      - "3000"
-    networks:
-      - ml-platform
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
-      - "traefik.http.routers.grafana.entrypoints=web"
-      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - mlflow-server
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Adminer - Database Management UI
-  adminer:
-    build:
-      context: ./docker/adminer
-      dockerfile: Dockerfile
-    container_name: mlflow-adminer
-    restart: unless-stopped
-    depends_on:
-      - postgres
-    expose:
-      - "8080"
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres
-    networks:
-      - ml-platform
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.adminer.rule=PathPrefix(`/adminer`)"
-      - "traefik.http.routers.adminer.entrypoints=web"
-      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
-
-  # Backup Service - Automated Backups
-  backup:
-    build:
-      context: ./docker/backup
-      dockerfile: Dockerfile
-    container_name: mlflow-backup
-    restart: unless-stopped
-    depends_on:
-      - postgres
-    environment:
-      BACKUP_SCHEDULE: "0 2 * * *"  # Daily at 2 AM
-      BACKUP_RETENTION_DAYS: 90
-      BACKUP_RETENTION_PRODUCTION: 0
-      POSTGRES_HOST: postgres
-      POSTGRES_DB: mlflow_db
-      POSTGRES_USER: mlflow
-    volumes:
-      - ./backups:/backups
-      - ./data/mlflow/artifacts:/mlflow/artifacts:ro
-    secrets:
-      - db_password
-    networks:
-      - ml-platform
-
-# Docker secrets for sensitive data
 secrets:
   db_password:
-    file: ./secrets/db_password.txt
-  grafana_password:
-    file: ./secrets/grafana_password.txt
+    file: ../secrets/shared_db_password.txt
 
-# Persistent volumes
 volumes:
-  postgres_data:
-  mlflow_artifacts:
-  mlflow_mlruns:
-  prometheus_data:
-  grafana_data:
-  redis_data:
-
-# Shared network - created externally
-networks:
-  ml-platform:
-    name: ml-platform
-    external: true
+  mlflow-mlruns:
+    name: mlflow-mlruns
+  mlflow-prometheus-data:
+    name: mlflow-prometheus-data

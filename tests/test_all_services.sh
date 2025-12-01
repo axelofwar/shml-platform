@@ -116,9 +116,18 @@ echo ""
 
 # Test Grafana logins
 echo "Grafana Logins:"
+# Load password from environment or secrets file
 PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
+if [ -z "$PASSWORD" ] && [ -f "../secrets/grafana_password.txt" ]; then
+    PASSWORD=$(cat ../secrets/grafana_password.txt)
+fi
+if [ -z "$PASSWORD" ] && [ -f "secrets/grafana_password.txt" ]; then
+    PASSWORD=$(cat secrets/grafana_password.txt)
+fi
+
 if [ -z "$PASSWORD" ]; then
-    echo -e "${YELLOW}⚠${NC} GRAFANA_ADMIN_PASSWORD not set, skipping login tests"
+    echo -e "${YELLOW}⚠${NC} GRAFANA_ADMIN_PASSWORD not set and secrets/grafana_password.txt not found"
+    echo -e "   Set GRAFANA_ADMIN_PASSWORD environment variable or ensure secrets file exists"
 else
 mlflow_grafana_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost/grafana/login \
   -H "Content-Type: application/json" \

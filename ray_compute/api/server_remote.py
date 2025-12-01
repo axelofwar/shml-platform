@@ -52,7 +52,11 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:8080")
 JOB_WORKSPACE = os.getenv("JOB_WORKSPACE", "/opt/ray/job_workspaces")
 ARTIFACT_RETENTION_HOURS = int(os.getenv("ARTIFACT_RETENTION_HOURS", "24"))
 API_KEY_ENABLED = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "change_me_in_production")
+# SECURITY: API secret key must be set via environment variable when API key auth is enabled
+# Generate with: openssl rand -base64 50
+API_SECRET_KEY = os.getenv("API_SECRET_KEY")
+if API_KEY_ENABLED and not API_SECRET_KEY:
+    raise ValueError("API_SECRET_KEY environment variable must be set when API_KEY_ENABLED=true")
 
 # API Key Security (SOTA: stateless, fast, simple)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)

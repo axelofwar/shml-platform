@@ -1,0 +1,35 @@
+# DCGM Exporter - NVIDIA GPU Metrics
+# Official NVIDIA exporter for comprehensive GPU monitoring
+
+services:
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
+    container_name: dcgm-exporter
+    restart: unless-stopped
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu, utility]
+    environment:
+      - DCGM_EXPORTER_LISTEN=:9400
+      - DCGM_EXPORTER_KUBERNETES=false
+    ports:
+      - "9400:9400"
+    networks:
+      - ml-platform
+    cap_add:
+      - SYS_ADMIN
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9400/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  ml-platform:
+    external: true

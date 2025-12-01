@@ -46,7 +46,15 @@ app = FastAPI(
 )
 
 # Session middleware for OAuth
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET_KEY", "dev-secret-change-in-prod"))
+# SECURITY: Session secret must be set via environment variable
+# Generate with: openssl rand -base64 50
+_session_secret = os.getenv("SESSION_SECRET_KEY")
+if not _session_secret:
+    import warnings
+    warnings.warn("SESSION_SECRET_KEY not set - using random key (sessions won't persist across restarts)")
+    import secrets as _secrets
+    _session_secret = _secrets.token_urlsafe(32)
+app.add_middleware(SessionMiddleware, secret_key=_session_secret)
 
 # CORS middleware
 app.add_middleware(
@@ -101,10 +109,19 @@ USER_TIERS = {
 ENVIRONMENT = os.getenv('MLFLOW_ENVIRONMENT', 'development')  # development, staging, production
 
 # API Keys database (move to real DB in production)
-API_KEYS = {
-    os.getenv('ADMIN_API_KEY', 'admin-key-change-me'): {'user': 'admin', 'tier': 'admin'},
-    os.getenv('PREMIUM_API_KEY', 'premium-key-change-me'): {'user': 'premium_user', 'tier': 'premium'},
-}
+# SECURITY: API keys must be set via environment variables - no defaults
+# Generate with: openssl rand -base64 32
+def _load_api_keys():
+    keys = {}
+    admin_key = os.getenv('ADMIN_API_KEY')
+    premium_key = os.getenv('PREMIUM_API_KEY')
+    if admin_key:
+        keys[admin_key] = {'user': 'admin', 'tier': 'admin'}
+    if premium_key:
+        keys[premium_key] = {'user': 'premium_user', 'tier': 'premium'}
+    return keys
+
+API_KEYS = _load_api_keys()
 
 
 class ErrorResponse(BaseModel):

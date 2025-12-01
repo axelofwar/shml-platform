@@ -1,0 +1,44 @@
+# Grafana Datasources - Federated Prometheus Architecture
+# Three Prometheus instances for different scopes and retention
+
+apiVersion: 1
+
+datasources:
+  # Global Metrics - Federated aggregated metrics (90d retention)
+  - name: Global Metrics
+    type: prometheus
+    uid: global-metrics
+    access: proxy
+    url: http://global-prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+    version: 1
+  
+  # MLflow Metrics - Detailed MLflow tracking (30d retention)
+  - name: MLflow Metrics
+    type: prometheus
+    uid: mlflow-metrics
+    access: proxy
+    url: http://mlflow-prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+    version: 1
+  
+  # Ray Metrics - Detailed Ray compute metrics (7d retention)
+  - name: Ray Metrics
+    type: prometheus
+    uid: ray-metrics
+    access: proxy
+    url: http://ray-prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+    version: 1

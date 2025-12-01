@@ -1,302 +1,135 @@
 #!/bin/bash
-# Production-grade startup script with resource management and health monitoring
-# Uses dynamic resource allocation based on actual system capacity
+# ML Platform - Safe Startup Script (Unified Approach)
+# Starts services in phases with health monitoring
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "==============================================="
-echo "ML Platform Safe Startup Script"
-echo "==============================================="
-echo ""
-
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# Configuration
-MAX_WAIT_TIME=300  # 5 minutes max wait for all services
-HEALTH_CHECK_INTERVAL=5
+echo ""
+echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║                                                        ║${NC}"
+echo -e "${BLUE}║         ML Platform - Safe Startup                     ║${NC}"
+echo -e "${BLUE}║         Unified Docker Compose Approach                ║${NC}"
+echo -e "${BLUE}║                                                        ║${NC}"
+echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+echo ""
 
-# Function to print colored output
-print_status() {
-    local color=$1
-    local message=$2
-    echo -e "${color}${message}${NC}"
-}
+# Check if running as root
+if [ "$EUID" -eq 0 ]; then
+    echo -e "${RED}⚠️  Do not run this script as root (sudo)${NC}"
+    echo "The script will request sudo when needed."
+    exit 1
+fi
 
-# Function to check service health
-check_service_health() {
+# Function to wait for service health
+wait_for_health() {
     local service=$1
-    local status=$(docker inspect --format='{{.State.Health.Status}}' "${service}" 2>/dev/null || echo "no-healthcheck")
-    echo "$status"
-}
-
-# Function to monitor startup progress
-monitor_startup() {
-    local start_time=$(date +%s)
-    local phase=$1
+    local max_wait=$2
+    local wait_time=0
     
-    print_status "$BLUE" "\n📊 Monitoring $phase startup..."
-    
-    while true; do
-        local current_time=$(date +%s)
-        local elapsed=$((current_time - start_time))
-        
-        if [ $elapsed -gt $MAX_WAIT_TIME ]; then
-            print_status "$RED" "⏱️  Timeout waiting for services to become healthy"
-            docker compose ps
-            return 1
-        fi
-        
-        # Get service status
-        local unhealthy_count=$(docker compose ps --services --filter "status=starting" --filter "status=unhealthy" 2>/dev/null | wc -l)
-        local running_count=$(docker compose ps --services --filter "status=running" 2>/dev/null | wc -l)
-        
-        echo -ne "\r⏳ Elapsed: ${elapsed}s | Running: ${running_count} | Checking health..."
-        
-        if [ $unhealthy_count -eq 0 ] && [ $running_count -gt 0 ]; then
-            print_status "$GREEN" "\n✅ $phase services are healthy!"
+    echo -n "  Waiting for $service to be healthy"
+    while [ $wait_time -lt $max_wait ]; do
+        local status=$(sudo docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "starting")
+        if [ "$status" = "healthy" ]; then
+            echo -e " ${GREEN}✓${NC}"
             return 0
         fi
-        
-        sleep $HEALTH_CHECK_INTERVAL
+        echo -n "."
+        sleep 2
+        wait_time=$((wait_time + 2))
     done
+    echo -e " ${YELLOW}⚠${NC}"
+    return 1
 }
 
-# Step 1: Pre-flight checks
-print_status "$BLUE" "Step 1: Pre-flight checks..."
-print_status "$BLUE" "---------------------------------------"
+# Phase 1: Infrastructure
+echo -e "${CYAN}━━━ Phase 1: Infrastructure ━━━${NC}"
+echo "Starting: Traefik, PostgreSQL, Redis, Monitoring..."
+sudo docker compose -f docker-compose.infra.yml up -d \
+    ml-platform-traefik shared-postgres ml-platform-redis \
+    ml-platform-node-exporter ml-platform-cadvisor
 
-if ! command -v docker &> /dev/null; then
-    print_status "$RED" "Error: Docker is required but not found"
-    exit 1
-fi
+wait_for_health "shared-postgres" 60
+wait_for_health "ml-platform-traefik" 30
+echo -e "${GREEN}✓ Infrastructure ready${NC}"
+echo ""
 
-if ! docker compose version &> /dev/null; then
-    print_status "$RED" "Error: docker compose is required but not found"
-    exit 1
-fi
+# Phase 2: Monitoring
+echo -e "${CYAN}━━━ Phase 2: Monitoring ━━━${NC}"
+echo "Starting: Global Prometheus, Unified Grafana..."
+sudo docker compose -f docker-compose.infra.yml up -d \
+    global-prometheus unified-grafana
 
-print_status "$GREEN" "✓ Docker and docker compose available"
+wait_for_health "global-prometheus" 30
+wait_for_health "unified-grafana" 45
+echo -e "${GREEN}✓ Monitoring ready${NC}"
+echo ""
 
-# Step 2: Stop any running services
-print_status "$BLUE" "\nStep 2: Stopping any running services..."
-print_status "$BLUE" "---------------------------------------"
+# Phase 3: Authentik (OAuth/SSO)
+echo -e "${CYAN}━━━ Phase 3: Authentik ━━━${NC}"
+echo "Starting: Authentik server and worker..."
+sudo docker compose -f docker-compose.infra.yml up -d \
+    authentik-postgres authentik-redis authentik-server authentik-worker
 
-# First, stop and remove all containers managed by docker compose
-docker compose down --remove-orphans 2>&1 | grep -v "WARNING: The following deploy" || true
+wait_for_health "authentik-postgres" 45
+echo -e "${GREEN}✓ Authentik services starting${NC}"
+echo ""
 
-# Then, forcibly remove any orphaned containers with our service names
-print_status "$BLUE" "Checking for orphaned containers..."
-ORPHANED_CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep -E 'mlflow-|ray-|authentik-|ml-platform-' || true)
+# Phase 4: MLflow Services
+echo -e "${CYAN}━━━ Phase 4: MLflow Services ━━━${NC}"
+echo "Starting: MLflow server, API, Prometheus..."
+sudo docker compose up -d mlflow-server mlflow-prometheus mlflow-nginx mlflow-api
 
-if [ ! -z "$ORPHANED_CONTAINERS" ]; then
-    print_status "$YELLOW" "Found orphaned containers, removing..."
-    echo "$ORPHANED_CONTAINERS" | while read container; do
-        docker rm -f "$container" 2>/dev/null || true
-    done
-    print_status "$GREEN" "✓ Orphaned containers removed"
-fi
+wait_for_health "mlflow-server" 60
+wait_for_health "mlflow-nginx" 30
+echo -e "${GREEN}✓ MLflow services ready${NC}"
+echo ""
 
-print_status "$GREEN" "✓ All services stopped and cleaned up"
+# Phase 5: Ray Compute
+echo -e "${CYAN}━━━ Phase 5: Ray Compute ━━━${NC}"
+echo "Starting: Ray head, API, Prometheus..."
+sudo docker compose up -d ray-head ray-prometheus ray-compute-api
 
-# Step 3: Start infrastructure services
-print_status "$BLUE" "\nStep 3: Starting infrastructure services..."
-print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: traefik, redis, shared-postgres, authentik databases..."
+wait_for_health "ray-head" 60
+echo -e "${GREEN}✓ Ray compute ready${NC}"
+echo ""
 
-# Note: shared-postgres replaces mlflow-postgres + ray-postgres + inference-postgres
-docker compose up -d traefik redis shared-postgres authentik-db authentik-redis node-exporter cadvisor 2>&1 | grep -v "WARNING:" | tail -5
-
-sleep 10
-print_status "$GREEN" "✓ Infrastructure services started"
-
-# Step 4: Start core application services  
-print_status "$BLUE" "\nStep 4: Starting core application services..."
-print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: mlflow-server, ray-head, authentik-server..."
-
-docker compose up -d mlflow-server ray-head authentik-server 2>&1 | grep -v "WARNING:" | tail -5
-
-print_status "$BLUE" "Waiting for core services to become healthy (this may take 60-90 seconds)..."
-sleep 30
-
-# Step 5: Start API and dependent services
-print_status "$BLUE" "\nStep 5: Starting API and dependent services..."
-print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: mlflow-api, mlflow-nginx, ray-compute-api, authentik-worker..."
-
-docker compose up -d mlflow-nginx mlflow-api ray-compute-api authentik-worker 2>&1 | grep -v "WARNING:" | tail -5
-
-sleep 20
-
-# Step 6: Start monitoring services (adminer only in dev profile)
-print_status "$BLUE" "\nStep 6: Starting monitoring services..."
-print_status "$BLUE" "---------------------------------------"
-print_status "$YELLOW" "Starting: unified prometheus, grafana..."
-
-docker compose up -d prometheus grafana 2>&1 | grep -v "WARNING:" | tail -5
-
-sleep 10
-
-# Step 7: Start inference stack (optional - requires GPU)
-print_status "$BLUE" "\nStep 7: Starting inference stack (if available)..."
-print_status "$BLUE" "---------------------------------------"
-
-# Check if inference docker-compose exists
-if [ -f "./inference/docker-compose.inference.yml" ]; then
-    # Check if GPU is available
-    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-        print_status "$YELLOW" "GPU detected, starting inference services..."
-        
-        # Note: inference-postgres removed - uses shared-postgres from main stack
-        print_status "$YELLOW" "Starting LLM service (Qwen3-VL on RTX 2070)..."
-        docker compose -f ./inference/docker-compose.inference.yml up -d qwen3-vl-api 2>&1 | grep -v "WARNING:" | tail -3 || true
-        
-        print_status "$YELLOW" "Starting inference gateway..."
-        docker compose -f ./inference/docker-compose.inference.yml up -d inference-gateway 2>&1 | grep -v "WARNING:" | tail -3 || true
-        
-        # Z-Image is on-demand, don't start by default
-        print_status "$BLUE" "Note: Z-Image (image generation) is on-demand and will load when first requested"
-        
-        sleep 10
-        print_status "$GREEN" "✓ Inference stack started"
-    else
-        print_status "$YELLOW" "⚠ No GPU detected - skipping inference services"
-        print_status "$BLUE" "  To start inference manually when GPU available:"
-        print_status "$BLUE" "  ./inference/scripts/start_inference.sh"
-    fi
+# Phase 6: GPU Monitoring (if available)
+echo -e "${CYAN}━━━ Phase 6: GPU Monitoring ━━━${NC}"
+if sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
+    echo "Starting: DCGM Exporter..."
+    sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d
+    echo -e "${GREEN}✓ GPU monitoring started${NC}"
 else
-    print_status "$YELLOW" "⚠ Inference stack not found - skipping"
+    echo -e "${YELLOW}⚠ DCGM configuration not found - skipping GPU monitoring${NC}"
 fi
-
-# Step 8: Final status check
-print_status "$BLUE" "\nStep 8: Checking final service status..."
-print_status "$BLUE" "---------------------------------------"
-
-docker compose ps 2>&1 | grep -v "WARNING: The following deploy"
-
-echo ""
-print_status "$BLUE" "Checking service health..."
 echo ""
 
-# Check critical services
-CRITICAL_SERVICES=("ml-platform-traefik" "mlflow-server" "shared-postgres" "ray-head")
-FAILED_SERVICES=()
-
-for service in "${CRITICAL_SERVICES[@]}"; do
-    if docker ps --filter "name=$service" --filter "status=running" | grep -q "$service"; then
-        health=$(check_service_health "$service")
-        if [ "$health" = "healthy" ] || [ "$health" = "no-healthcheck" ]; then
-            print_status "$GREEN" "  ✓ $service: Running"
-        else
-            print_status "$YELLOW" "  ⚠ $service: Running but health=$health"
-            FAILED_SERVICES+=("$service")
-        fi
-    else
-        print_status "$RED" "  ✗ $service: Not running"
-        FAILED_SERVICES+=("$service")
-    fi
-done
-
+# Final Status Check
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}✓ Platform startup complete!${NC}"
 echo ""
-
-if [ ${#FAILED_SERVICES[@]} -eq 0 ]; then
-    print_status "$GREEN" "================================================"
-    print_status "$GREEN" "🎉 ML Platform started successfully!"
-    print_status "$GREEN" "================================================"
-    echo ""
-    print_status "$BLUE" "📍 Access URLs:"
-    echo ""
-    
-    LAN_IP=$(hostname -I | awk '{print $1}')
-    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "${TAILSCALE_IP:-localhost}")
-    
-    echo "  🌐 Local Access:"
-    echo "    MLflow UI:          http://localhost/mlflow/"
-    echo "    MLflow API:         http://localhost/api/v1/health"
-    echo "    Ray Dashboard:      http://localhost/ray/"
-    echo "    Traefik Dashboard:  http://localhost:8090/"
-    echo ""
-    echo "  🏠 LAN Access (${LAN_IP}):"
-    echo "    MLflow UI:          http://${LAN_IP}/mlflow/"
-    echo "    Ray Dashboard:      http://${LAN_IP}/ray/"
-    echo ""
-    echo "  🔐 VPN Access (Tailscale - ${TAILSCALE_IP}):"
-    echo "    MLflow UI:          http://${TAILSCALE_IP}/mlflow/"
-    echo "    Ray Dashboard:      http://${TAILSCALE_IP}/ray/"
-    echo ""
-    
-    # Check if inference stack is running
-    if docker ps --filter "name=qwen3-vl-api" --filter "status=running" | grep -q "qwen3-vl-api"; then
-        echo "  🤖 Inference Stack (Local LLM & Image Gen):"
-        echo "    LLM Health:         http://localhost/api/llm/health"
-        echo "    LLM Completions:    http://localhost/api/llm/v1/chat/completions"
-        echo "    Image Generation:   http://localhost/api/image/v1/generate"
-        echo "    Gateway Status:     http://localhost/inference/health"
-        echo "    Conversations:      http://localhost/inference/conversations"
-        echo ""
-    fi
-    
-    print_status "$BLUE" "📊 Management:"
-    echo "    View logs:          docker compose logs -f [service-name]"
-    echo "    Check status:       docker compose ps"
-    echo "    Stop all:           docker compose down"
-    echo ""
-    
-    # Check if inference is running, add inference-specific commands
-    if [ -f "./inference/docker-compose.inference.yml" ]; then
-        echo "  🤖 Inference Management:"
-        echo "    Start inference:    ./inference/scripts/start_inference.sh"
-        echo "    Stop inference:     ./inference/scripts/stop_inference.sh"
-        echo "    Yield GPU:          ./inference/scripts/yield_gpu_for_training.sh"
-        echo "    Inference logs:     docker compose -f ./inference/docker-compose.inference.yml logs -f"
-        echo ""
-    fi
-    
-    # Test API endpoint
-    print_status "$BLUE" "🧪 Testing MLflow API..."
-    if curl -s -m 3 http://localhost/api/v1/health > /dev/null 2>&1; then
-        print_status "$GREEN" "  ✓ MLflow API is responding"
-    else
-        print_status "$YELLOW" "  ⚠ MLflow API not responding yet (may need more time)"
-    fi
-    
-    # Test inference endpoints if running
-    if docker ps --filter "name=qwen3-vl-api" --filter "status=running" | grep -q "qwen3-vl-api"; then
-        print_status "$BLUE" "🧪 Testing Inference API..."
-        if curl -s -m 5 http://localhost/api/llm/health > /dev/null 2>&1; then
-            print_status "$GREEN" "  ✓ LLM API is responding"
-        else
-            print_status "$YELLOW" "  ⚠ LLM API not responding yet (model may be loading)"
-        fi
-        if curl -s -m 3 http://localhost/inference/health > /dev/null 2>&1; then
-            print_status "$GREEN" "  ✓ Inference Gateway is responding"
-        else
-            print_status "$YELLOW" "  ⚠ Inference Gateway not responding yet"
-        fi
-    fi
-    
-    exit 0
-else
-    print_status "$YELLOW" "================================================"
-    print_status "$YELLOW" "⚠️  Platform started with warnings"
-    print_status "$YELLOW" "================================================"
-    echo ""
-    print_status "$YELLOW" "Failed/Unhealthy services:"
-    for service in "${FAILED_SERVICES[@]}"; do
-        echo "  - $service"
-    done
-    echo ""
-    print_status "$BLUE" "To investigate:"
-    echo "  docker compose logs [service-name]"
-    echo "  docker compose ps"
-    echo ""
-    exit 1
-fi
+echo "Service Status:"
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|mlflow|ray|grafana|prometheus|authentik"
+echo ""
+echo -e "${CYAN}Access Points:${NC}"
+echo "  • MLflow UI:       http://localhost/mlflow/"
+echo "  • Ray Dashboard:   http://localhost/ray/"
+echo "  • Grafana:         http://localhost/grafana/"
+echo "  • Authentik:       http://localhost:9000/"
+echo "  • Traefik:         http://localhost:8090/"
+echo ""
+echo -e "${YELLOW}Note: Some services may take 2-3 minutes to fully initialize.${NC}"
+echo "      Monitor with: sudo docker ps"
+echo "      View logs:    sudo docker logs <container-name>"
+echo ""

@@ -1,0 +1,34 @@
+# Gitleaks Configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "Gitleaks Configuration for SFML Platform"
+
+[extend]
+# Use default rules as a base
+useDefault = true
+
+# Paths to exclude from scanning
+[allowlist]
+description = "Allowlisted paths and patterns"
+
+# Ignore archived documentation (secrets have been rotated)
+paths = [
+    '''archived/''',
+    '''__MACOSX/''',
+    '''backups/''',
+    '''\.env\.example$''',
+    '''tests/''',
+    '''\.github/copilot-instructions\.md$''',
+]
+
+# Ignore specific patterns that are false positives
+regexes = [
+    # Example/placeholder patterns in documentation
+    '''your[._-]?password''',
+    '''change[._-]?me[._-]?in[._-]?production''',
+    '''placeholder''',
+    '''<[A-Z_]+>''',
+    '''\$\{[A-Z_]+\}''',
+    '''sk-1234567890''',
+    '''JsDs6mClPCWKqEq''',
+]
