@@ -45,18 +45,18 @@ if [ ! -f "$PROJECT_ROOT/ml-platform/ray_compute/.env" ]; then
     echo ""
     echo "⚠️  No .env file found. Creating from template..."
     cp "$PROJECT_ROOT/ml-platform/ray_compute/.env.example" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
-    
+
     # Generate secure passwords
     POSTGRES_PASS=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)
     API_KEY=$(openssl rand -base64 50 | tr -d '/+=' | cut -c1-50)
-    
+
     # Update .env
     sed -i "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASS|" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
     sed -i "s|API_SECRET_KEY=.*|API_SECRET_KEY=$API_KEY|" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
     sed -i "s|RAY_ADDRESS=.*|RAY_ADDRESS=http://ray-head:8265|" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
     sed -i "s|MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=http://mlflow-nginx:80|" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
     sed -i "s|REDIS_HOST=.*|REDIS_HOST=ml-platform-redis|" "$PROJECT_ROOT/ml-platform/ray_compute/.env"
-    
+
     echo "✅ Generated .env with secure passwords"
     echo "   Location: $PROJECT_ROOT/ml-platform/ray_compute/.env"
 else
@@ -101,7 +101,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 if nvidia-smi &>/dev/null; then
     echo "✓ NVIDIA GPU detected"
-    
+
     if ! pgrep -f nvidia-cuda-mps > /dev/null; then
         echo "Setting up GPU sharing..."
         sudo bash "$SCRIPT_DIR/setup-gpu-sharing.sh" || {

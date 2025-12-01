@@ -76,7 +76,7 @@ for name, config in experiments.items():
     try:
         # Check if experiment exists
         experiment = client.get_experiment_by_name(name)
-        
+
         if experiment:
             print(f"✓ '{name}' already exists (ID: {experiment.experiment_id})")
             existing_count += 1
@@ -86,17 +86,17 @@ for name, config in experiments.items():
                 name=name,
                 tags=config['tags']
             )
-            
+
             # Set description as a tag
             client.set_experiment_tag(
-                experiment_id, 
-                "mlflow.note.content", 
+                experiment_id,
+                "mlflow.note.content",
                 config['description']
             )
-            
+
             print(f"✓ Created '{name}' (ID: {experiment_id})")
             created_count += 1
-            
+
     except Exception as e:
         print(f"✗ Failed to create '{name}': {e}")
         sys.exit(1)
@@ -114,7 +114,7 @@ for exp in all_experiments:
     purpose_tag = exp.tags.get('purpose', 'N/A')
     print(f"  [{exp.experiment_id}] {exp.name}")
     print(f"      Environment: {env_tag}, Purpose: {purpose_tag}")
-    
+
 print("=" * 60)
 print(f"Total: {len(all_experiments)} experiments")
 print("")

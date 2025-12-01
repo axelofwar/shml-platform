@@ -99,7 +99,7 @@ mlflow-server:
   environment:
     # Restrict model versions to MLflow artifacts only
     MLFLOW_CREATE_MODEL_VERSION_SOURCE_VALIDATION_REGEX: "^mlflow-artifacts:/.*$"
-    
+
     # Or restrict to specific storage locations:
     # MLFLOW_CREATE_MODEL_VERSION_SOURCE_VALIDATION_REGEX: "^(mlflow-artifacts:/|s3://production-models)/.*$"
 ```
@@ -469,17 +469,17 @@ File: `docker-compose.yml` (mlflow-server section)
 mlflow-server:
   environment:
     # Existing...
-    
+
     # Security (Phase 1)
     MLFLOW_ALLOWED_HOSTS: "localhost,mlflow-server,mlflow-nginx,*.ml-platform"
     MLFLOW_CORS_ALLOWED_ORIGINS: "http://localhost,https://localhost"
-    
+
     # Model version validation (Phase 1)
     MLFLOW_CREATE_MODEL_VERSION_SOURCE_VALIDATION_REGEX: "^mlflow-artifacts:/.*$"
-    
+
     # Worker configuration (Phase 2)
     MLFLOW_WORKERS: "8"  # Will be overridden by dynamic calculation
-    
+
     # Performance tuning (Phase 2)
     MLFLOW_ENABLE_PROXY_ARTIFACT_ACCESS: "true"
 ```

@@ -16,14 +16,14 @@ scrape_configs:
       - targets: ['mlflow-server:5000']
         labels:
           component: 'mlflow-server'
-  
+
   # MLflow API Metrics
   - job_name: 'mlflow-api'
     static_configs:
       - targets: ['mlflow-api:8000']
         labels:
           component: 'mlflow-api'
-  
+
   # Nginx Metrics (via stub_status if configured)
   - job_name: 'mlflow-nginx'
     static_configs:

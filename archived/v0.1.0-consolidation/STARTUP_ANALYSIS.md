@@ -7,8 +7,8 @@
 
 ### 1. **Ray Head Memory Allocation Issue** (CRITICAL)
 ```
-ValueError: After taking into account object store and redis memory usage, 
-the amount of memory on this node available for tasks and actors (-2.42 GB) 
+ValueError: After taking into account object store and redis memory usage,
+the amount of memory on this node available for tasks and actors (-2.42 GB)
 is less than -112% of total.
 ```
 
@@ -171,7 +171,7 @@ Start services in order:
   - Primary GPU: x16 slot (full speed)
   - Second GPU: x8 or x4 slot (reduced bandwidth)
   - Ryzen 3900X: 24 PCIe 4.0 lanes total (16 GPU + 4 chipset + 4 M.2)
-  
+
 **Problems:**
 - Ray doesn't efficiently use multi-GPU without distributed setup
 - Single 8GB GPU sufficient for most ML inference workloads

@@ -28,12 +28,12 @@ def calculate_iou(box1, box2):
     y1 = max(box1[1], box2[1])
     x2 = min(box1[2], box2[2])
     y2 = min(box1[3], box2[3])
-    
+
     intersection = max(0, x2 - x1) * max(0, y2 - y1)
     area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
     area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
     union = area1 + area2 - intersection
-    
+
     return intersection / union if union > 0 else 0
 
 # Extract features for clustering
@@ -45,7 +45,7 @@ for idx, row in merged.iterrows():
         row[['x1_pred', 'y1_pred', 'x2_pred', 'y2_pred']].values,
         row[['x1_gt', 'y1_gt', 'x2_gt', 'y2_gt']].values
     )
-    
+
     # Consider failures (low IoU)
     if iou < 0.5:
         features.append([
@@ -82,20 +82,20 @@ cluster_info = {}
 for cluster_id in range(n_clusters):
     cluster_mask = cluster_labels == cluster_id
     cluster_samples = np.array(failed_samples)[cluster_mask]
-    
+
     cluster_info[f"cluster_{cluster_id}"] = {
         "size": int(cluster_mask.sum()),
         "avg_iou": float(features[cluster_mask, -1].mean()),
         "avg_confidence": float(features[cluster_mask, 0].mean())
     }
-    
+
     mlflow.log_metric(f"cluster_{cluster_id}_size", cluster_mask.sum())
 
 # Save cluster analysis
 mlflow.log_dict(cluster_info, "cluster_analysis.json")
 
 # Create curated dataset: images from identified failure clusters
-curated_image_ids = [s['image_id'] for i, s in enumerate(failed_samples) 
+curated_image_ids = [s['image_id'] for i, s in enumerate(failed_samples)
                      if cluster_labels[i] != -1]
 
 curated_df = merged[merged['image_id'].isin(curated_image_ids)]
@@ -126,8 +126,8 @@ job_id = client.submit_job(
     mlflow_tags={
         "method": "hdbscan-clustering",
         "task": "failure-analysis",
-        "pipeline": "curation"
-    }
+        "pipeline": "curation",
+    },
 )
 
 print(f"✓ Job submitted: {job_id}")

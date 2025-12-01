@@ -84,7 +84,7 @@ Routes configured:
 - **Admin**: System-wide metrics for all users
 - **User**: Project-specific metrics (their experiments only)
 
-**Integration**: 
+**Integration**:
 - API exposes `/api/v1/metrics` endpoint
 - Prometheus scrapes metrics
 - Grafana queries Prometheus with user filtering
@@ -118,7 +118,7 @@ Routes configured:
 - Background tasks for long operations
 - Optimized I/O to reduce user-side requirements
 
-**Implementation**: 
+**Implementation**:
 - `POST /api/v1/runs/{id}/artifacts/async` - Async upload with compression
 - `GET /api/v1/runs/{id}/artifacts/{path}/stream` - Streaming download
 

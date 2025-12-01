@@ -14,10 +14,10 @@ if python3 -c "import ray; print(f'Ray version: {ray.__version__}')" 2>/dev/null
     python3 -c "import ray; print(f'Ray version: {ray.__version__}')"
 else
     echo "Installing Ray and dependencies..."
-    
+
     # Install PyTorch first with CUDA 11.8 support
     pip3 install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    
+
     # Install Ray with all ML components (latest stable)
     pip3 install -U \
         "ray[default,data,train,tune,serve]" \
@@ -34,7 +34,7 @@ else
         aiofiles \
         psutil \
         gputil
-    
+
     echo "✓ Ray and ML libraries installed"
 fi
 
@@ -84,7 +84,7 @@ available_node_types:
       CPU: 4  # Reserved for head node
       memory: 4294967296  # 4GB
     node_config: {}
-  
+
   ray.worker.gpu:
     min_workers: 0
     max_workers: 1
@@ -98,7 +98,7 @@ available_node_types:
         run_options:
           - "--gpus=all"
           - "--shm-size=4gb"
-  
+
   ray.worker.cpu:
     min_workers: 0
     max_workers: 2

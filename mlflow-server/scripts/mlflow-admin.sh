@@ -176,19 +176,19 @@ check_db_connections() {
 
 test_endpoints() {
     echo -e "\n${BLUE}🧪 Testing All Endpoints...${NC}\n"
-    
+
     echo "1. Health:"
     curl -s http://localhost:8080/health && echo "" || echo -e "${RED}❌ Failed${NC}"
-    
+
     echo "2. Version:"
     curl -s http://localhost:8080/version && echo "" || echo -e "${RED}❌ Failed${NC}"
-    
+
     echo "3. Experiments:"
     curl -s -X POST http://localhost:8080/api/2.0/mlflow/experiments/search -H "Content-Type: application/json" -d '{"max_results": 10}' | python3 -c "import sys,json; print(f'${GREEN}✅ {len(json.load(sys.stdin)[\"experiments\"])} found${NC}')" || echo -e "${RED}❌ Failed${NC}"
-    
+
     echo "4. Registered Models:"
     curl -s -X GET http://localhost:8080/api/2.0/mlflow/registered-models/search | python3 -c "import sys,json; print(f'${GREEN}✅ API working${NC}')" || echo -e "${RED}❌ Failed${NC}"
-    
+
     echo ""
     echo -e "${GREEN}✅ All endpoints tested${NC}"
 }
@@ -197,7 +197,7 @@ test_endpoints() {
 while true; do
     show_menu
     read choice
-    
+
     case $choice in
         1) check_status ;;
         2) view_logs ;;
@@ -217,7 +217,7 @@ while true; do
         0) echo "Goodbye!"; exit 0 ;;
         *) echo -e "${RED}Invalid option${NC}" ;;
     esac
-    
+
     echo ""
     read -p "Press Enter to continue..."
 done

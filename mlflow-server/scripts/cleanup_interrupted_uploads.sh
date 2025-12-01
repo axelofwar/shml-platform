@@ -162,7 +162,7 @@ log "Deleting incomplete upload runs from database:"
 for run_info in "${DELETE_RUNS[@]}"; do
     IFS=':' read -r run_uuid run_name <<< "$run_info"
     log "Deleting run: $run_name ($run_uuid)"
-    
+
     # Delete from all related tables (params, metrics, tags, and runs)
     PGPASSWORD="$DB_PASS" psql -h localhost -U mlflow -d mlflow_db >> "$LOG_FILE" 2>&1 << EOF
 DELETE FROM params WHERE run_uuid = '$run_uuid';
@@ -171,10 +171,10 @@ DELETE FROM tags WHERE run_uuid = '$run_uuid';
 DELETE FROM latest_metrics WHERE run_uuid = '$run_uuid';
 DELETE FROM runs WHERE run_uuid = '$run_uuid';
 EOF
-    
+
     if [[ $? -eq 0 ]]; then
         log "  ✓ Successfully deleted from database"
-        
+
         # Also delete the run directory
         run_dir="$ARTIFACTS_DIR/$run_uuid"
         if [[ -d "$run_dir" ]]; then

@@ -179,7 +179,7 @@ ml-platform/
 ## ✅ GOOD - Updating existing doc
 
 PR Description:
-"Adding GPU job submission section to INTEGRATION_GUIDE.md because it 
+"Adding GPU job submission section to INTEGRATION_GUIDE.md because it
 demonstrates MLflow+Ray integration pattern with GPU resources."
 
 Changes:
@@ -216,14 +216,14 @@ Issues:
 def process_experiment(experiment_id: str, params: dict) -> dict:
     """
     Process MLflow experiment with given parameters.
-    
+
     Args:
         experiment_id: MLflow experiment ID
         params: Configuration parameters
-        
+
     Returns:
         Dictionary with processing results
-        
+
     Raises:
         ValueError: If experiment_id is invalid
     """

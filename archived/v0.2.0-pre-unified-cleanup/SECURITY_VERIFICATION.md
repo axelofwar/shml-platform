@@ -103,7 +103,7 @@ deploy:
 - ✅ Password written to `secrets/shared_db_password.txt`
 - ✅ Password written to `.env` as `SHARED_DB_PASSWORD`
 - ✅ Password written to `mlflow-server/.env` as `DB_PASSWORD`
-- ✅ **Service sync**: 
+- ✅ **Service sync**:
   - Container reads from `/run/secrets/shared_db_password` on startup
   - `ALTER USER mlflow WITH PASSWORD` executed after container start
   - `ALTER USER ray_compute WITH PASSWORD` executed after container start
@@ -161,7 +161,7 @@ Verification (Phase 8)
 - `docker-compose.infra.yml`: Added `AUTHENTIK_BOOTSTRAP_PASSWORD` and `AUTHENTIK_BOOTSTRAP_EMAIL` environment variables
 
 **Setup Script**:
-- `setup.sh`: 
+- `setup.sh`:
   - Enhanced database password sync to include Authentik DB
   - Added service password configuration section
   - Added comprehensive password verification in Phase 8

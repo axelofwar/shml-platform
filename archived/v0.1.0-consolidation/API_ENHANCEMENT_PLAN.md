@@ -49,21 +49,21 @@ ENVIRONMENT = os.getenv('MLFLOW_ENVIRONMENT', 'development')
 
 def validate_run(experiment, tags, metrics, environment):
     warnings = []
-    
+
     # Check required fields
     if missing_tags:
         if environment == 'production':
             warnings.append(f"[PRODUCTION ALERT] Missing: {missing_tags}")
         else:
             warnings.append(f"[{environment}] Missing: {missing_tags} (allowed)")
-    
+
     # Check metrics - ALWAYS alert only, never block
     if metrics.get('recall', 1.0) < 0.95:
         warnings.append(
             f"[{environment} ALERT] Recall below 0.95. "
             f"Consider retraining before production."
         )
-    
+
     # Always return True - never block
     return True, warnings
 ```
@@ -146,26 +146,26 @@ async def check_rate_limit(user_id: str, tier: str, endpoint: str):
         'premium': 50,
         'regular': 10
     }
-    
+
     limit = limits.get(tier, 10)
     if limit is None:
         return  # Admin unlimited
-    
+
     now = time.time()
     user_key = f"{user_id}:{endpoint}"
-    
+
     # Remove old requests (>60s)
     rate_limit_store[user_key] = [
         t for t in rate_limit_store[user_key]
         if now - t < 60
     ]
-    
+
     if len(rate_limit_store[user_key]) >= limit:
         raise HTTPException(
             429,
             f"Rate limit exceeded. Tier '{tier}' allows {limit} req/min."
         )
-    
+
     rate_limit_store[user_key].append(now)
 
 # Usage in endpoints
@@ -279,21 +279,21 @@ def auto_archive_old_runs():
     now = datetime.utcnow()
     twelve_months_ago = now - timedelta(days=365)
     six_months_ago = now - timedelta(days=180)
-    
+
     # Find old runs
     experiments = client.search_experiments()
     for exp in experiments:
         runs = client.search_runs([exp.experiment_id])
-        
+
         for run in runs:
             start_time = datetime.fromtimestamp(run.info.start_time / 1000)
-            
+
             # Archive if older than 12 months
             if start_time < twelve_months_ago:
                 client.set_tag(run.info.run_id, "archived", "true")
                 client.set_tag(run.info.run_id, "archive_reason", "age_12_months")
                 continue
-            
+
             # Archive if not promoted for 6 months
             if start_time < six_months_ago:
                 # Check if model was registered
@@ -337,29 +337,29 @@ async def upload_artifact_async(
     background_tasks: BackgroundTasks = None
 ):
     """Async upload with server-side compression"""
-    
+
     # Read file asynchronously
     content = await file.read()
     original_size = len(content)
-    
+
     # Server-side compression
     if compress and not file.filename.endswith(('.gz', '.zip')):
         content = gzip.compress(content, compresslevel=6)
         filename = f"{file.filename}.gz"
     else:
         filename = file.filename
-    
+
     # Save temp file
     async with aiofiles.open(f"/tmp/{filename}", 'wb') as f:
         await f.write(content)
-    
+
     # Upload in background
     def upload_task():
         client.log_artifact(run_id, f"/tmp/{filename}")
         os.unlink(f"/tmp/{filename}")
-    
+
     background_tasks.add_task(upload_task)
-    
+
     return {
         "status": "uploading",
         "original_size": original_size,
@@ -374,12 +374,12 @@ async def upload_artifact_async(
 async def download_artifact_stream(run_id: str, path: str):
     """Stream large artifacts"""
     local_path = client.download_artifacts(run_id, path)
-    
+
     async def file_iterator():
         async with aiofiles.open(local_path, 'rb') as f:
             while chunk := await f.read(8192):  # 8KB chunks
                 yield chunk
-    
+
     return StreamingResponse(
         file_iterator(),
         media_type="application/octet-stream",
@@ -421,17 +421,17 @@ Add to `docker-compose.yml` for `mlflow-api`:
 environment:
   MLFLOW_TRACKING_URI: http://mlflow-server:5000
   MLFLOW_ENVIRONMENT: ${MLFLOW_ENVIRONMENT:-development}  # development|staging|production
-  
+
   # Authentik OAuth
   AUTHENTIK_URL: http://authentik-server:9000
   AUTHENTIK_CLIENT_ID: mlflow-api
   AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET}
   SESSION_SECRET_KEY: ${SESSION_SECRET_KEY}
-  
+
   # API Keys (temporary)
   ADMIN_API_KEY: ${ADMIN_API_KEY}
   PREMIUM_API_KEY: ${PREMIUM_API_KEY}
-  
+
   # Rate limiting
   REDIS_URL: redis://ml-platform-redis:6379/2  # DB 2 for API
 ```

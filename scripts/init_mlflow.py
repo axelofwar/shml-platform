@@ -29,28 +29,28 @@ experiments = [
             "task": "object-detection",
             "model_type": "face-detector",
             "dataset": "wider_face",
-        }
+        },
     },
     {
         "name": "model-evaluation",
         "tags": {
             "task": "validation",
             "purpose": "model-benchmarking",
-        }
+        },
     },
     {
         "name": "production-models",
         "tags": {
             "env": "production",
             "stage": "deployment",
-        }
+        },
     },
     {
         "name": "development-models",
         "tags": {
             "env": "development",
             "stage": "experimentation",
-        }
+        },
     },
 ]
 
@@ -79,60 +79,60 @@ try:
         mlflow.log_param("dataset_name", "WIDER FACE")
         mlflow.log_param("dataset_version", "v1.0")
         mlflow.log_param("dataset_source", "http://shuoyang1213.me/WIDERFACE/")
-        
+
         # Statistics
         mlflow.log_param("total_images", 32203)
         mlflow.log_param("train_images", 12880)
         mlflow.log_param("val_images", 3226)
         mlflow.log_param("test_images", 16097)
         mlflow.log_param("total_faces", 393703)
-        
+
         # Training configuration
         mlflow.log_param("image_format", "jpg")
         mlflow.log_param("label_format", "yolo")
         mlflow.log_param("classes", "face")
         mlflow.log_param("num_classes", 1)
-        
+
         # Recommended training parameters
         mlflow.log_param("recommended_batch_size", 4)
         mlflow.log_param("recommended_imgsz", [480, 640, 800, 960, 1280])
         mlflow.log_param("recommended_epochs", 50)
-        
+
         # Tags
         mlflow.set_tag("mlflow.runName", "wider_face_dataset_v1.0")
         mlflow.set_tag("dataset", "wider_face")
         mlflow.set_tag("task", "face-detection")
         mlflow.set_tag("data_type", "images")
         mlflow.set_tag("annotation_type", "bounding_boxes")
-        
+
         # Log dataset description
         mlflow.log_text(
             """WIDER FACE Dataset - Face Detection Benchmark
-            
-            The WIDER FACE dataset is a comprehensive face detection benchmark consisting of 32,203 images 
-            and 393,703 labeled face bounding boxes. It contains a high degree of variability in scale, 
+
+            The WIDER FACE dataset is a comprehensive face detection benchmark consisting of 32,203 images
+            and 393,703 labeled face bounding boxes. It contains a high degree of variability in scale,
             pose, occlusion, expression, makeup, and illumination.
-            
+
             Dataset Split:
             - Training: 12,880 images (40%)
             - Validation: 3,226 images (10%)
             - Testing: 16,097 images (50%)
-            
+
             Difficulty Levels:
             - Easy: Large, clear faces
             - Medium: Medium-sized faces with moderate occlusion
             - Hard: Small faces, heavy occlusion, extreme poses
-            
+
             Use Cases:
             - Face detection model training
             - Multi-scale detection evaluation
             - Robustness testing for various conditions
             """,
-            "dataset_description.txt"
+            "dataset_description.txt",
         )
-        
+
         print("✓ WiderFace dataset registered")
-        
+
 except Exception as e:
     print(f"✗ Error registering dataset: {e}")
 

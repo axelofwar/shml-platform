@@ -151,7 +151,7 @@ sudo shutdown -h now
 **Power Connection:**
 1. Take the 2x 8-pin to 12-pin adapter from RTX 3090 box
 2. Connect **2 separate 8-pin PCIe cables** from PSU to adapter
-   - Use cables labeled "PCIe" or "VGA" 
+   - Use cables labeled "PCIe" or "VGA"
    - Do NOT use single daisy-chained cable
    - Each 8-pin should come directly from PSU
 3. Connect 12-pin adapter to RTX 3090

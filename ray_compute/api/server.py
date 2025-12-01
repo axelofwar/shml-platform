@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="MLflow Compute API",
     description="Job orchestration API for ML training and inference",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # CORS middleware
@@ -62,7 +62,9 @@ class ResourceRequirements(BaseModel):
     cpu: int = Field(default=4, ge=1, le=24, description="Number of CPU cores")
     memory_gb: int = Field(default=8, ge=1, le=16, description="Memory in GB")
     gpu: int = Field(default=0, ge=0, le=1, description="Number of GPUs (0 or 1)")
-    timeout_minutes: int = Field(default=120, ge=1, le=1440, description="Job timeout in minutes")
+    timeout_minutes: int = Field(
+        default=120, ge=1, le=1440, description="Job timeout in minutes"
+    )
 
 
 class JobSubmission(BaseModel):
@@ -107,7 +109,7 @@ async def root():
         "service": "MLflow Compute API",
         "version": "1.0.0",
         "status": "running",
-        "ray_address": RAY_ADDRESS
+        "ray_address": RAY_ADDRESS,
     }
 
 
@@ -120,11 +122,11 @@ async def health_check():
         ray_status = "healthy"
     except Exception as e:
         ray_status = f"unhealthy: {str(e)}"
-    
+
     return {
         "status": "healthy" if ray_status == "healthy" else "degraded",
         "ray": ray_status,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
     }
 
 
@@ -134,44 +136,48 @@ async def get_resources():
     try:
         cluster_resources = ray.cluster_resources()
         available_resources = ray.available_resources()
-        
+
         # Get GPU info
         gpu_info = []
         try:
             gpus = GPUtil.getGPUs()
             for gpu in gpus:
-                gpu_info.append({
-                    "id": gpu.id,
-                    "name": gpu.name,
-                    "memory_total_mb": gpu.memoryTotal,
-                    "memory_used_mb": gpu.memoryUsed,
-                    "memory_free_mb": gpu.memoryFree,
-                    "gpu_utilization": gpu.load * 100,
-                    "temperature": gpu.temperature
-                })
+                gpu_info.append(
+                    {
+                        "id": gpu.id,
+                        "name": gpu.name,
+                        "memory_total_mb": gpu.memoryTotal,
+                        "memory_used_mb": gpu.memoryUsed,
+                        "memory_free_mb": gpu.memoryFree,
+                        "gpu_utilization": gpu.load * 100,
+                        "temperature": gpu.temperature,
+                    }
+                )
         except:
             gpu_info = []
-        
+
         return {
             "cluster_total": {
                 "cpu": cluster_resources.get("CPU", 0),
                 "memory_bytes": cluster_resources.get("memory", 0),
-                "gpu": cluster_resources.get("GPU", 0)
+                "gpu": cluster_resources.get("GPU", 0),
             },
             "available": {
                 "cpu": available_resources.get("CPU", 0),
                 "memory_bytes": available_resources.get("memory", 0),
-                "gpu": available_resources.get("GPU", 0)
+                "gpu": available_resources.get("GPU", 0),
             },
             "system": {
                 "cpu_percent": psutil.cpu_percent(interval=1),
                 "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent
+                "disk_percent": psutil.disk_usage("/").percent,
             },
-            "gpus": gpu_info
+            "gpus": gpu_info,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get resources: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get resources: {str(e)}"
+        )
 
 
 @app.post("/jobs/submit", response_model=JobInfo)
@@ -180,19 +186,19 @@ async def submit_job(job: JobSubmission):
     try:
         # Validate resources are available
         available = ray.available_resources()
-        
+
         if job.requirements.cpu > available.get("CPU", 0):
             raise HTTPException(
                 status_code=503,
-                detail=f"Insufficient CPU: requested {job.requirements.cpu}, available {available.get('CPU', 0)}"
+                detail=f"Insufficient CPU: requested {job.requirements.cpu}, available {available.get('CPU', 0)}",
             )
-        
+
         if job.requirements.gpu > available.get("GPU", 0):
             raise HTTPException(
                 status_code=503,
-                detail=f"Insufficient GPU: requested {job.requirements.gpu}, available {available.get('GPU', 0)}"
+                detail=f"Insufficient GPU: requested {job.requirements.gpu}, available {available.get('GPU', 0)}",
             )
-        
+
         # Create job script
         job_script = f"""
 import os
@@ -215,17 +221,17 @@ with mlflow.start_run(run_name={repr(job.name)}) as run:
     mlflow.log_param("cpu", {job.requirements.cpu})
     mlflow.log_param("memory_gb", {job.requirements.memory_gb})
     mlflow.log_param("gpu", {job.requirements.gpu})
-    
+
     # Set environment variables
     for key, value in {repr(job.env_vars)}.items():
         os.environ[key] = value
-    
+
     # Execute user code
     {job.code}
-    
+
     print(f"MLflow Run ID: {{run.info.run_id}}")
 """
-        
+
         # Submit job to Ray
         runtime_env = {
             "pip": [
@@ -234,24 +240,24 @@ with mlflow.start_run(run_name={repr(job.name)}) as run:
                 "mlflow",
                 "scikit-learn",
                 "pandas",
-                "opencv-python-headless"
+                "opencv-python-headless",
             ],
             "env_vars": {
                 "MLFLOW_TRACKING_URI": "http://localhost:8080",
-                **job.env_vars
-            }
+                **job.env_vars,
+            },
         }
-        
+
         job_id = job_client.submit_job(
             entrypoint=f"python -c {repr(job_script)}",
             runtime_env=runtime_env,
             metadata={
                 "name": job.name,
                 "job_type": job.job_type.value,
-                "created_at": datetime.now().isoformat()
-            }
+                "created_at": datetime.now().isoformat(),
+            },
         )
-        
+
         # Store job info
         job_info = {
             "job_id": job_id,
@@ -263,14 +269,14 @@ with mlflow.start_run(run_name={repr(job.name)}) as run:
             "ended_at": None,
             "resources": job.requirements,
             "mlflow_run_id": None,
-            "error": None
+            "error": None,
         }
         job_store[job_id] = job_info
-        
+
         logger.info(f"Job submitted: {job_id} ({job.name})")
-        
+
         return JobInfo(**job_info)
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -280,9 +286,7 @@ with mlflow.start_run(run_name={repr(job.name)}) as run:
 
 @app.get("/jobs", response_model=List[JobInfo])
 async def list_jobs(
-    status: Optional[str] = None,
-    job_type: Optional[JobType] = None,
-    limit: int = 100
+    status: Optional[str] = None, job_type: Optional[JobType] = None, limit: int = 100
 ):
     """List all jobs with optional filtering"""
     try:
@@ -294,15 +298,15 @@ async def list_jobs(
                 job_data["status"] = ray_status.value
             except:
                 pass
-            
+
             # Apply filters
             if status and job_data["status"] != status:
                 continue
             if job_type and job_data["job_type"] != job_type:
                 continue
-            
+
             jobs.append(JobInfo(**job_data))
-        
+
         return jobs[:limit]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list jobs: {str(e)}")
@@ -315,17 +319,21 @@ async def get_job(job_id: str):
         # Get job from Ray
         status = job_client.get_job_status(job_id)
         info = job_client.get_job_info(job_id)
-        
+
         # Update stored info
         if job_id in job_store:
             job_store[job_id]["status"] = status.value
             if info.start_time:
-                job_store[job_id]["started_at"] = datetime.fromtimestamp(info.start_time / 1000).isoformat()
+                job_store[job_id]["started_at"] = datetime.fromtimestamp(
+                    info.start_time / 1000
+                ).isoformat()
             if info.end_time:
-                job_store[job_id]["ended_at"] = datetime.fromtimestamp(info.end_time / 1000).isoformat()
+                job_store[job_id]["ended_at"] = datetime.fromtimestamp(
+                    info.end_time / 1000
+                ).isoformat()
             if info.message:
                 job_store[job_id]["error"] = info.message
-            
+
             return JobInfo(**job_store[job_id])
         else:
             # Job not in store, create basic info
@@ -334,11 +342,23 @@ async def get_job(job_id: str):
                 name=info.metadata.get("name", "Unknown"),
                 job_type=JobType(info.metadata.get("job_type", "custom")),
                 status=status.value,
-                created_at=datetime.fromtimestamp(info.start_time / 1000).isoformat() if info.start_time else datetime.now().isoformat(),
-                started_at=datetime.fromtimestamp(info.start_time / 1000).isoformat() if info.start_time else None,
-                ended_at=datetime.fromtimestamp(info.end_time / 1000).isoformat() if info.end_time else None,
+                created_at=(
+                    datetime.fromtimestamp(info.start_time / 1000).isoformat()
+                    if info.start_time
+                    else datetime.now().isoformat()
+                ),
+                started_at=(
+                    datetime.fromtimestamp(info.start_time / 1000).isoformat()
+                    if info.start_time
+                    else None
+                ),
+                ended_at=(
+                    datetime.fromtimestamp(info.end_time / 1000).isoformat()
+                    if info.end_time
+                    else None
+                ),
                 resources=ResourceRequirements(),
-                error=info.message
+                error=info.message,
             )
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Job not found: {str(e)}")
@@ -359,11 +379,11 @@ async def cancel_job(job_id: str):
     """Cancel a running job"""
     try:
         job_client.stop_job(job_id)
-        
+
         if job_id in job_store:
             job_store[job_id]["status"] = "STOPPED"
             job_store[job_id]["ended_at"] = datetime.now().isoformat()
-        
+
         return {"job_id": job_id, "status": "cancelled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
@@ -376,14 +396,13 @@ async def delete_job(job_id: str):
         status = job_client.get_job_status(job_id)
         if status not in [JobStatus.STOPPED, JobStatus.SUCCEEDED, JobStatus.FAILED]:
             raise HTTPException(
-                status_code=400,
-                detail="Job must be stopped before deletion"
+                status_code=400, detail="Job must be stopped before deletion"
             )
-        
+
         job_client.delete_job(job_id)
         if job_id in job_store:
             del job_store[job_id]
-        
+
         return {"job_id": job_id, "status": "deleted"}
     except HTTPException:
         raise
@@ -393,9 +412,5 @@ async def delete_job(job_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8266,
-        log_level="info"
-    )
+
+    uvicorn.run(app, host="0.0.0.0", port=8266, log_level="info")

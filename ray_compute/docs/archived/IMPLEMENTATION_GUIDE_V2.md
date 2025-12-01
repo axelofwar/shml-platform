@@ -176,7 +176,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         # Decode JWT (Authentik uses RS256)
         payload = jwt.decode(
@@ -185,22 +185,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             algorithms=["HS256", "RS256"],
             audience=os.getenv('AUTHENTIK_CLIENT_ID')
         )
-        
+
         username: str = payload.get("preferred_username")
         user_id: str = payload.get("sub")
         email: str = payload.get("email")
         groups: list = payload.get("groups", [])
-        
+
         if username is None:
             raise credentials_exception
-        
+
         # Determine role from groups
         role = "user"
         if "admins" in groups:
             role = "admin"
         elif "premium" in groups:
             role = "premium"
-        
+
         return {
             "user_id": user_id,
             "username": username,
@@ -266,7 +266,7 @@ def get_db():
 
 class User(Base):
     __tablename__ = "users"
-    
+
     user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username = Column(String(255), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
@@ -281,7 +281,7 @@ class User(Base):
 
 class UserQuota(Base):
     __tablename__ = "user_quotas"
-    
+
     user_id = Column(UUID(as_uuid=True), primary_key=True)
     max_concurrent_jobs = Column(Integer, nullable=False, default=3)
     max_gpu_hours_per_day = Column(Float, nullable=False, default=24.0)
@@ -295,7 +295,7 @@ class UserQuota(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
-    
+
     job_id = Column(String(255), primary_key=True)
     ray_job_id = Column(String(255), unique=True)
     user_id = Column(UUID(as_uuid=True), nullable=False)
@@ -305,30 +305,30 @@ class Job(Base):
     language = Column(String(50), nullable=False, default="python")
     status = Column(String(50), nullable=False, default="PENDING")
     priority = Column(String(50), nullable=False, default="normal")
-    
+
     # Resources
     cpu_requested = Column(Integer, nullable=False)
     memory_gb_requested = Column(Integer, nullable=False)
     gpu_requested = Column(Float, nullable=False, default=0.0)
     timeout_hours = Column(Integer, nullable=False)
-    
+
     # Usage
     cpu_used_hours = Column(Float)
     gpu_used_hours = Column(Float)
     memory_peak_gb = Column(Float)
     disk_used_gb = Column(Float)
-    
+
     # Docker
     base_image = Column(String(255))
     dockerfile_hash = Column(String(64))
     custom_dockerfile = Column(Boolean, default=False)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     queued_at = Column(DateTime)
     started_at = Column(DateTime)
     ended_at = Column(DateTime)
-    
+
     # Output
     output_mode = Column(String(50), default="artifacts")
     artifact_path = Column(Text)
@@ -337,19 +337,19 @@ class Job(Base):
     artifact_downloaded_at = Column(DateTime)
     mlflow_experiment = Column(String(255))
     mlflow_run_id = Column(String(255))
-    
+
     # Metadata
     tags = Column(ARRAY(String))
     cost_center = Column(String(255))
     depends_on = Column(ARRAY(String))
-    
+
     # Error
     error_message = Column(Text)
     error_traceback = Column(Text)
     exit_code = Column(Integer)
     retry_count = Column(Integer, default=0)
     max_retries = Column(Integer, default=3)
-    
+
     # Audit
     cancelled_by = Column(UUID(as_uuid=True))
     cancelled_at = Column(DateTime)

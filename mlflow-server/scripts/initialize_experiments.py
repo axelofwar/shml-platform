@@ -21,7 +21,7 @@ EXPERIMENTS = {
             "environment": "dev",
             "purpose": "training",
             "project": "pii-pro",
-        }
+        },
     },
     "staging": {
         "name": "Staging-Model-Comparison",
@@ -30,7 +30,7 @@ EXPERIMENTS = {
             "environment": "staging",
             "purpose": "comparison",
             "project": "pii-pro",
-        }
+        },
     },
     "benchmarking": {
         "name": "Performance-Benchmarking",
@@ -39,7 +39,7 @@ EXPERIMENTS = {
             "environment": "benchmarking",
             "purpose": "performance",
             "project": "pii-pro",
-        }
+        },
     },
     "production": {
         "name": "Production-Candidates",
@@ -48,7 +48,7 @@ EXPERIMENTS = {
             "environment": "production",
             "purpose": "deployment",
             "project": "pii-pro",
-        }
+        },
     },
     "datasets": {
         "name": "Dataset-Registry",
@@ -57,59 +57,58 @@ EXPERIMENTS = {
             "environment": "data",
             "purpose": "dataset-management",
             "project": "pii-pro",
-        }
+        },
     },
 }
 
 
 def initialize_experiments():
     """Create experiments with proper tags and descriptions"""
-    
+
     print(f"🔗 Connecting to MLflow: {MLFLOW_TRACKING_URI}")
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     client = MlflowClient()
-    
+
     print("\n📊 Initializing Experiment Structure...")
     print("=" * 60)
-    
+
     created = []
     existing = []
-    
+
     for exp_key, exp_config in EXPERIMENTS.items():
         exp_name = exp_config["name"]
-        
+
         try:
             # Check if experiment exists
             experiment = client.get_experiment_by_name(exp_name)
-            
+
             if experiment:
                 exp_id = experiment.experiment_id
                 existing.append(exp_name)
                 print(f"✓ Existing: {exp_name} (ID: {exp_id})")
-                
+
                 # Update tags if needed
                 for tag_key, tag_value in exp_config["tags"].items():
                     client.set_experiment_tag(exp_id, tag_key, tag_value)
-                    
+
             else:
                 # Create new experiment
                 exp_id = client.create_experiment(
-                    name=exp_name,
-                    tags=exp_config["tags"]
+                    name=exp_name, tags=exp_config["tags"]
                 )
                 created.append(exp_name)
                 print(f"✨ Created: {exp_name} (ID: {exp_id})")
-                
+
         except Exception as e:
             print(f"❌ Error with {exp_name}: {e}")
             continue
-    
+
     print("\n" + "=" * 60)
     print(f"✅ Initialization Complete!")
     print(f"   Created: {len(created)} experiments")
     print(f"   Existing: {len(existing)} experiments")
     print("=" * 60)
-    
+
     # Print usage examples
     print("\n📝 PII-PRO Usage Examples:")
     print("-" * 60)
@@ -137,7 +136,7 @@ def initialize_experiments():
     print(f'      mlflow.log_artifact("val.zip", "datasets/val")')
     print(f'      mlflow.set_tag("dataset_source", "wider-faces")')
     print("-" * 60)
-    
+
     return True
 
 

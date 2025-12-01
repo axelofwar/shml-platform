@@ -83,12 +83,12 @@ Key Findings:
   ✅ Schema validation working
   ✅ Experiment and run creation functional
   ✅ Cross-host consistency verified
-  
+
   ⚠️  Minor Issues (non-blocking):
     - Warning message format mismatch (cosmetic)
     - Storage info response structure different than expected
     - Artifact download returns 500 (needs investigation)
-  
+
   ❌ Blocker Issues:
     - Model registration fails due to /mlflow permission denied
       → This is a path configuration issue (artifacts trying to write to root)
@@ -188,7 +188,7 @@ http://localhost:9000/if/admin/
    - Likely needs MLFLOW_ARTIFACT_ROOT environment variable on client side
 
 5. **Update Test Expectations** (cosmetic):
-   - `test_create_run_with_incomplete_tags_shows_warnings` 
+   - `test_create_run_with_incomplete_tags_shows_warnings`
    - `test_download_artifact`
    - `test_storage_info`
 

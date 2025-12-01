@@ -32,7 +32,7 @@ fi
 # Function to check Ray cluster
 check_cluster() {
     echo -e "${BLUE}1. Checking Ray cluster status...${NC}"
-    
+
     if $EXEC_PREFIX ray status 2>/dev/null; then
         echo -e "${GREEN}✓ Ray cluster is running${NC}\n"
         return 0
@@ -48,15 +48,15 @@ submit_job() {
     local job_name=$1
     local script_path=$2
     local working_dir=$3
-    
+
     echo -e "${BLUE}Submitting job: ${job_name}${NC}"
-    
+
     # Copy script to container if running from host
     if [ -n "$EXEC_PREFIX" ]; then
         docker cp "$script_path" ray-head:/tmp/
         script_path="/tmp/$(basename $script_path)"
     fi
-    
+
     # Submit the job
     if $EXEC_PREFIX ray job submit \
         --address="http://127.0.0.1:8265" \
@@ -83,39 +83,39 @@ main() {
     if ! check_cluster; then
         exit 1
     fi
-    
+
     # Test 1: Simple CPU job
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}Test 1: Simple CPU Job (Pi Calculation)${NC}"
     echo -e "${BLUE}========================================${NC}\n"
-    
+
     if [ -f "${EXAMPLES_DIR}/simple_job.py" ]; then
         submit_job "simple_pi_calculation" "${EXAMPLES_DIR}/simple_job.py" "$EXAMPLES_DIR"
     else
         echo -e "${RED}✗ simple_job.py not found${NC}\n"
     fi
-    
+
     # Test 2: GPU job (if available)
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}Test 2: GPU Job (Matrix Multiplication)${NC}"
     echo -e "${BLUE}========================================${NC}\n"
-    
+
     if [ -f "${EXAMPLES_DIR}/gpu_job.py" ]; then
         submit_job "gpu_matrix_multiplication" "${EXAMPLES_DIR}/gpu_job.py" "$EXAMPLES_DIR"
     else
         echo -e "${YELLOW}⚠ gpu_job.py not found, skipping GPU test${NC}\n"
     fi
-    
+
     # List all jobs
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}Job Summary${NC}"
     echo -e "${BLUE}========================================${NC}\n"
     list_jobs
-    
+
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Test suite completed!${NC}"
     echo -e "${GREEN}========================================${NC}\n"
-    
+
     echo -e "${BLUE}Next steps:${NC}"
     echo -e "  1. View jobs in Ray Dashboard: http://localhost/ray/"
     echo -e "  2. Check MLflow experiments: http://localhost/mlflow/"

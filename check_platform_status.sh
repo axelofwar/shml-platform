@@ -24,7 +24,7 @@ check_service() {
     local service=$1
     local status=$(sudo docker inspect --format='{{.State.Status}}' "$service" 2>/dev/null || echo "not found")
     local health=$(sudo docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "no healthcheck")
-    
+
     if [ "$status" = "running" ]; then
         if [ "$health" = "healthy" ]; then
             echo -e "${GREEN}✓${NC} $service: running (healthy)"

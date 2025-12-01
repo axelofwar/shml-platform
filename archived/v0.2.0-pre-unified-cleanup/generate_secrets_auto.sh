@@ -33,10 +33,10 @@ update_env() {
     local file=$1
     local key=$2
     local value=$3
-    
+
     # Escape value for perl
     local escaped=$(printf '%s' "$value" | perl -pe 's/([\\$@%])/\\$1/g')
-    
+
     # Update or add
     if grep -q "^${key}=" "$file" 2>/dev/null; then
         perl -i -pe "s|^${key}=.*|${key}=${escaped}|" "$file"

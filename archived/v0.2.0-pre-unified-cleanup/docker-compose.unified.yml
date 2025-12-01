@@ -92,63 +92,63 @@ services:
       - POSTGRES_DB=ray_compute
       - POSTGRES_USER=ray_compute
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      
+
       # Redis (shared with MLflow, using DB 1)
       - REDIS_HOST=ml-platform-redis
       - REDIS_PORT=6379
       - REDIS_DB=1
-      
+
       # Ray Cluster (use Docker service name)
       - RAY_ADDRESS=http://ray-head:8265
-      
+
       # MLflow (use Docker service name)
       - MLFLOW_TRACKING_URI=http://mlflow-nginx:80
-      
+
       # API Configuration
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - API_SECRET_KEY=${API_SECRET_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
-      
+
       # Job Configuration
       - JOB_WORKSPACE=/opt/ray/job_workspaces
       - ARTIFACT_RETENTION_HOURS=24
-      
+
       # Auth (disabled for now)
       - API_KEY_ENABLED=false
-      
+
       # Monitoring
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
-      
+
       # Logging
       - DEBUG=false
       - LOG_LEVEL=INFO
-    
+
     volumes:
       - ./logs:/app/logs
       - ./data/artifacts:/app/artifacts
       - ./data/job_workspaces:/opt/ray/job_workspaces
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    
+
     expose:
       - "8000"
-    
+
     networks:
       - ml-platform
-    
+
     depends_on:
       ray-compute-db:
         condition: service_healthy
       ray-head:
         condition: service_healthy
-    
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-    
+
     labels:
       - "traefik.enable=true"
       # Ray Compute API

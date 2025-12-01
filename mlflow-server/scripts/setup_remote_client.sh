@@ -32,7 +32,7 @@ if [ -z "$MLFLOW_SERVER_HOST" ]; then
     echo -e "  ${BLUE}Tip:${NC} If on same network, use server's local IP (e.g., 192.168.1.100)"
     echo -e "  ${BLUE}Tip:${NC} If using Tailscale, use Tailscale IP (e.g., 100.x.x.x)"
     read -p "Server host: " MLFLOW_SERVER_HOST
-    
+
     if [ -z "$MLFLOW_SERVER_HOST" ]; then
         echo -e "${RED}Error: Server host is required${NC}"
         exit 1
@@ -72,17 +72,17 @@ if [ "$CONNECTIVITY" = "failed" ] && [ "$USE_TAILSCALE" != "no" ]; then
     echo -e "Tailscale creates a secure VPN between your machines, allowing"
     echo -e "access even across different networks or the internet."
     echo ""
-    
+
     if [ "$USE_TAILSCALE" = "auto" ]; then
         read -p "Set up Tailscale VPN? (y/n): " setup_tailscale
     else
         setup_tailscale="y"
     fi
-    
+
     if [ "$setup_tailscale" = "y" ] || [ "$setup_tailscale" = "Y" ]; then
         echo ""
         echo -e "${BLUE}Installing Tailscale...${NC}"
-        
+
         # Detect OS and install Tailscale
         if [ -f /etc/os-release ]; then
             . /etc/os-release
@@ -90,7 +90,7 @@ if [ "$CONNECTIVITY" = "failed" ] && [ "$USE_TAILSCALE" != "no" ]; then
         else
             OS=$(uname -s)
         fi
-        
+
         case "$OS" in
             ubuntu|debian)
                 echo -e "${BLUE}→${NC} Installing for Debian/Ubuntu..."
@@ -118,11 +118,11 @@ if [ "$CONNECTIVITY" = "failed" ] && [ "$USE_TAILSCALE" != "no" ]; then
                 exit 1
                 ;;
         esac
-        
+
         echo ""
         echo -e "${BLUE}Starting Tailscale...${NC}"
         sudo tailscale up
-        
+
         echo ""
         echo -e "${GREEN}✓${NC} Tailscale installed and connected!"
         echo ""
@@ -151,12 +151,12 @@ if command -v python3 &> /dev/null; then
 else
     echo -e "${RED}✗${NC} Python 3 not found"
     echo -e "${BLUE}Installing Python 3...${NC}"
-    
+
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$ID
     fi
-    
+
     case "$OS" in
         ubuntu|debian)
             sudo apt-get update
@@ -258,29 +258,29 @@ from mlflow.tracking import MlflowClient
 
 def test_connection():
     tracking_uri = os.environ.get('MLFLOW_TRACKING_URI')
-    
+
     if not tracking_uri:
         print("❌ MLFLOW_TRACKING_URI not set")
         print("Run: source ~/.mlflow/remote.env")
         return False
-    
+
     print(f"🔗 Connecting to: {tracking_uri}")
-    
+
     try:
         # Set tracking URI
         mlflow.set_tracking_uri(tracking_uri)
         client = MlflowClient()
-        
+
         # Test connection by listing experiments
         experiments = client.search_experiments()
-        
+
         print(f"✅ Successfully connected!")
         print(f"📊 Found {len(experiments)} experiment(s):")
         for exp in experiments[:5]:  # Show first 5
             print(f"   • {exp.name} (ID: {exp.experiment_id})")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Connection failed: {e}")
         print("\nTroubleshooting:")
@@ -322,49 +322,49 @@ def train_model():
         print("❌ MLFLOW_TRACKING_URI not set")
         print("Run: source ~/.mlflow/remote.env")
         return
-    
+
     print(f"🔗 Using MLflow server: {tracking_uri}")
     mlflow.set_tracking_uri(tracking_uri)
-    
+
     # Set experiment
     mlflow.set_experiment("remote-training-example")
-    
+
     # Load data
     print("📊 Loading dataset...")
     iris = load_iris()
     X_train, X_test, y_train, y_test = train_test_split(
         iris.data, iris.target, test_size=0.2, random_state=42
     )
-    
+
     # Start MLflow run
     with mlflow.start_run(run_name="random-forest-iris"):
         print("🚀 Training model...")
-        
+
         # Train model
         n_estimators = 100
         max_depth = 5
-        
+
         clf = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
             random_state=42
         )
         clf.fit(X_train, y_train)
-        
+
         # Predict and evaluate
         y_pred = clf.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
-        
+
         # Log parameters
         mlflow.log_param("n_estimators", n_estimators)
         mlflow.log_param("max_depth", max_depth)
-        
+
         # Log metrics
         mlflow.log_metric("accuracy", accuracy)
-        
+
         # Log model
         mlflow.sklearn.log_model(clf, "model")
-        
+
         print(f"✅ Training complete!")
         print(f"   Accuracy: {accuracy:.4f}")
         print(f"   Run ID: {mlflow.active_run().info.run_id}")
@@ -448,10 +448,10 @@ echo -e "4. ${BLUE}Use in your own scripts:${NC}"
 echo ""
 cat << 'EOFCODE'
    import mlflow
-   
+
    # Tracking URI is already set via environment
    mlflow.set_experiment("my-experiment")
-   
+
    with mlflow.start_run():
        mlflow.log_param("param1", 5)
        mlflow.log_metric("metric1", 0.85)

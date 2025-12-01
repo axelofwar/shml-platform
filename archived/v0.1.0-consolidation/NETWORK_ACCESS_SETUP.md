@@ -399,7 +399,7 @@ job = client.submit_job(
 | **Professional** | Good for teams | Best for production |
 | **Maintenance** | Zero | Minimal |
 
-**Recommendation:** 
+**Recommendation:**
 - Start with Tailscale (current setup)
 - Add custom domain later if needed
 

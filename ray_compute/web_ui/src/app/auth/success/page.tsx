@@ -28,7 +28,7 @@ function AuthSuccessContent() {
           // Store tokens in localStorage
           localStorage.setItem("access_token", accessToken);
           console.log("Stored access token");
-          
+
           if (refreshToken) {
             localStorage.setItem("refresh_token", refreshToken);
             console.log("Stored refresh token");

@@ -41,14 +41,14 @@ try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             f.write("HTTP artifact upload test\n")
             test_file = f.name
-        
+
         mlflow.log_artifact(test_file, "http_test")
         os.unlink(test_file)
-        
+
         print("   ✅ HTTP artifact upload successful!")
         print(f"   Run ID: {run.info.run_id}")
         print(f"   Artifact URI: {run.info.artifact_uri}")
-        
+
         # Check if it's using HTTP proxying or direct file access
         if run.info.artifact_uri.startswith("file://"):
             print("   ⚠️  Using direct file:// access (need --serve-artifacts)")
@@ -56,7 +56,7 @@ try:
             exit(1)
         elif run.info.artifact_uri.startswith("http://") or run.info.artifact_uri.startswith("mlflow-artifacts://"):
             print("   ✅ Using HTTP proxied artifacts")
-        
+
 except PermissionError as e:
     print(f"   ❌ Permission error: {e}")
     print("   Server needs --serve-artifacts flag")

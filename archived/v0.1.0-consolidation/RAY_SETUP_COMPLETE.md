@@ -325,18 +325,18 @@ class Trainer:
         import torch
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = torch.nn.Linear(10, 1).to(self.device)
-    
+
     def train(self, epochs=10):
         mlflow.set_tracking_uri("http://mlflow-server:5000")
         mlflow.set_experiment("ray-training")
-        
+
         with mlflow.start_run():
             for epoch in range(epochs):
                 loss = self._train_epoch()
                 mlflow.log_metric("loss", loss, step=epoch)
-        
+
         return "Training complete"
-    
+
     def _train_epoch(self):
         # Training logic here
         return 0.1
@@ -459,7 +459,7 @@ import ray
 def train_model(params):
     mlflow.set_tracking_uri("http://mlflow-server:5000")
     mlflow.set_experiment("distributed-training")
-    
+
     with mlflow.start_run():
         mlflow.log_params(params)
         # Training code

@@ -79,16 +79,16 @@ print(f"   Connecting to: {tracking_uri}")
 try:
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
-    
+
     experiments = client.search_experiments()
     print(f"   ✅ Python client working: {len(experiments)} experiments found")
-    
+
     # Check for problematic IDs
     for exp in experiments:
         exp_id = int(exp.experiment_id)
         if exp_id > 2147483647:
             print(f"   ⚠️  WARNING: Experiment '{exp.name}' has out-of-range ID: {exp_id}")
-        
+
 except Exception as e:
     print(f"   ❌ Python client error: {e}")
 EOFPYTHON

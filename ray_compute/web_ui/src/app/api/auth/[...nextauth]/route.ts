@@ -10,9 +10,9 @@ const authOptions: NextAuthOptions = {
       issuer: `${process.env.AUTHENTIK_URL}/application/o/ray-compute/`,
       authorization: {
         url: `${process.env.NEXT_PUBLIC_AUTHENTIK_URL}/application/o/authorize/`,
-        params: { 
+        params: {
           scope: "openid email profile",
-        } 
+        }
       },
       token: `${process.env.AUTHENTIK_URL}/application/o/token/`,
       userinfo: `${process.env.AUTHENTIK_URL}/application/o/userinfo/`,

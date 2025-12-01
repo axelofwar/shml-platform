@@ -45,7 +45,7 @@ docker-compose -f docker-compose.observability.yml ps
 docker-compose -f docker-compose.ui.yml ps
 
 echo ""
-echo "=== Services Started ===" 
+echo "=== Services Started ==="
 echo "✅ Ray Compute Web UI: http://localhost:3002"
 echo "✅ Ray Compute API: http://localhost:8000/docs"
 echo "✅ Authentik: http://localhost:9000"

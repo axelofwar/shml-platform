@@ -1,4 +1,5 @@
 """Inference Gateway configuration."""
+
 import os
 from pathlib import Path
 
@@ -20,7 +21,9 @@ POSTGRES_HOST = os.getenv("POSTGRES_HOST", "shared-postgres")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 POSTGRES_DB = os.getenv("POSTGRES_DB", "inference")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "inference")
-POSTGRES_PASSWORD_FILE = os.getenv("POSTGRES_PASSWORD_FILE", "/run/secrets/inference_db_password")
+POSTGRES_PASSWORD_FILE = os.getenv(
+    "POSTGRES_PASSWORD_FILE", "/run/secrets/inference_db_password"
+)
 
 # Queue settings
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "20"))

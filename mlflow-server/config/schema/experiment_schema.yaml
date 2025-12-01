@@ -132,14 +132,14 @@ global:
       - model.onnx                    # ONNX export (optional)
       - model_config.yaml             # Model configuration
       - requirements.txt              # Dependencies
-      
+
   # FPS benchmarking resolutions (priority order)
   standard_resolutions:
     - "3840x2160"  # 4K
     - "1920x1080"  # Full HD
     - "1280x720"   # HD
     - "640x480"    # SD
-    
+
   # Privacy requirements
   privacy_requirements:
     min_recall: 0.95                  # Minimize false negatives

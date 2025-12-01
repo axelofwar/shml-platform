@@ -179,13 +179,13 @@ docker exec ray-compute-db psql -U ray_compute -d ray_compute -c "\dt"
    DO $$
    BEGIN
        IF NOT EXISTS (
-           SELECT 1 FROM schema_migrations 
+           SELECT 1 FROM schema_migrations
            WHERE migration_name = '002_add_feature.sql'
        ) THEN
            -- Your changes here
            ALTER TABLE jobs ADD COLUMN new_field VARCHAR(255);
-           
-           INSERT INTO schema_migrations (migration_name, success) 
+
+           INSERT INTO schema_migrations (migration_name, success)
            VALUES ('002_add_feature.sql', TRUE);
        END IF;
    END $$;

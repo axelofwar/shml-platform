@@ -72,12 +72,12 @@ display_metrics() {
     local cpu_usage=$(get_cpu_usage)
     local mem_usage=$(get_memory_usage)
     local disk_usage=$(get_disk_usage)
-    
+
     echo ""
     echo -e "${BLUE}=== System Resource Usage ===${NC}"
     echo "Timestamp: $(timestamp)"
     echo ""
-    
+
     # CPU Status
     printf "CPU Usage: %.1f%% " "$cpu_usage"
     if (( $(echo "$cpu_usage >= $CPU_CRITICAL" | bc -l) )); then
@@ -89,7 +89,7 @@ display_metrics() {
     else
         echo -e "${GREEN}[OK]${NC}"
     fi
-    
+
     # Memory Status
     printf "Memory Usage: %.1f%% " "$mem_usage"
     if (( $(echo "$mem_usage >= $MEM_CRITICAL" | bc -l) )); then
@@ -101,7 +101,7 @@ display_metrics() {
     else
         echo -e "${GREEN}[OK]${NC}"
     fi
-    
+
     # Disk Status
     printf "Disk Usage: %s%% " "$disk_usage"
     if [ "$disk_usage" -ge "$DISK_CRITICAL" ]; then
@@ -113,14 +113,14 @@ display_metrics() {
     else
         echo -e "${GREEN}[OK]${NC}"
     fi
-    
+
     echo ""
-    
+
     # Detailed memory info
     echo -e "${BLUE}=== Detailed Memory Info ===${NC}"
     free -h
     echo ""
-    
+
     # Docker container stats if running
     if docker ps -q > /dev/null 2>&1; then
         check_docker_containers
@@ -133,7 +133,7 @@ watch_mode() {
     echo "Starting continuous monitoring (interval: ${interval}s)"
     echo "Press Ctrl+C to stop"
     echo ""
-    
+
     while true; do
         clear
         display_metrics
@@ -148,24 +148,24 @@ check_critical_state() {
     local cpu_usage=$(get_cpu_usage)
     local mem_usage=$(get_memory_usage)
     local disk_usage=$(get_disk_usage)
-    
+
     local critical=0
-    
+
     if (( $(echo "$cpu_usage >= $CPU_CRITICAL" | bc -l) )); then
         log_message "ALERT" "System under critical CPU load: ${cpu_usage}%"
         critical=1
     fi
-    
+
     if (( $(echo "$mem_usage >= $MEM_CRITICAL" | bc -l) )); then
         log_message "ALERT" "System under critical memory load: ${mem_usage}%"
         critical=1
     fi
-    
+
     if [ "$disk_usage" -ge "$DISK_CRITICAL" ]; then
         log_message "ALERT" "System disk critically full: ${disk_usage}%"
         critical=1
     fi
-    
+
     return $critical
 }
 

@@ -158,7 +158,7 @@ AUTHENTIK_URL=http://authentik:9000
 
 export default function MyComponent() {
   const [isMounted, setIsMounted] = useState(false);
-  
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
@@ -574,7 +574,7 @@ psql -h localhost -U ray_compute -d ray_compute -f config/database_schema.sql
 
 **Admin Interface:** `http://localhost:9000` or `http://${TAILSCALE_IP}:9000`
 
-**Login:** 
+**Login:**
 - Username: `akadmin`
 - Password: Reset using recovery token (see setup script)
 
@@ -684,7 +684,7 @@ rate(api_errors_total[5m])
 ### Visualization (Grafana)
 
 **Access:** `http://localhost:3001`  
-**Credentials:** 
+**Credentials:**
 - Username: `admin`
 - Password: See `.env` → `GRAFANA_ADMIN_PASSWORD`
 

@@ -1,4 +1,5 @@
 """Pydantic schemas for Z-Image API."""
+
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -6,6 +7,7 @@ from datetime import datetime
 
 class ImageGenerationRequest(BaseModel):
     """Image generation request."""
+
     prompt: str = Field(..., min_length=1, max_length=4096)
     negative_prompt: Optional[str] = Field(default=None, max_length=2048)
     width: int = Field(default=1024, ge=256, le=2048)
@@ -17,6 +19,7 @@ class ImageGenerationRequest(BaseModel):
 
 class ImageGenerationResponse(BaseModel):
     """Image generation response."""
+
     id: str
     created: int
     prompt: str  # Metadata only, not the actual prompt content
@@ -30,6 +33,7 @@ class ImageGenerationResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: Literal["healthy", "loading", "unloaded", "error"]
     model: str
     device: str
@@ -40,6 +44,7 @@ class HealthResponse(BaseModel):
 
 class ModelStatusResponse(BaseModel):
     """Detailed model status."""
+
     loaded: bool
     loading: bool
     last_used: Optional[datetime] = None

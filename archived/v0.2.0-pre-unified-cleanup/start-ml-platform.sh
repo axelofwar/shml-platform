@@ -60,7 +60,7 @@ echo ""
 # Check for GPU and setup MPS if available
 if nvidia-smi &>/dev/null; then
     echo "✓ NVIDIA GPU detected"
-    
+
     # Check if MPS is running
     if ! pgrep -f nvidia-cuda-mps > /dev/null; then
         echo "Setting up GPU sharing (MPS)..."

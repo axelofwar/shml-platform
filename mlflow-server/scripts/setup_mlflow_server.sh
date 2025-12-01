@@ -40,7 +40,7 @@ echo "════════════════════════�
 echo ""
 
 # Check if running as root
-if [ "$EUID" -eq 0 ]; then 
+if [ "$EUID" -eq 0 ]; then
     log_error "Please run as regular user, not root. Script will prompt for sudo when needed."
     exit 1
 fi
@@ -179,14 +179,14 @@ log_success "Directories created"
 # Setup PostgreSQL (if selected)
 if [ "$BACKEND_CHOICE" == "1" ]; then
     log_info "Configuring PostgreSQL..."
-    
+
     # Create database and user
     sudo -u postgres psql -c "DROP DATABASE IF EXISTS mlflow_db;" 2>/dev/null || true
     sudo -u postgres psql -c "DROP USER IF EXISTS mlflow;" 2>/dev/null || true
     sudo -u postgres psql -c "CREATE USER mlflow WITH PASSWORD '$DB_PASSWORD';"
     sudo -u postgres psql -c "CREATE DATABASE mlflow_db OWNER mlflow;"
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE mlflow_db TO mlflow;"
-    
+
     BACKEND_URI="postgresql://mlflow:$DB_PASSWORD@localhost/mlflow_db"
     log_success "PostgreSQL configured"
 else
@@ -246,7 +246,7 @@ if [[ $ENABLE_SERVICE =~ ^[Yy]$ ]]; then
     sudo systemctl enable mlflow
     sudo systemctl start mlflow
     sleep 3
-    
+
     if sudo systemctl is-active --quiet mlflow; then
         log_success "MLflow service started successfully"
     else
@@ -260,18 +260,18 @@ fi
 # Configure firewall (if requested)
 if [[ $CONFIGURE_FIREWALL =~ ^[Yy]$ ]]; then
     log_info "Configuring firewall..."
-    
+
     # Enable ufw if not already
     sudo ufw --force enable
-    
+
     # Allow SSH (important!)
     sudo ufw allow ssh
-    
+
     # Allow MLflow from local network only (adjust subnet as needed)
     sudo ufw allow from 192.168.0.0/16 to any port $MLFLOW_PORT
     sudo ufw allow from 10.0.0.0/8 to any port $MLFLOW_PORT
     sudo ufw allow from 172.16.0.0/12 to any port $MLFLOW_PORT
-    
+
     log_success "Firewall configured (local network access only)"
 fi
 

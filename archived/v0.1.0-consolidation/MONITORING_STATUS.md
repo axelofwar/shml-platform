@@ -9,7 +9,7 @@
 
 ### Critical Services: ✅ HEALTHY
 - **mlflow-server**: healthy (656MB / 656MB)
-- **ray-head**: healthy (650MB / 6GB) 
+- **ray-head**: healthy (650MB / 6GB)
 - **traefik**: healthy (36MB / 308MB)
 - **mlflow-postgres**: healthy
 - **ray-compute-db**: healthy

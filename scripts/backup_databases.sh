@@ -42,24 +42,24 @@ backup_database() {
     local backup_dir=$5
     local backup_file="${backup_dir}/${db_name}_${TIMESTAMP}.sql"
     local backup_compressed="${backup_file}.gz"
-    
+
     echo -e "${YELLOW}Backing up ${service_name}...${NC}"
-    
+
     # Check if container is running
     if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
         echo -e "${RED}✗ Container ${container_name} is not running${NC}"
         return 1
     fi
-    
+
     # Perform backup
     if docker exec -t "$container_name" pg_dump -U "$db_user" -d "$db_name" > "$backup_file"; then
         # Compress backup
         gzip "$backup_file"
-        
+
         # Get backup size
         local size=$(du -h "$backup_compressed" | cut -f1)
         echo -e "${GREEN}✓ Backup completed: ${backup_compressed} (${size})${NC}"
-        
+
         # Keep only last 10 backups
         cd "$backup_dir"
         ls -t "${db_name}_"*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm

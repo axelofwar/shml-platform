@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run inference stack tests
-# 
+#
 # Usage:
 #   ./run_inference_tests.sh           # Run all inference tests (unit + integration)
 #   ./run_inference_tests.sh unit      # Run only unit tests (no GPU needed)
@@ -81,11 +81,11 @@ case $TEST_TYPE in
         echo -e "${BLUE}Running all inference tests...${NC}"
         echo "================================================"
         echo ""
-        
+
         echo -e "${BLUE}Phase 1: Unit tests (no GPU required)${NC}"
         echo "------------------------------------------------"
         pytest tests/unit/inference/ $VERBOSE $SKIP_SLOW --tb=short || true
-        
+
         echo ""
         echo -e "${BLUE}Phase 2: Integration tests (services required)${NC}"
         echo "------------------------------------------------"

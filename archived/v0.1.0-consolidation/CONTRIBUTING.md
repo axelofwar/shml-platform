@@ -27,7 +27,7 @@
    # Web UI
    cd web_ui
    npm install
-   
+
    # API
    cd ../api
    pip install -r requirements.txt
@@ -38,7 +38,7 @@
    # Web UI (with hot reload)
    cd web_ui
    npm run dev
-   
+
    # API
    cd api
    uvicorn main:app --reload

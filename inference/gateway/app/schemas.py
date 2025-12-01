@@ -1,4 +1,5 @@
 """Pydantic schemas for Inference Gateway."""
+
 from typing import Optional, List, Literal, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -6,8 +7,10 @@ from datetime import datetime
 
 # ===== Chat History =====
 
+
 class ChatMessage(BaseModel):
     """Single chat message."""
+
     role: Literal["system", "user", "assistant"]
     content: str
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -15,6 +18,7 @@ class ChatMessage(BaseModel):
 
 class Conversation(BaseModel):
     """Full conversation with metadata."""
+
     id: str
     user_id: str
     title: Optional[str] = None
@@ -27,6 +31,7 @@ class Conversation(BaseModel):
 
 class ConversationSummary(BaseModel):
     """Lightweight conversation list item."""
+
     id: str
     title: Optional[str]
     message_count: int
@@ -37,8 +42,10 @@ class ConversationSummary(BaseModel):
 
 # ===== Queue Status =====
 
+
 class QueuedRequest(BaseModel):
     """Request in queue."""
+
     id: str
     user_id: str
     service: Literal["llm", "image"]
@@ -49,6 +56,7 @@ class QueuedRequest(BaseModel):
 
 class QueueStatus(BaseModel):
     """Queue status response."""
+
     llm_queue_length: int
     image_queue_length: int
     active_requests: int
@@ -58,8 +66,10 @@ class QueueStatus(BaseModel):
 
 # ===== Rate Limiting =====
 
+
 class RateLimitStatus(BaseModel):
     """Rate limit status for user."""
+
     requests_remaining: int
     requests_limit: int
     reset_at: datetime
@@ -68,8 +78,10 @@ class RateLimitStatus(BaseModel):
 
 # ===== Health =====
 
+
 class ServiceHealth(BaseModel):
     """Single service health."""
+
     name: str
     status: Literal["healthy", "unhealthy", "loading", "unknown"]
     latency_ms: Optional[float] = None
@@ -77,6 +89,7 @@ class ServiceHealth(BaseModel):
 
 class GatewayHealth(BaseModel):
     """Gateway health response."""
+
     status: Literal["healthy", "degraded", "unhealthy"]
     services: List[ServiceHealth]
     queue_length: int
@@ -85,8 +98,10 @@ class GatewayHealth(BaseModel):
 
 # ===== Backup =====
 
+
 class BackupInfo(BaseModel):
     """Backup file info."""
+
     filename: str
     size_bytes: int
     created_at: datetime

@@ -65,24 +65,24 @@ http://localhost:9000
 1. Navigate to **Applications** → **Providers** → **Create**
 2. Select **OAuth2/OpenID Provider**
 3. Configure:
-   
+
    **Basic Configuration:**
    ```
    Name: MLflow OAuth Provider
    Authorization Flow: implicit-consent
    Client Type: Confidential
    ```
-   
+
    **URLs:**
    ```
    Redirect URIs:
      - http://localhost/mlflow/oauth/callback
      - http://localhost/mlflow/oauth/callback
      - http://${TAILSCALE_IP}/mlflow/oauth/callback  # VPN
-   
+
    Signing Key: authentik Self-signed Certificate (auto-generated)
    ```
-   
+
    **Scopes:**
    ```
    - openid
@@ -90,7 +90,7 @@ http://localhost:9000
    - email
    - offline_access
    ```
-   
+
    **Advanced Settings:**
    ```
    Access Token Validity: 1 hour
@@ -234,7 +234,7 @@ http:
       middlewares:
         - authentik
         - mlflow-stripprefix
-    
+
     # Apply to Ray
     ray-dashboard:
       middlewares:

@@ -79,11 +79,11 @@ Text content does not match server-rendered HTML
 ```typescript
 export default function Component() {
   const [mounted, setMounted] = useState(false);
-  
+
   useEffect(() => {
     setMounted(true);
   }, []);
-  
+
   // Return consistent structure until mounted
   if (!mounted || status === "loading") {
     return (
@@ -92,7 +92,7 @@ export default function Component() {
       </div>
     );
   }
-  
+
   // Client-only rendering after mount
   return <ActualComponent />;
 }
@@ -171,7 +171,7 @@ environment:
   - NEXT_PUBLIC_AUTHENTIK_URL=http://${TAILSCALE_IP}:9000
   # Internal URL for container-to-container communication
   - AUTHENTIK_URL=http://authentik-server:9000
-  
+
 networks:
   ray-compute:
     name: ray-compute

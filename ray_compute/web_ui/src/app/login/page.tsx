@@ -19,8 +19,8 @@ export default function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button 
-            onClick={handleLogin} 
+          <Button
+            onClick={handleLogin}
             className="w-full"
             size="lg"
           >
@@ -39,7 +39,7 @@ export default function LoginPage() {
             </svg>
             Sign in with Authentik
           </Button>
-          
+
           <div className="text-xs text-center text-muted-foreground">
             <p>You will be redirected to Authentik for authentication</p>
           </div>

@@ -62,43 +62,44 @@ conv3_weight = torch.randn(256, 128, 3, 3, device=device, requires_grad=True)
 for epoch in range(config["epochs"]):
     print(f"\nEpoch {epoch + 1}/{config['epochs']}")
     epoch_start = time.time()
-    
+
     # Simulate multi-resolution training
     for resolution in config["resolutions"]:
         # Create batch (simulate image data)
         batch = torch.randn(
-            config["batch_size"], 3, resolution, resolution, 
-            device=device
+            config["batch_size"], 3, resolution, resolution, device=device
         )
-        
+
         # Simulate forward pass with convolutions
         with torch.cuda.amp.autocast():
             # Layer 1
             conv1 = torch.nn.functional.conv2d(batch, conv1_weight, padding=1)
             relu1 = torch.nn.functional.relu(conv1)
-            
+
             # Layer 2
             conv2 = torch.nn.functional.conv2d(relu1, conv2_weight, padding=1)
             relu2 = torch.nn.functional.relu(conv2)
-            
+
             # Layer 3
             conv3 = torch.nn.functional.conv2d(relu2, conv3_weight, padding=1)
             output = torch.nn.functional.relu(conv3)
-        
+
         # Simulate loss computation
         loss = output.mean()
-        
+
         # Simulate backward pass
         loss.backward()
-        
+
         # Log progress
         gpu_mem_used = torch.cuda.memory_allocated(0) / 1024**2
         gpu_mem_cached = torch.cuda.memory_reserved(0) / 1024**2
-        
-        print(f"  Resolution {resolution}x{resolution}: "
-              f"loss={loss.item():.4f}, "
-              f"GPU memory={gpu_mem_used:.0f}/{gpu_mem_cached:.0f}MB")
-        
+
+        print(
+            f"  Resolution {resolution}x{resolution}: "
+            f"loss={loss.item():.4f}, "
+            f"GPU memory={gpu_mem_used:.0f}/{gpu_mem_cached:.0f}MB"
+        )
+
         # Zero gradients for next iteration
         if conv1_weight.grad is not None:
             conv1_weight.grad.zero_()
@@ -106,38 +107,35 @@ for epoch in range(config["epochs"]):
             conv2_weight.grad.zero_()
         if conv3_weight.grad is not None:
             conv3_weight.grad.zero_()
-        
+
         # Cleanup
         del batch, conv1, relu1, conv2, relu2, conv3, output, loss
         torch.cuda.empty_cache()
-        
+
         time.sleep(0.5)  # Simulate processing time
-    
+
     # Validation phase
     with torch.no_grad():
-        val_batch = torch.randn(
-            config["batch_size"], 3, 640, 640,
-            device=device
-        )
+        val_batch = torch.randn(config["batch_size"], 3, 640, 640, device=device)
         val_output = torch.nn.functional.conv2d(
-            val_batch,
-            torch.randn(64, 3, 3, 3, device=device),
-            padding=1
+            val_batch, torch.randn(64, 3, 3, 3, device=device), padding=1
         )
         val_loss = val_output.mean()
-    
+
     epoch_time = time.time() - epoch_start
     print(f"  Validation: loss={val_loss.item():.4f}")
     print(f"  Epoch time: {epoch_time:.2f}s")
-    
+
     # Memory stats
     allocated = torch.cuda.memory_allocated(0) / 1024**3
     reserved = torch.cuda.memory_reserved(0) / 1024**3
     max_allocated = torch.cuda.max_memory_allocated(0) / 1024**3
-    print(f"  GPU Memory: {allocated:.2f}GB allocated, "
-          f"{reserved:.2f}GB reserved, "
-          f"{max_allocated:.2f}GB peak")
-    
+    print(
+        f"  GPU Memory: {allocated:.2f}GB allocated, "
+        f"{reserved:.2f}GB reserved, "
+        f"{max_allocated:.2f}GB peak"
+    )
+
     del val_batch, val_output, val_loss
     torch.cuda.empty_cache()
 
@@ -155,8 +153,10 @@ for i in range(torch.cuda.device_count()):
     allocated = torch.cuda.memory_allocated(i) / 1024**3
     reserved = torch.cuda.memory_reserved(i) / 1024**3
     max_alloc = torch.cuda.max_memory_allocated(i) / 1024**3
-    print(f"  GPU {i}: {allocated:.2f}GB current, "
-          f"{max_alloc:.2f}GB peak, "
-          f"{reserved:.2f}GB reserved")
+    print(
+        f"  GPU {i}: {allocated:.2f}GB current, "
+        f"{max_alloc:.2f}GB peak, "
+        f"{reserved:.2f}GB reserved"
+    )
 
 print(f"\n✅ GPU Training Job Completed Successfully!")

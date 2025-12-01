@@ -22,7 +22,7 @@ prompt_with_default() {
     local prompt="$1"
     local default="$2"
     local value
-    
+
     read -p "$prompt [$default]: " value
     echo "${value:-$default}"
 }
@@ -31,7 +31,7 @@ prompt_with_default() {
 prompt_secret() {
     local prompt="$1"
     local value
-    
+
     read -sp "$prompt: " value
     echo "$value"
 }

@@ -6,10 +6,10 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Activity, 
-  CreditCard, 
-  DollarSign, 
+import {
+  Activity,
+  CreditCard,
+  DollarSign,
   Users,
   ArrowUpRight,
   Clock,
@@ -109,7 +109,7 @@ export default function DashboardPage() {
   if (!mounted || status === "loading") {
     return null;
   }
-  
+
   if (!session) {
     return null;
   }
@@ -188,7 +188,7 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-        
+
         <div className="grid gap-4 md:grid-cols-2 md:gap-8 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -297,7 +297,7 @@ export default function DashboardPage() {
                     };
 
                     const badge = getStatusBadge(job.status);
-                    
+
                     return (
                       <div key={job.job_id} className="flex items-center">
                         <div className="ml-4 space-y-1 flex-1">
@@ -369,9 +369,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-primary" 
-                    style={{ width: `${Math.min((stats.runningJobs / quota.max_concurrent_jobs) * 100, 100)}%` }} 
+                  <div
+                    className="h-full bg-primary"
+                    style={{ width: `${Math.min((stats.runningJobs / quota.max_concurrent_jobs) * 100, 100)}%` }}
                   />
                 </div>
               </div>
