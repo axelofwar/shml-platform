@@ -1,27 +1,31 @@
 # GitGuardian Configuration
-# https://docs.gitguardian.com/ggshield-docs/reference/pre-commit-configuration
+# https://docs.gitguardian.com/ggshield-docs/reference/configuration
 
-# Paths to ignore during secret detection
-paths-ignore:
-  # Archived/historical documentation (secrets have been rotated)
-  - "archived/**"
-  - "**/archived/**"
+version: 2
 
-  # Backup files (should not be tracked, but ignore if found)
-  - "**/*-env.backup"
-  - "**/backups/**"
-  - "backups/**"
+secret:
+  # Paths to ignore during secret detection
+  ignored_paths:
+    # Archived/historical documentation (secrets have been rotated)
+    - 'archived/**'
+    - '**/archived/**'
 
-  # Example/template files
-  - "**/*.example"
-  - "**/.env.example"
+    # Backup files (should not be tracked, but ignore if found)
+    - '**/*-env.backup'
+    - '**/backups/**'
+    - 'backups/**'
 
-  # Test fixtures that may contain dummy secrets
-  - "tests/**"
-  - "**/tests/**"
+    # Example/template files
+    - '**/*.example'
+    - '**/.env.example'
 
-  # Documentation with placeholder examples
-  - "**/*QUICKSTART*.md"
+    # Test fixtures that may contain dummy secrets
+    - 'tests/**'
+    - '**/tests/**'
 
-  # MacOS metadata
-  - "__MACOSX/**"
+    # Documentation with placeholder examples
+    - '**/*QUICKSTART*.md'
+    - '**/REMOTE_ACCESS*.md'
+
+    # MacOS metadata
+    - '__MACOSX/**'
