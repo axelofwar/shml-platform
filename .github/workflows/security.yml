@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  pull-requests: read
 
 jobs:
   # Scan for hardcoded secrets
@@ -31,7 +32,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: true
+          GITLEAKS_ENABLE_COMMENTS: false
 
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main
@@ -83,6 +84,7 @@ jobs:
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true  # Don't fail if CodeQL upload has permission issues
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -137,15 +139,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Lint Docker Compose files
+      - name: Lint YAML files
         run: |
-          # Install docker-compose for validation
-          pip install docker-compose
-          
-          # Validate all compose files
+          # Use yamllint for YAML validation
+          pip install yamllint
+
+          # Create yamllint config
+          cat > .yamllint.yml << 'EOF'
+          extends: relaxed
+          rules:
+            line-length: disable
+            truthy: disable
+            document-start: disable
+            comments: disable
+          EOF
+
+          # Lint compose files
           for f in docker-compose*.yml; do
             echo "Validating: $f"
-            docker-compose -f "$f" config -q || echo "Warning: $f has issues"
+            yamllint -c .yamllint.yml "$f" || echo "Warning: $f has issues"
+          done
+
+      - name: Validate Docker Compose syntax
+        run: |
+          # Use docker compose v2 (built into runner)
+          for f in docker-compose*.yml; do
+            echo "Checking syntax: $f"
+            docker compose -f "$f" config --quiet 2>/dev/null || echo "Note: $f may have external dependencies"
           done
 
       - name: Lint YAML files
