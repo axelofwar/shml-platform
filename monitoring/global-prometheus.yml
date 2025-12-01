@@ -1,0 +1,93 @@
+# Global Prometheus - Federation Configuration
+# Aggregates metrics from MLflow Prometheus and Ray Prometheus
+# Retention: 90 days (aggregated metrics for long-term trends)
+
+global:
+  scrape_interval: 15s  # Faster interval for quicker dashboard feedback
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ml-platform'
+    service: 'global'
+
+# Federate from service-specific Prometheus instances
+scrape_configs:
+  # MLflow Prometheus Federation
+  - job_name: 'federate-mlflow'
+    scrape_interval: 60s
+    honor_labels: true
+    metrics_path: '/federate'
+    params:
+      'match[]':
+        # Aggregate high-level MLflow metrics
+        - '{job="mlflow-server"}'
+        - '{job="mlflow-api"}'
+        - '{__name__=~"mlflow_.*"}'
+        - '{__name__=~"http_.*"}'
+        - '{__name__=~"process_.*"}'
+    static_configs:
+      - targets: ['mlflow-prometheus:9090']
+        labels:
+          source: 'mlflow-prometheus'
+  
+  # Ray Prometheus Federation
+  - job_name: 'federate-ray'
+    scrape_interval: 60s
+    honor_labels: true
+    metrics_path: '/federate'
+    params:
+      'match[]':
+        # Aggregate high-level Ray metrics
+        - '{job="ray-head"}'
+        - '{job="ray-compute-api"}'
+        - '{__name__=~"ray_.*"}'
+        - '{__name__=~"node_.*"}'
+        - '{__name__=~"process_.*"}'
+    static_configs:
+      - targets: ['ray-prometheus:9090']
+        labels:
+          source: 'ray-prometheus'
+  
+  # Platform Infrastructure Metrics (direct scrape)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          component: 'node-exporter'
+  
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          component: 'cadvisor'
+  
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8080']
+        labels:
+          component: 'traefik'
+  
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['ml-platform-redis:6379']
+        labels:
+          component: 'redis'
+  
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['shared-postgres:5432']
+        labels:
+          component: 'postgres'
+  
+  # DCGM Exporter - NVIDIA GPU Metrics
+  - job_name: 'dcgm-exporter'
+    static_configs:
+      - targets: ['dcgm-exporter:9400']
+        labels:
+          component: 'dcgm-exporter'
+          instance: 'ml-platform-gpus'
+  
+  - job_name: 'authentik'
+    static_configs:
+      - targets: ['authentik-server:9000']
+        labels:
+          component: 'authentik'

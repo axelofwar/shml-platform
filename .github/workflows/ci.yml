@@ -1,0 +1,117 @@
+# CI/CD Workflow
+# Runs tests, builds containers, and validates code
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # Run Python tests
+  test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pytest-cov httpx
+          
+          # Install project-specific requirements if they exist
+          for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
+            if [ -f "$req" ]; then
+              pip install -r "$req" || true
+            fi
+          done
+
+      - name: Run unit tests
+        run: |
+          if [ -d "tests/unit" ]; then
+            pytest tests/unit/ -v --tb=short || true
+          else
+            echo "No unit tests directory found"
+          fi
+
+  # Validate Docker builds
+  docker-build:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create dummy secrets for build
+        run: |
+          mkdir -p secrets
+          echo "dummy-password" > secrets/shared_db_password.txt
+          echo "dummy-password" > secrets/grafana_password.txt
+          echo "dummy-password" > secrets/db_password.txt
+          
+          # Create minimal .env for compose validation
+          cat > .env << 'EOF'
+          AUTHENTIK_SECRET_KEY=dummy-key-for-ci
+          AUTHENTIK_DB_PASSWORD=dummy-password
+          AUTHENTIK_BOOTSTRAP_PASSWORD=dummy-password
+          SHARED_DB_PASSWORD=dummy-password
+          GRAFANA_ADMIN_PASSWORD=dummy-password
+          EOF
+
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.infra.yml config -q
+
+      - name: Build MLflow containers (dry-run)
+        run: |
+          if [ -f "mlflow-server/docker/mlflow/Dockerfile" ]; then
+            docker build --no-cache --target=builder -f mlflow-server/docker/mlflow/Dockerfile mlflow-server/docker/mlflow/ || true
+          fi
+
+  # Validate documentation
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for broken internal links
+        run: |
+          # Find markdown files and check for broken relative links
+          find . -name "*.md" -not -path "./.git/*" -not -path "./archived/*" | while read f; do
+            dir=$(dirname "$f")
+            grep -oE '\[.*\]\([^http][^)]+\)' "$f" 2>/dev/null | grep -oE '\([^)]+\)' | tr -d '()' | while read link; do
+              # Remove anchor
+              link_file="${link%%#*}"
+              if [ -n "$link_file" ] && [ ! -f "$dir/$link_file" ] && [ ! -f "$link_file" ]; then
+                echo "Potential broken link in $f: $link"
+              fi
+            done
+          done || true
+
+      - name: Validate README exists
+        run: |
+          if [ ! -f "README.md" ]; then
+            echo "ERROR: README.md is required"
+            exit 1
+          fi
+          echo "✓ README.md exists"

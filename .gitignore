@@ -346,3 +346,4 @@ test-results/
 
 # Keep archived README
 !archived/README.md
+backups/

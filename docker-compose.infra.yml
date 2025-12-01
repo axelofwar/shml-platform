@@ -1,0 +1,427 @@
+# ML Platform - Shared Infrastructure
+# Contains: API Gateway, Shared Databases, Unified Monitoring, Auth
+# Can be started independently or via main docker-compose.yml
+
+services:
+  # ==========================================================================
+  # API GATEWAY & ROUTING
+  # ==========================================================================
+  traefik:
+    image: traefik:v2.11
+    container_name: ml-platform-traefik
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.49'
+          memory: 385M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=ml-platform
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --log.level=INFO
+      - --accesslog=true
+      - --metrics.prometheus=true
+      - --ping=true
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+
+  # ==========================================================================
+  # SHARED DATA LAYER
+  # ==========================================================================
+  shared-postgres:
+    image: postgres:15-alpine
+    container_name: shared-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 384M
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - shared-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+      - ./backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ml-platform
+    expose:
+      - "5432"
+
+  ml-platform-redis:
+    image: redis:7-alpine
+    container_name: ml-platform-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.34'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    command: redis-server --maxmemory 400mb --maxmemory-policy allkeys-lru --appendonly yes --save 60 1000
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ml-platform
+    expose:
+      - "6379"
+
+  # ==========================================================================
+  # AUTHENTIK - OAuth/SSO (Isolated Infrastructure)
+  # ==========================================================================
+  authentik-db:
+    image: postgres:15-alpine
+    container_name: authentik-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.72'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authentik-redis:
+    image: redis:7-alpine
+    container_name: authentik-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.67'
+          memory: 192M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    command: --save 60 1 --loglevel warning
+    volumes:
+      - authentik-redis:/data
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.8
+    container_name: authentik-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.87'
+          memory: 384M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY must be set}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?AUTHENTIK_BOOTSTRAP_PASSWORD must be set}
+      AUTHENTIK_BOOTSTRAP_EMAIL: admin@ml-platform.local
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_AVATARS: "gravatar,initials"
+    volumes:
+      - authentik-media:/media
+      - authentik-custom-templates:/templates
+    networks:
+      - ml-platform
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ak healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.8
+    container_name: authentik-worker
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.47'
+          memory: 205M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY must be set}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      - authentik-media:/media
+      - authentik-certs:/certs
+      - authentik-custom-templates:/templates
+    networks:
+      - ml-platform
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+  # ==========================================================================
+  # SYSTEM MONITORING
+  # ==========================================================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ml-platform-node-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.42'
+          memory: 109M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - ml-platform
+    expose:
+      - "9100"
+    pid: host
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: ml-platform-cadvisor
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.47'
+          memory: 141M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - ml-platform
+    expose:
+      - "8080"
+    privileged: true
+    devices:
+      - /dev/kmsg
+
+  # ==========================================================================
+  # UNIFIED MONITORING - Federated Prometheus + Grafana
+  # ==========================================================================
+  global-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: global-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./monitoring/global-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
+      - global-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.entrypoints=web"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+      - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
+      - "traefik.http.routers.prometheus.priority=100"
+
+  unified-grafana:
+    image: grafana/grafana:10.2.2
+    container_name: unified-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost/grafana"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/grafana/dashboards/:/var/lib/grafana/dashboards/:ro
+      - unified-grafana-data:/var/lib/grafana
+    secrets:
+      - grafana_password
+    expose:
+      - "3000"
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.http.routers.grafana.priority=100"
+
+secrets:
+  shared_db_password:
+    file: ./secrets/shared_db_password.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt
+
+volumes:
+  # Shared Data
+  redis-data:
+    name: ml-platform-redis-data
+  shared-postgres-data:
+    name: shared-postgres-data
+  
+  # Monitoring
+  global-prometheus-data:
+    name: global-prometheus-data
+  unified-grafana-data:
+    name: unified-grafana-data
+  
+  # Authentik
+  authentik-db:
+    name: authentik-postgres-data
+  authentik-redis:
+    name: authentik-redis-data
+  authentik-media:
+    name: authentik-media
+  authentik-certs:
+    name: authentik-certs
+  authentik-custom-templates:
+    name: authentik-custom-templates
+
+networks:
+  ml-platform:
+    name: ml-platform
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

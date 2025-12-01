@@ -1,264 +1,378 @@
-# ML Platform - Unified Architecture
+# ML Platform - Production Ready
 
 ## Overview
 
-This is a unified ML platform with **Traefik** as the single API gateway routing all services. Both MLflow and Ray Compute are accessed exclusively through Traefik routing.
+A production-ready ML platform with MLflow experiment tracking, Ray distributed compute, and comprehensive monitoring. Designed for GPU workloads with security, observability, and remote access.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Traefik API Gateway                       │
-│               (ml-platform-gateway)                          │
-│                   Port 80, 8090                              │
+│                         Port 80                              │
 └──────────────────┬──────────────────────────────────────────┘
                    │
-       ┌───────────┴───────────┐
-       │                       │
-       ▼                       ▼
-┌──────────────┐      ┌──────────────┐
-│ MLflow Stack │      │ Ray Compute  │
-│              │      │              │
-│ • Server     │      │ • Head Node  │
-│ • Nginx      │      │ • API        │
-│ • PostgreSQL │      │ • PostgreSQL │
-│ • Redis      │      │ • Redis      │
-│ • Grafana    │      │ • Grafana    │
-│ • Prometheus │      │ • Prometheus │
-│ • Adminer    │      │ • Authentik  │
-└──────────────┘      └──────────────┘
-       │                       │
-       └───────────┬───────────┘
-                   ▼
-          ml-platform network
+       ┌───────────┴────────────┬─────────────┐
+       │                        │             │
+       ▼                        ▼             ▼
+┌──────────────┐      ┌─────────────┐   ┌────────────┐
+│   MLflow     │      │ Ray Compute │   │ Monitoring │
+│              │      │             │   │            │
+│ • Tracking   │      │ • Head Node │   │ • Grafana  │
+│ • Registry   │      │ • API       │   │ • 3x Prom  │
+│ • API        │      │ • Workers   │   │ • DCGM     │
+│ • PostgreSQL │      │ • PostgreSQL│   │ • cAdvisor │
+└──────────────┘      └─────────────┘   └────────────┘
+       │                        │             │
+       └────────────┬───────────┴─────────────┘
+                    ▼
+        ml-platform network (172.30.0.0/16)
 ```
-
-## Routing Table
-
-All services accessible via `http://localhost/`:
-
-| Path | Service | Description |
-|------|---------|-------------|
-| `/mlflow/` | MLflow UI | Experiment tracking, Model Registry |
-| `/grafana/` | MLflow Grafana | MLflow metrics and monitoring |
-| `/prometheus/` | MLflow Prometheus | Metrics storage |
-| `/adminer/` | Adminer | Database management UI |
-| `/ray/` | Ray Dashboard | Ray cluster monitoring |
-| `/ray-grafana/` | Ray Grafana | Ray metrics and GPU monitoring |
-| `:8090/` | Traefik Dashboard | View all routes and services |
 
 ## Quick Start
 
-### 1. Start Ray Compute (includes Traefik)
+### Initial Setup (One-time)
 
 ```bash
-cd ray_compute
-docker-compose up -d
+# Clone and navigate to platform
+cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+
+# Run unified setup script
+sudo ./setup.sh
 ```
 
-### 2. Start MLflow
+The setup script will:
+1. ✓ Install dependencies (Docker, NVIDIA toolkit, etc.)
+2. ✓ Create network and generate passwords
+3. ✓ Build .env files and secrets
+4. ✓ Provision Grafana dashboards
+5. ✓ Start all services in correct order
+6. ✓ Run health checks and validation
+
+**Time:** ~5-10 minutes for fresh install
+
+### Start/Stop Services
 
 ```bash
-cd mlflow-server
-./START_SERVICES.sh
+# Start all services (safe phased startup)
+./start_all_safe.sh
+
+# Stop all services (optional backup)
+./stop_all.sh
+./stop_all.sh --backup  # Create backup before stopping
+
+# Check platform status
+./check_platform_status.sh
 ```
 
-### 3. Verify All Services
+## Service Access
+
+All services accessible via Traefik routing:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **MLflow UI** | http://localhost/mlflow/ | None (open) |
+| **Ray Dashboard** | http://localhost/ray/ | None (open) |
+| **Grafana** | http://localhost/grafana/ | admin / (from secrets/) |
+| **Authentik** | http://localhost:9000/ | akadmin / (from secrets/) |
+| **Traefik** | http://localhost:8090/ | Dashboard |
+
+### Remote Access (Tailscale)
 
 ```bash
-cd mlflow-server
-./test_all_services.sh
+# Get Tailscale IP
+tailscale ip -4
+
+# Access from any device on your tailnet
+http://<tailscale-ip>/mlflow/
+http://<tailscale-ip>/grafana/
 ```
 
-## Remote Client Usage
+## Python Client Usage
 
 ### MLflow Tracking
 
 ```python
 import mlflow
 
-# Configure via Traefik routing
+# Local access
 mlflow.set_tracking_uri("http://localhost/mlflow")
 
-# Or set environment variable
-# export MLFLOW_TRACKING_URI="http://localhost/mlflow"
+# Remote access (Tailscale)
+mlflow.set_tracking_uri("http://<tailscale-ip>/mlflow")
 
-# Use normally
+# Log experiments
 with mlflow.start_run():
-    mlflow.log_param("alpha", 0.5)
-    mlflow.log_metric("rmse", 0.87)
+    mlflow.log_param("learning_rate", 0.01)
+    mlflow.log_metric("accuracy", 0.95)
 ```
 
-### Model Registry
+### Ray Remote Jobs
 
 ```python
-from mlflow.tracking import MlflowClient
+import ray
 
-client = MlflowClient("http://localhost/mlflow")
+# Connect to Ray cluster
+ray.init(address="ray://localhost:10001")
 
-# Register model
-mlflow.register_model("runs:/abc123/model", "my-model")
+# Or remote via Tailscale
+ray.init(address="ray://<tailscale-ip>:10001")
 
-# Promote to production
-client.transition_model_version_stage(
-    name="my-model",
-    version=1,
-    stage="Production"
-)
+# Submit tasks
+@ray.remote
+def train_model(data):
+    # Your training code
+    return model
+
+result = ray.get(train_model.remote(data))
 ```
 
-## Management Commands
+## Monitoring Dashboards
 
-### MLflow Services
+Access via Grafana: `http://localhost/grafana/`
+
+**Platform Dashboards:**
+- **System Metrics**: CPU, RAM, disk, network
+- **Container Metrics**: Resource usage by container with ID reference
+- **GPU Metrics**: DCGM monitoring (5 panels, both GPUs)
+
+**MLflow Dashboards:**
+- Request rates, latency, error rates
+- Database connections, experiment metrics
+
+**Ray Dashboards:**
+- Cluster overview, node resources
+- Task/actor metrics, GPU utilization
+
+## Platform Management
+
+### Service Health
 
 ```bash
-# Start
-cd mlflow-server && ./START_SERVICES.sh
+# Check all services
+./check_platform_status.sh
 
-# Stop
-cd mlflow-server && ./STOP_SERVICES.sh
+# View specific service logs
+sudo docker logs mlflow-server
+sudo docker logs ray-head
+sudo docker logs unified-grafana
 
-# Test
-cd mlflow-server && ./test_all_services.sh
-
-# Update passwords
-cd mlflow-server && ./update_passwords.sh <new_password>
+# Follow logs in real-time
+sudo docker logs -f <service-name>
 ```
 
-### Ray Compute Services
+### Update Dashboards
 
 ```bash
-# Start (includes Traefik gateway)
-cd ray_compute && docker-compose up -d
-
-# Stop
-cd ray_compute && docker-compose down
-
-# Logs
-cd ray_compute && docker-compose logs -f ray-head
+# Regenerate container ID reference table
+cd scripts
+sudo ./update_container_dashboard.sh
 ```
 
-### View All Routes
+### Run Tests
 
 ```bash
-curl http://localhost:8090/api/http/routers | jq
+# Test all services
+cd tests
+./test_all_services.sh
+
+# Test Ray job submission
+./test_job_submission.py
+
+# Test remote compute
+./test_remote_compute.py
 ```
 
-## Network Configuration
-
-All services must be on the `ml-platform` Docker network:
+### Fresh Install
 
 ```bash
-# Check network
-docker network inspect ml-platform
-
-# Services should include:
-# - ml-platform-gateway (Traefik)
-# - mlflow-nginx, mlflow-server, mlflow-postgres, etc.
-# - ray-head, ray-compute-api, ray-compute-db, etc.
-```
-
-## Important Rules
-
-### ✅ DO
-
-- Access all services via Traefik routes (`http://localhost/service-path`)
-- Use unified docker-compose.yml configurations
-- Keep all services on ml-platform network
-- Use START_SERVICES.sh and STOP_SERVICES.sh scripts
-
-### ❌ DON'T
-
-- Access services via direct ports (except Traefik :8090)
-- Create separate standalone docker-compose files
-- Bypass Traefik routing
-- Expose individual service ports to host
-
-## Troubleshooting
-
-### Service not accessible
-
-```bash
-# 1. Check container is running
-docker ps | grep <service-name>
-
-# 2. Check it's on ml-platform network
-docker network inspect ml-platform | grep <service-name>
-
-# 3. Check Traefik has route
-curl http://localhost:8090/api/http/routers | grep <service-name>
-
-# 4. Check container logs
-docker logs <service-name>
-```
-
-### Traefik not routing
-
-```bash
-# Restart Traefik
-cd ray_compute
-docker-compose restart traefik
-
-# Check Traefik logs
-docker logs ml-platform-gateway
-```
-
-### Network issues
-
-```bash
-# Recreate network (stop all services first)
-docker network rm ml-platform
-docker network create ml-platform
-
-# Restart services
-cd ray_compute && docker-compose up -d
-cd ../mlflow-server && ./START_SERVICES.sh
+# Complete cleanup and reinstall
+sudo ./setup.sh --full-reset
 ```
 
 ## File Structure
 
 ```
-Projects/
-├── ml-platform/mlflow-server/
-│   ├── docker-compose.yml          # Unified MLflow stack
-│   ├── START_SERVICES.sh           # Start script
-│   ├── STOP_SERVICES.sh            # Stop script
-│   ├── test_all_services.sh        # Health checks
-│   ├── update_passwords.sh         # Password management
-│   └── docs/
-│       ├── REMOTE_CLIENT_GUIDE.md  # Client usage
-│       ├── MODEL_REGISTRY_GUIDE.md # Model Registry docs
-│       └── DOCKER_COMPOSE_FIX.md   # Troubleshooting
+sfml-platform/
+├── setup.sh                        # 🔥 Main setup script (use this!)
+├── start_all_safe.sh               # Safe startup with health checks
+├── stop_all.sh                     # Safe shutdown
+├── check_platform_status.sh        # Status checker
 │
-└── ml-platform/ray_compute/
-    ├── docker-compose.yml           # Includes Traefik gateway
-    ├── start_all.sh                 # Start Ray + Traefik
-    └── stop_all.sh                  # Stop Ray + Traefik
+├── docker-compose.yml              # Main services (MLflow, Ray, Authentik)
+├── docker-compose.infra.yml        # Infrastructure (Traefik, PostgreSQL, Redis)
+│
+├── monitoring/
+│   ├── global-prometheus.yml       # Global metrics (15s scrape)
+│   ├── grafana/
+│   │   ├── datasources.yml         # 3 Prometheus sources
+│   │   └── dashboards/
+│   │       ├── platform/           # System, Container, GPU
+│   │       ├── mlflow/             # MLflow metrics
+│   │       └── ray/                # Ray cluster metrics
+│
+├── mlflow-server/
+│   ├── docker-compose.mlflow.yml   # MLflow-specific config
+│   ├── monitoring/                 # MLflow Prometheus
+│   └── secrets/                    # Grafana passwords
+│
+├── ray_compute/
+│   ├── docker-compose.ray.yml      # Ray-specific config
+│   ├── monitoring/                 # Ray Prometheus
+│   └── .env                        # Ray environment
+│
+├── authentik/                      # OAuth/SSO config
+├── secrets/                        # Generated passwords
+├── scripts/                        # Utility scripts
+├── tests/                          # All test scripts (unit, integration)
+└── archived/                       # Obsolete files
+```
+
+## Hardware Requirements
+
+**Minimum:**
+- 8GB RAM
+- 50GB disk space
+- NVIDIA GPU (for GPU workloads)
+
+**Recommended (current setup):**
+- 16GB+ RAM
+- RTX 3090 Ti (24GB) + RTX 2070 (8GB)
+- Ryzen 9 3900X (12C/24T)
+- 100GB+ disk space
+
+## Troubleshooting
+
+### Services not starting
+
+```bash
+# Check Docker status
+sudo systemctl status docker
+
+# Check logs
+./check_platform_status.sh
+sudo docker logs <service-name>
+
+# Restart specific service
+sudo docker-compose restart <service-name>
+```
+
+### Dashboards showing "No Data"
+
+```bash
+# Check Prometheus is scraping
+curl http://localhost:9090/api/v1/targets
+
+# Wait ~90 seconds for metrics (15s scrape interval)
+# Dashboards auto-refresh every 5 seconds
+```
+
+### GPU not detected
+
+```bash
+# Verify NVIDIA runtime
+sudo docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+
+# Check DCGM exporter
+sudo docker logs dcgm-exporter
+```
+
+### Network issues
+
+```bash
+# Verify ml-platform network exists
+sudo docker network inspect ml-platform
+
+# Recreate if needed (services must be stopped)
+sudo docker network rm ml-platform
+sudo docker network create --subnet=172.30.0.0/16 ml-platform
 ```
 
 ## Documentation
 
-- **Remote Client Usage**: `ml-platform/mlflow-server/docs/REMOTE_CLIENT_GUIDE.md`
-- **Model Registry**: `ml-platform/mlflow-server/docs/MODEL_REGISTRY_GUIDE.md`
-- **Docker Compose Fix**: `ml-platform/mlflow-server/docs/DOCKER_COMPOSE_FIX.md`
-- **Access URLs**: `ml-platform/mlflow-server/ACCESS_URLS.md`
+- `ARCHITECTURE.md` - Detailed architecture overview
+- `INTEGRATION_GUIDE.md` - Integration examples
+- `TROUBLESHOOTING.md` - Common issues and solutions
+- `API_REFERENCE.md` - API documentation
+- `REMOTE_ACCESS_NEW.md` - Remote access guide
+- `REMOTE_JOB_SUBMISSION.md` - Ray job submission
+- `RAY_GPU_TESTING_SUMMARY.md` - GPU testing results
 
-## Credentials
+## Security
 
-All passwords set to: `<your-password-from-.env>`
+### Security Features
 
-- MLflow Grafana: admin / <your-password-from-.env>
-- Ray Grafana: admin / <your-password-from-.env>
-- Authentik: akadmin / <your-password-from-.env>
+- ✓ **No privileged containers** - NVIDIA CDI mode for GPU access
+- ✓ **Scoped device access** - Only required devices mounted
+- ✓ **OAuth/SSO ready** - Authentik integration (disabled by default)
+- ✓ **Secrets management** - All credentials in gitignored `secrets/` directory
+- ✓ **Secure remote access** - Tailscale VPN for encrypted connections
+- ✓ **No hardcoded secrets** - All credentials loaded from environment
+- ✓ **CI/CD security scanning** - Automated secret detection on push
 
-Stored in:
-- `ml-platform/mlflow-server/secrets/grafana_password.txt`
-- `ml-platform/ray_compute/.env` (GRAFANA_ADMIN_PASSWORD, AUTHENTIK_BOOTSTRAP_PASSWORD)
+### Secrets Management
+
+All sensitive credentials are stored in `secrets/` (gitignored):
+
+```bash
+secrets/
+├── shared_db_password.txt     # PostgreSQL password
+├── grafana_password.txt       # Grafana admin password
+├── authentik_secret_key.txt   # Authentik encryption key
+├── authentik_db_password.txt  # Authentik database password
+└── authentik_bootstrap_password.txt  # Initial admin password
+```
+
+**Generate secrets:**
+```bash
+# Automatic (via setup)
+sudo ./setup.sh
+
+# Manual generation
+openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32 > secrets/shared_db_password.txt
+chmod 600 secrets/*.txt
+```
+
+**View credentials:**
+```bash
+cat secrets/grafana_password.txt  # Grafana login
+cat secrets/authentik_bootstrap_password.txt  # Authentik login
+```
+
+See `secrets/README.md` for complete documentation.
+
+### Environment Configuration
+
+Copy the example environment file and customize:
+
+```bash
+cp .env.example .env
+# Edit .env with your values (or let setup.sh generate them)
+```
+
+**Important:** Never commit `.env` files - they are gitignored by default.
+
+### Security Checklist
+
+Before deploying to production:
+
+- [ ] All secrets generated with `openssl rand`
+- [ ] `.env` and `secrets/` not in version control
+- [ ] Tailscale or VPN configured for remote access
+- [ ] OAuth enabled if exposing to network
+- [ ] Regular secret rotation scheduled
+- [ ] Backup encryption configured
 
 ## Support
 
-For issues or questions, check:
-1. Service logs: `docker logs <container-name>`
-2. Traefik dashboard: `http://localhost:8090/`
-3. Test script output: `./test_all_services.sh`
-4. Documentation in `docs/` directory
+**Issues?** Check these in order:
+1. `./check_platform_status.sh` - Service health
+2. `sudo docker logs <service>` - Service logs
+3. `TROUBLESHOOTING.md` - Common issues
+4. Grafana dashboards - Metrics and monitoring
+5. Traefik dashboard (`http://localhost:8090`) - Routing
+
+**Need to re-run setup?**
+```bash
+sudo ./setup.sh --full-reset
+```
