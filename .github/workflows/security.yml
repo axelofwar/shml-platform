@@ -140,25 +140,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Lint YAML files
-        run: |
-          # Use yamllint for YAML validation
-          pip install yamllint
-
-          # Create yamllint config
-          cat > .yamllint.yml << 'EOF'
-          extends: relaxed
-          rules:
-            line-length: disable
-            truthy: disable
-            document-start: disable
-            comments: disable
-          EOF
-
-          # Lint compose files
-          for f in docker-compose*.yml; do
-            echo "Validating: $f"
-            yamllint -c .yamllint.yml "$f" || echo "Warning: $f has issues"
-          done
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_data: |
+            extends: relaxed
+            rules:
+              line-length: disable
+              truthy: disable
+              document-start: disable
+              comments: disable
+              trailing-spaces: disable
+          file_or_dir: |
+            docker-compose*.yml
+            .github/workflows/*.yml
 
       - name: Validate Docker Compose syntax
         run: |
@@ -167,14 +161,3 @@ jobs:
             echo "Checking syntax: $f"
             docker compose -f "$f" config --quiet 2>/dev/null || echo "Note: $f may have external dependencies"
           done
-
-      - name: Lint YAML files
-        uses: ibiqlik/action-yamllint@v3
-        with:
-          config_data: |
-            extends: relaxed
-            rules:
-              line-length:
-                max: 200
-              truthy:
-                check-keys: false

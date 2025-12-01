@@ -10,9 +10,9 @@
 include:
   # Shared Infrastructure (Traefik, Postgres, Redis, Authentik, Monitoring)
   - docker-compose.infra.yml
-  
+
   # MLflow Services (Tracking Server, API, Prometheus)
   - mlflow-server/docker-compose.yml
-  
+
   # Ray Services (Head Node, API, Prometheus)
   - ray_compute/docker-compose.yml

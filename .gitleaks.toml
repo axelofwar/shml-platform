@@ -26,11 +26,6 @@ regexes = [
     '''your[._-]?password''',
     '''change[._-]?me[._-]?in[._-]?production''',
     '''placeholder''',
-    '''<[A-Z_]+>''',  # Patterns like <YOUR_PASSWORD>
-    '''\$\{[A-Z_]+\}''',  # Environment variable patterns like ${PASSWORD}
+    '''<[A-Z_]+>''',
+    '''\$\{[A-Z_]+\}''',
 ]
-
-# Entropy allowlisting
-[[allowlist.commits]]
-description = "Known commits with intentional example secrets in documentation"
-regexes = ['''example|placeholder|template|sample'''']

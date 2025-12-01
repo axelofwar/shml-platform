@@ -6,22 +6,22 @@ paths-ignore:
   # Archived/historical documentation (secrets have been rotated)
   - "archived/**"
   - "**/archived/**"
-  
+
   # Backup files (should not be tracked, but ignore if found)
   - "**/*-env.backup"
   - "**/backups/**"
   - "backups/**"
-  
+
   # Example/template files
   - "**/*.example"
   - "**/.env.example"
-  
+
   # Test fixtures that may contain dummy secrets
   - "tests/**"
   - "**/tests/**"
-  
+
   # Documentation with placeholder examples
   - "**/*QUICKSTART*.md"
-  
+
   # MacOS metadata
   - "__MACOSX/**"

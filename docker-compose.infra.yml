@@ -399,13 +399,13 @@ volumes:
     name: ml-platform-redis-data
   shared-postgres-data:
     name: shared-postgres-data
-  
+
   # Monitoring
   global-prometheus-data:
     name: global-prometheus-data
   unified-grafana-data:
     name: unified-grafana-data
-  
+
   # Authentik
   authentik-db:
     name: authentik-postgres-data
