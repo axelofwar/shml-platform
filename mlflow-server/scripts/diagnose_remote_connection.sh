@@ -46,21 +46,20 @@ if echo "$RESPONSE" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/
     echo "   ✅ API is working correctly"
     echo ""
     echo "   Experiments found:"
-    echo "$RESPONSE" | python3 << 'EOFPYTHON'
+    python3 -c "
 import sys, json
-data = json.load(sys.stdin)
+data = json.loads(sys.argv[1])
 exps = data.get('experiments', [])
 for exp in exps:
     exp_id = exp['experiment_id']
     name = exp['name']
-    # Check if ID is problematic
     try:
         id_int = int(exp_id)
-        status = "✅" if id_int <= 2147483647 else "⚠️  OUT OF RANGE"
+        status = '✅' if id_int <= 2147483647 else '⚠️  OUT OF RANGE'
     except:
-        status = "❌ INVALID"
-    print(f"   [{exp_id:>20s}] {name:30s} {status}")
-EOFPYTHON
+        status = '⚠️  INVALID'
+    print(f'     {exp_id}: {name} {status}')
+" "$RESPONSE"
 else
     echo "   ❌ API returned invalid response:"
     echo "$RESPONSE"

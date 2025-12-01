@@ -37,7 +37,7 @@ else
     if ! docker ps | grep -q mlflow-server; then
         echo "🚀 Starting MLflow containers..."
         if ! groups | grep -q docker; then
-            exec sg docker "$0 $@"
+            exec sg docker "$0" "$@"
         fi
         docker compose up -d
         sleep 20
