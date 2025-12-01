@@ -1,0 +1,38 @@
+# Grafana Dashboard Provisioning
+# Auto-loads dashboards from filesystem
+
+apiVersion: 1
+
+providers:
+  - name: 'Platform Dashboards'
+    orgId: 1
+    folder: 'Platform'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/platform
+      foldersFromFilesStructure: true
+  
+  - name: 'MLflow Dashboards'
+    orgId: 1
+    folder: 'MLflow'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/mlflow
+      foldersFromFilesStructure: true
+  
+  - name: 'Ray Dashboards'
+    orgId: 1
+    folder: 'Ray'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/ray
+      foldersFromFilesStructure: true

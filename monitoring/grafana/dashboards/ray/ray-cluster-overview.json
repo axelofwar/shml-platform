@@ -18,7 +18,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -51,8 +51,8 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "count(up{job=\"ray-cluster\"} == 1)",
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
+          "expr": "count(up{job=\"ray-head\"} == 1)",
           "legendFormat": "Active Nodes",
           "refId": "A"
         }
@@ -61,7 +61,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -95,7 +95,7 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_tasks{State=\"PENDING\"})",
           "legendFormat": "Pending Tasks",
           "refId": "A"
@@ -105,7 +105,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -137,7 +137,7 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_tasks{State=\"RUNNING\"})",
           "legendFormat": "Running Tasks",
           "refId": "A"
@@ -147,7 +147,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -179,7 +179,7 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_actors)",
           "legendFormat": "Actors",
           "refId": "A"
@@ -189,7 +189,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -221,7 +221,7 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_resources{Type=\"CPU\",State=\"Used\"})",
           "legendFormat": "CPUs Used",
           "refId": "A"
@@ -231,7 +231,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -263,7 +263,7 @@
       "pluginVersion": "10.2.2",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_resources{Type=\"GPU\",State=\"Used\"})",
           "legendFormat": "GPUs Used",
           "refId": "A"
@@ -281,7 +281,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -322,13 +322,13 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_resources{Type=\"CPU\",State=\"Used\"}) / sum(ray_resources{Type=\"CPU\",State=\"Total\"})",
           "legendFormat": "CPU Utilization",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_resources{Type=\"GPU\",State=\"Used\"}) / sum(ray_resources{Type=\"GPU\",State=\"Total\"})",
           "legendFormat": "GPU Utilization",
           "refId": "B"
@@ -338,7 +338,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -379,13 +379,13 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_object_store_memory{Type=\"Used\"})",
           "legendFormat": "Object Store Used",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_object_store_memory{Type=\"Total\"})",
           "legendFormat": "Object Store Total",
           "refId": "B"
@@ -403,7 +403,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -444,19 +444,19 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_tasks{State=\"PENDING\"})",
           "legendFormat": "Pending",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_tasks{State=\"RUNNING\"})",
           "legendFormat": "Running",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_tasks{State=\"FINISHED\"})",
           "legendFormat": "Finished",
           "refId": "C"
@@ -466,7 +466,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -507,19 +507,19 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_actors{State=\"ALIVE\"})",
           "legendFormat": "Alive",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_actors{State=\"PENDING\"})",
           "legendFormat": "Pending",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "sum(ray_actors{State=\"DEAD\"})",
           "legendFormat": "Dead",
           "refId": "C"
@@ -537,7 +537,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -578,7 +578,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_node_cpu_utilization / 100",
           "legendFormat": "{{ instance }}",
           "refId": "A"
@@ -588,7 +588,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -629,7 +629,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_node_mem_used / ray_node_mem_total",
           "legendFormat": "{{ instance }}",
           "refId": "A"
@@ -647,7 +647,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -688,7 +688,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_node_gpus_utilization",
           "legendFormat": "GPU {{ GpuDeviceName }} ({{ instance }})",
           "refId": "A"
@@ -698,7 +698,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -739,13 +739,13 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_node_gram_used",
           "legendFormat": "GPU {{ GpuDeviceName }} Used ({{ instance }})",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_node_gram_available",
           "legendFormat": "GPU {{ GpuDeviceName }} Available ({{ instance }})",
           "refId": "B"
@@ -763,7 +763,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -804,13 +804,13 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_cluster_active_nodes",
           "legendFormat": "Active Nodes",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "ray_cluster_pending_nodes",
           "legendFormat": "Pending Nodes",
           "refId": "B"
@@ -820,7 +820,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "ray-metrics" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -861,13 +861,13 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "increase(ray_node_death_total[5m])",
           "legendFormat": "Node Deaths (5m)",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "ray-metrics" },
           "expr": "increase(ray_actor_restarts_total[5m])",
           "legendFormat": "Actor Restarts (5m)",
           "refId": "B"

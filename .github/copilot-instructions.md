@@ -284,15 +284,41 @@ curl -X POST http://localhost/api/image/yield-to-training
 
 ## 🔒 Security Standards
 
+### ⚠️ CRITICAL: Pre-Commit Hooks (MANDATORY)
+
+**This project uses pre-commit hooks with GitGuardian to prevent secret leaks.**
+
+```bash
+# Install hooks (required for all developers)
+pip install pre-commit ggshield
+pre-commit install
+pre-commit install --hook-type pre-push
+
+# Authenticate ggshield (one-time setup)
+ggshield auth login
+```
+
+**What gets scanned:**
+- Every commit is scanned for secrets before it's created
+- Every push is scanned before reaching GitHub
+- GitGuardian CI also scans all PRs
+
+**If a secret is detected:**
+1. The commit/push will be BLOCKED
+2. You'll see which file/line contains the secret
+3. Remove the secret and try again
+4. Use environment variables or Docker secrets instead
+
 ### Secrets Management
 
-**Git-Ignored Files:**
+**Git-Ignored Files (NEVER commit these):**
 - `REMOTE_ACCESS_COMPLETE.sh` - Contains ALL credentials, IPs, passwords
 - `mlflow-server/secrets/` - Database passwords
 - `ray_compute/.env` - OAuth secrets, API keys
 - `*/data/` - Persistent data volumes
 - `*/logs/` - Service logs
 - `*/backups/` - Database backups
+- `*-env.backup` - Environment backups
 
 **Safe Files (Can Commit):**
 - `.env.example` - Templates with placeholders
@@ -300,21 +326,60 @@ curl -X POST http://localhost/api/image/yield-to-training
 - Source code without secrets
 - Configuration templates
 
+### How to Handle Secrets in Code
+
+**❌ NEVER do this:**
+```python
+# Hardcoded secrets - WILL BE BLOCKED
+API_KEY = "sk-1234567890abcdef"
+PASSWORD = "AiSolutions2350!"
+SECRET_KEY = os.getenv("SECRET_KEY", "default_secret")  # Bad default!
+```
+
+**✅ ALWAYS do this:**
+```python
+# Load from environment - no fallback for secrets
+API_KEY = os.environ["API_KEY"]  # Fails if not set
+PASSWORD = os.getenv("PASSWORD")
+if not PASSWORD:
+    raise ValueError("PASSWORD environment variable required")
+
+# Or use Docker secrets
+def load_secret(name):
+    secret_path = f"/run/secrets/{name}"
+    if os.path.exists(secret_path):
+        with open(secret_path) as f:
+            return f.read().strip()
+    return os.environ.get(name.upper())
+```
+
 ### Placeholder Patterns
 
 **Never in committed files:**
 ```
 ❌ PASSWORD=gNz8APgrUF8Q3hMe2sQXQK8DPGHs3CGcVhoPLbcqvi4=
-❌ TAILSCALE_IP=${TAILSCALE_IP}
+❌ TAILSCALE_IP=100.80.251.28
 ❌ DB_HOST=192.168.1.100
+❌ client_secret=JsDs6mClPCWKqEq...
 ```
 
 **Always use:**
 ```
-✅ PASSWORD=<from-secrets-file>
-✅ TAILSCALE_IP=<detected-dynamically>
+✅ PASSWORD=${DB_PASSWORD}
+✅ TAILSCALE_IP=${TAILSCALE_IP}
 ✅ DB_HOST=<your-server-ip>
+✅ client_secret=<from-authentik-dashboard>
 ```
+
+### Security Scanning Tools
+
+| Tool | When | What |
+|------|------|------|
+| **ggshield** | Pre-commit, pre-push | Blocks secrets before commit |
+| **Gitleaks** | Pre-commit, CI | Additional secret patterns |
+| **GitGuardian** | GitHub CI | Scans all PRs and pushes |
+| **Trivy** | CI | Container vulnerabilities |
+| **pip-audit** | CI | Python dependency CVEs |
 
 ---
 

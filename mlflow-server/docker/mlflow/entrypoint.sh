@@ -3,9 +3,9 @@ set -e
 
 echo "🚀 Starting MLflow Server with Schema Validation..."
 
-# Wait for PostgreSQL
+# Wait for PostgreSQL (using shared-postgres from infrastructure)
 echo "⏳ Waiting for PostgreSQL..."
-until PGPASSWORD=$(cat /run/secrets/mlflow_db_password) psql -h mlflow-postgres -U mlflow -d mlflow_db -c '\q' 2>/dev/null; do
+until PGPASSWORD=$(cat /run/secrets/db_password) psql -h shared-postgres -U mlflow -d mlflow_db -c '\q' 2>/dev/null; do
   echo "PostgreSQL is unavailable - sleeping"
   sleep 2
 done
@@ -19,10 +19,10 @@ echo "📊 Starting Prometheus metrics exporter..."
 python /mlflow/scripts/metrics_exporter.py &
 
 # Read database password from secret
-export DB_PASSWORD=$(cat /run/secrets/mlflow_db_password)
+export DB_PASSWORD=$(cat /run/secrets/db_password)
 
-# Construct backend store URI with password
-export BACKEND_STORE_URI="postgresql://mlflow:${DB_PASSWORD}@mlflow-postgres:5432/mlflow_db"
+# Construct backend store URI with password (using shared-postgres)
+export BACKEND_STORE_URI="postgresql://mlflow:${DB_PASSWORD}@shared-postgres:5432/mlflow_db"
 
 # Start MLflow tracking server (NOT gunicorn - use MLflow's built-in server)
 echo "🎯 Starting MLflow tracking server with full REST API..."

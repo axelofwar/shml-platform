@@ -1,0 +1,195 @@
+# Ray Compute - Distributed GPU Computing
+# Depends on: shared infrastructure (shared-postgres, ml-platform-redis, traefik)
+# Can be started standalone: docker compose -f ray_compute/docker-compose.yml up
+# Or via main: docker compose up (includes this file)
+
+services:
+  # ==========================================================================
+  # RAY CLUSTER HEAD NODE
+  # ==========================================================================
+  ray-head:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.ray-head
+    image: ml-platform-ray-head:2.9.0-gpu-mlflow
+    container_name: ray-head
+    restart: unless-stopped
+    shm_size: 2gb
+    command: >
+      ray start --head
+      --port=6379
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --metrics-export-port=8080
+      --num-cpus=8
+      --num-gpus=2
+      --object-store-memory=536870912
+      --block
+    environment:
+      - RAY_memory_monitor_refresh_ms=0
+      - CUDA_VISIBLE_DEVICES=0,1
+      - NVIDIA_VISIBLE_DEVICES=0,1
+      - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+      - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - MLFLOW_S3_ENDPOINT_URL=
+    volumes:
+      - ./data/ray:/tmp/ray
+      - ./data/job_workspaces:/opt/ray/job_workspaces
+      - nvidia-mps:/tmp/nvidia-mps
+    networks:
+      - ml-platform
+    expose:
+      - "6379"    # Ray internal
+      - "8265"    # Dashboard
+      - "8080"    # Metrics
+      - "10001"   # Client port
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ray", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-dashboard.rule=PathPrefix(`/ray`)"
+      - "traefik.http.routers.ray-dashboard.entrypoints=web"
+      - "traefik.http.services.ray-dashboard.loadbalancer.server.port=8265"
+      - "traefik.http.middlewares.ray-stripprefix.stripprefix.prefixes=/ray"
+      - "traefik.http.routers.ray-dashboard.middlewares=ray-stripprefix"
+      - "traefik.http.routers.ray-dashboard.priority=100"
+
+  # ==========================================================================
+  # RAY COMPUTE API
+  # ==========================================================================
+  ray-compute-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ray-compute-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.87'
+          memory: 640M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      # Database (uses shared-postgres from infra)
+      - POSTGRES_HOST=shared-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ray_compute
+      - POSTGRES_USER=ray_compute
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      # Cache (uses ml-platform-redis from infra)
+      - REDIS_HOST=ml-platform-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=1
+      # Ray Connection
+      - RAY_ADDRESS=http://ray-head:8265
+      # MLflow Integration
+      - MLFLOW_TRACKING_URI=http://mlflow-nginx:80
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_SECRET_KEY=${RAY_API_SECRET_KEY:-change-me-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - JOB_WORKSPACE=/opt/ray/job_workspaces
+      - ARTIFACT_RETENTION_HOURS=24
+      # OAuth (optional)
+      - OAUTH_ENABLED=${OAUTH_ENABLED:-false}
+      - AUTHENTIK_URL=${AUTHENTIK_INTERNAL_URL:-http://authentik-server:9000}
+      - AUTHENTIK_CLIENT_ID=${RAY_OAUTH_CLIENT_ID}
+      - AUTHENTIK_CLIENT_SECRET=${RAY_OAUTH_CLIENT_SECRET}
+      - API_KEY_ENABLED=false
+      # Observability
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+      - ./data/artifacts:/app/artifacts
+      - ./data/job_workspaces:/opt/ray/job_workspaces
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    secrets:
+      - shared_db_password
+    expose:
+      - "8000"
+    networks:
+      - ml-platform
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-api.rule=PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)"
+      - "traefik.http.routers.ray-api.entrypoints=web"
+      - "traefik.http.services.ray-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.ray-api-strip.stripprefix.prefixes=/api/ray,/api/compute"
+      - "traefik.http.routers.ray-api.middlewares=ray-api-strip"
+      - "traefik.http.routers.ray-api.priority=300"
+
+  # ==========================================================================
+  # RAY PROMETHEUS - Service-Specific Metrics (7d retention)
+  # ==========================================================================
+  ray-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ray-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.8'
+          memory: 384M
+        reservations:
+          cpus: '0.15'
+          memory: 192M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ray-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - ml-platform
+    depends_on:
+      - ray-head
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+secrets:
+  shared_db_password:
+    file: ../secrets/shared_db_password.txt
+
+volumes:
+  nvidia-mps:
+    name: nvidia-mps
+  ray-prometheus-data:
+    name: ray-prometheus-data

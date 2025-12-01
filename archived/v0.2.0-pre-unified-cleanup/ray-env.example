@@ -1,0 +1,84 @@
+# Ray Compute Environment Configuration
+# Copy this to .env and fill in your values
+
+# =============================================================================
+# DATABASE (Ray Compute PostgreSQL)
+# =============================================================================
+# Access: psql -h localhost -p 5433 -U ray_compute -d ray_compute
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5433
+POSTGRES_DB=ray_compute
+POSTGRES_USER=ray_compute
+POSTGRES_PASSWORD=<generate with: openssl rand -base64 32>
+
+# =============================================================================
+# AUTHENTIK OAUTH (Not Deployed)
+# =============================================================================
+# Admin URL: http://localhost:9000/if/admin/
+# Recovery token: docker exec authentik-worker ak create_recovery_key 1 akadmin
+AUTHENTIK_SECRET_KEY=<generate with: openssl rand -base64 50>
+AUTHENTIK_DB_PASSWORD=<generate with: openssl rand -base64 32>
+
+# Authentik URLs
+AUTHENTIK_URL=http://${TAILSCALE_IP}:9000
+AUTHENTIK_CLIENT_ID=ray-compute-api
+AUTHENTIK_CLIENT_SECRET=<from Authentik admin panel>
+
+# =============================================================================
+# GRAFANA (Not Deployed)
+# =============================================================================
+# URL: http://localhost/ray-grafana/
+# User: admin
+# View password: grep GRAFANA_ADMIN_PASSWORD .env
+GRAFANA_ADMIN_PASSWORD=<generate with: openssl rand -base64 24>
+
+# =============================================================================
+# API SERVER (Not Deployed)
+# =============================================================================
+API_HOST=0.0.0.0
+API_PORT=8266
+API_SECRET_KEY=<generate with: openssl rand -base64 50>
+
+# CORS origins (comma-separated)
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://${TAILSCALE_IP}:3000,http://${TAILSCALE_IP}:3002
+
+# =============================================================================
+# RAY CLUSTER (Not Deployed)
+# =============================================================================
+# Ray cluster connection (use Docker service name internally)
+RAY_ADDRESS=http://ray-head:8265
+RAY_CLIENT_PORT=6379
+RAY_DASHBOARD_HOST=0.0.0.0
+RAY_DASHBOARD_PORT=8265
+
+# =============================================================================
+# MLFLOW INTEGRATION
+# =============================================================================
+# MLflow tracking URI (use Docker service name internally)
+MLFLOW_TRACKING_URI=http://mlflow-nginx:80
+
+# =============================================================================
+# REDIS CACHE
+# =============================================================================
+# Ray uses DB 1 (MLflow uses DB 0)
+REDIS_HOST=ml-platform-redis
+REDIS_PORT=6379
+REDIS_DB=1
+
+# =============================================================================
+# CREDENTIALS QUICK ACCESS
+# =============================================================================
+# View all credentials:
+#   cat .env | grep -E "(PASSWORD|SECRET|CLIENT_SECRET)"
+#
+# PostgreSQL CLI:
+#   PGPASSWORD=$(grep POSTGRES_PASSWORD .env | cut -d= -f2) \
+#     psql -h localhost -p 5433 -U ray_compute -d ray_compute
+#
+# Grafana Login:
+#   URL: http://localhost/ray-grafana/
+#   User: admin
+#   Password: grep GRAFANA_ADMIN_PASSWORD .env | cut -d= -f2
+#
+# Authentik Recovery:
+#   docker exec authentik-worker ak create_recovery_key 1 akadmin
