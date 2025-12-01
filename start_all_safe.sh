@@ -36,7 +36,7 @@ wait_for_health() {
     local service=$1
     local max_wait=$2
     local wait_time=0
-    
+
     echo -n "  Waiting for $service to be healthy"
     while [ $wait_time -lt $max_wait ]; do
         local status=$(sudo docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "starting")

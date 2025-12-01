@@ -30,7 +30,7 @@ EOF
 echo ""
 
 # Check if running as root
-if [ "$EUID" -eq 0 ]; then 
+if [ "$EUID" -eq 0 ]; then
     log_error "Please run as regular user, not root"
     exit 1
 fi
@@ -147,7 +147,7 @@ check_service() {
     local service=$1
     local max_wait=60
     local waited=0
-    
+
     log_info "Checking $service..."
     while [ $waited -lt $max_wait ]; do
         if docker compose ps $service | grep -q "healthy\|Up"; then
@@ -157,7 +157,7 @@ check_service() {
         sleep 5
         waited=$((waited + 5))
     done
-    
+
     log_error "$service failed to start"
     return 1
 }

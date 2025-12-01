@@ -15,7 +15,7 @@ CONTAINER_TABLE="## Container ID to Service Name Mapping\n\nMatch the **Containe
 while IFS= read -r line; do
     CONTAINER_ID=$(echo "$line" | awk '{print $1}')
     CONTAINER_NAME=$(echo "$line" | awk '{print $2}')
-    
+
     # Add description based on container name
     case "$CONTAINER_NAME" in
         *ray-head*) DESC="Ray cluster head node" ;;
@@ -39,7 +39,7 @@ while IFS= read -r line; do
         *node-exporter*) DESC="System metrics collector" ;;
         *) DESC="Service component" ;;
     esac
-    
+
     CONTAINER_TABLE="${CONTAINER_TABLE}\n| **${CONTAINER_ID}** | ${CONTAINER_NAME} | ${DESC} |"
 done < <(sudo docker ps --format "{{.ID}} {{.Names}}" | sort -k2)
 

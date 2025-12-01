@@ -101,10 +101,10 @@ print(f"Dashboard: http://<TAILSCALE_IP>/ray/#/jobs/{job_id}")
 while True:
     status = client.get_job_status(job_id)
     print(f"Status: {status}")
-    
+
     if status in ["SUCCEEDED", "FAILED", "STOPPED"]:
         break
-    
+
     time.sleep(5)
 
 # Get job logs
@@ -208,15 +208,15 @@ with mlflow.start_run(run_name="remote_training"):
     mlflow.log_param("model", "yolov8n")
     mlflow.log_param("epochs", 10)
     mlflow.log_param("batch_size", 16)
-    
+
     # Train model
     device = torch.device("cuda:0")
     # ... your training code ...
-    
+
     # Log metrics
     mlflow.log_metric("accuracy", 0.95)
     mlflow.log_metric("loss", 0.05)
-    
+
     # Log model
     # mlflow.pytorch.log_model(model, "model")
 

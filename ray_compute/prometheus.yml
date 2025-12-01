@@ -17,7 +17,7 @@ scrape_configs:
         labels:
           component: 'ray-head'
           instance: 'ray-head-node'
-  
+
   # Ray Dashboard Metrics
   - job_name: 'ray-dashboard'
     metrics_path: '/api/prometheus_metrics'
@@ -25,7 +25,7 @@ scrape_configs:
       - targets: ['ray-head:8265']
         labels:
           component: 'ray-dashboard'
-  
+
   # Ray Compute API Metrics
   - job_name: 'ray-compute-api'
     static_configs:

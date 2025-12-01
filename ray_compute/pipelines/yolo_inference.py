@@ -77,8 +77,8 @@ job_id = client.submit_job(
     mlflow_tags={
         "model": "yolo-detector",
         "task": "batch-inference",
-        "pipeline": "inference"
-    }
+        "pipeline": "inference",
+    },
 )
 
 print(f"✓ Job submitted: {job_id}")

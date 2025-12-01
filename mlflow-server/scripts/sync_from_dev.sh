@@ -49,7 +49,7 @@ log_info "Found $RUN_COUNT runs to sync"
 # Get remote host (Tailscale IP or hostname)
 if command -v tailscale &> /dev/null && tailscale status &> /dev/null 2>&1; then
     log_info "Tailscale detected. Looking for MLflow server..."
-    
+
     # List Tailscale devices
     echo ""
     echo "Available devices on your Tailscale network:"

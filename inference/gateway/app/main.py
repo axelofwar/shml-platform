@@ -1,4 +1,5 @@
 """Inference Gateway - Unified API with queue, history, and rate limiting."""
+
 import time
 import logging
 from contextlib import asynccontextmanager
@@ -10,8 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import QWEN3_VL_URL, Z_IMAGE_URL, HOST, PORT
 from .schemas import (
-    GatewayHealth, ServiceHealth, QueueStatus,
-    RateLimitStatus, Conversation, ConversationSummary,
+    GatewayHealth,
+    ServiceHealth,
+    QueueStatus,
+    RateLimitStatus,
+    Conversation,
+    ConversationSummary,
     BackupInfo,
 )
 from .queue import request_queue
@@ -61,11 +66,12 @@ def get_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:
 
 # ===== Health Endpoints =====
 
+
 @app.get("/health", response_model=GatewayHealth)
 async def health():
     """Gateway health check."""
     services = []
-    
+
     # Check backend services
     async with httpx.AsyncClient(timeout=5.0) as client:
         for name, url in [("qwen3-vl", QWEN3_VL_URL), ("z-image", Z_IMAGE_URL)]:
@@ -73,19 +79,21 @@ async def health():
                 start = time.time()
                 resp = await client.get(f"{url}/health")
                 latency = (time.time() - start) * 1000
-                
+
                 if resp.status_code == 200:
                     data = resp.json()
-                    services.append(ServiceHealth(
-                        name=name,
-                        status=data.get("status", "healthy"),
-                        latency_ms=latency,
-                    ))
+                    services.append(
+                        ServiceHealth(
+                            name=name,
+                            status=data.get("status", "healthy"),
+                            latency_ms=latency,
+                        )
+                    )
                 else:
                     services.append(ServiceHealth(name=name, status="unhealthy"))
             except Exception:
                 services.append(ServiceHealth(name=name, status="unknown"))
-    
+
     # Determine overall status
     statuses = [s.status for s in services]
     if all(s == "healthy" for s in statuses):
@@ -94,9 +102,9 @@ async def health():
         overall = "degraded"
     else:
         overall = "unhealthy"
-    
+
     queue_status = await request_queue.get_status()
-    
+
     return GatewayHealth(
         status=overall,
         services=services,
@@ -106,6 +114,7 @@ async def health():
 
 
 # ===== Queue Endpoints =====
+
 
 @app.get("/queue/status", response_model=QueueStatus)
 async def queue_status(x_user_id: Optional[str] = Header(default=None)):
@@ -129,6 +138,7 @@ async def cancel_request(
 
 # ===== Rate Limit Endpoints =====
 
+
 @app.get("/rate-limit", response_model=RateLimitStatus)
 async def rate_limit_status(x_user_id: Optional[str] = Header(default=None)):
     """Get rate limit status."""
@@ -137,6 +147,7 @@ async def rate_limit_status(x_user_id: Optional[str] = Header(default=None)):
 
 
 # ===== Chat History Endpoints =====
+
 
 @app.post("/conversations", response_model=dict)
 async def create_conversation(
@@ -189,6 +200,7 @@ async def delete_conversation(
 
 # ===== Backup Endpoints =====
 
+
 @app.post("/backups", response_model=BackupInfo)
 async def create_backup_endpoint(
     background_tasks: BackgroundTasks,
@@ -210,6 +222,7 @@ async def list_backups_endpoint(x_user_id: Optional[str] = Header(default=None))
 
 # ===== Proxy Endpoints (pass through to backend services) =====
 
+
 @app.api_route("/llm/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_llm(
     path: str,
@@ -217,7 +230,7 @@ async def proxy_llm(
 ):
     """Proxy requests to Qwen3-VL service."""
     user_id = get_user_id(x_user_id)
-    
+
     # Check rate limit
     if not await rate_limiter.record(user_id):
         status = await rate_limiter.check(user_id)
@@ -225,7 +238,7 @@ async def proxy_llm(
             status_code=429,
             detail=f"Rate limited. Resets at {status.reset_at.isoformat()}",
         )
-    
+
     # Forward to backend
     async with httpx.AsyncClient(timeout=300.0) as client:
         try:
@@ -246,7 +259,7 @@ async def proxy_image(
 ):
     """Proxy requests to Z-Image service."""
     user_id = get_user_id(x_user_id)
-    
+
     # Check rate limit
     if not await rate_limiter.record(user_id):
         status = await rate_limiter.check(user_id)
@@ -254,7 +267,7 @@ async def proxy_image(
             status_code=429,
             detail=f"Rate limited. Resets at {status.reset_at.isoformat()}",
         )
-    
+
     # Forward to backend
     async with httpx.AsyncClient(timeout=300.0) as client:
         try:
@@ -270,4 +283,5 @@ async def proxy_image(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=HOST, port=PORT)

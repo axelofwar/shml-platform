@@ -33,7 +33,7 @@ if curl -sf "http://$TAILSCALE_IP:8080/health" > /dev/null; then
 else
     echo "⚠️  MLflow not accessible yet, checking docker..."
     cd /home/axelofwar/Desktop/Projects/mlflow-server
-    
+
     if ! docker ps | grep -q mlflow-server; then
         echo "🚀 Starting MLflow containers..."
         if ! groups | grep -q docker; then
@@ -42,7 +42,7 @@ else
         docker compose up -d
         sleep 20
     fi
-    
+
     echo "✅ MLflow should be accessible now"
 fi
 

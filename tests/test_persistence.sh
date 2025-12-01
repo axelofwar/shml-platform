@@ -33,7 +33,7 @@ for exp in experiments:
     tags = {tag['key']: tag['value'] for tag in exp.get('tags', [])}
     env = tags.get('environment', 'N/A')
     purpose = tags.get('purpose', 'N/A')
-    
+
     print(f"[{exp_id}] {name}")
     print(f"    Environment: {env} | Purpose: {purpose}")
     print("-" * 70)

@@ -28,19 +28,19 @@ echo -e "${BLUE}========================================${NC}\n"
 list_backups() {
     local backup_dir=$1
     local db_name=$2
-    
+
     if [ ! -d "$backup_dir" ]; then
         echo -e "${RED}Backup directory not found: ${backup_dir}${NC}"
         return 1
     fi
-    
+
     local backups=($(ls -t "${backup_dir}/${db_name}_"*.sql.gz 2>/dev/null || true))
-    
+
     if [ ${#backups[@]} -eq 0 ]; then
         echo -e "${RED}No backups found for ${db_name}${NC}"
         return 1
     fi
-    
+
     echo -e "${BLUE}Available backups for ${db_name}:${NC}"
     for i in "${!backups[@]}"; do
         local size=$(du -h "${backups[$i]}" | cut -f1)
@@ -57,22 +57,22 @@ restore_database() {
     local db_name=$3
     local db_user=$4
     local backup_file=$5
-    
+
     echo -e "${YELLOW}Restoring ${service_name}...${NC}"
-    
+
     # Check if container is running
     if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
         echo -e "${RED}✗ Container ${container_name} is not running${NC}"
         echo -e "${YELLOW}  Start services with: ./start_all.sh${NC}"
         return 1
     fi
-    
+
     # Check if backup file exists
     if [ ! -f "$backup_file" ]; then
         echo -e "${RED}✗ Backup file not found: ${backup_file}${NC}"
         return 1
     fi
-    
+
     # Confirm restore
     echo -e "${RED}WARNING: This will OVERWRITE the current ${service_name} database!${NC}"
     read -p "Are you sure you want to continue? (yes/no): " confirm
@@ -80,18 +80,18 @@ restore_database() {
         echo -e "${YELLOW}Restore cancelled${NC}\n"
         return 1
     fi
-    
+
     # Decompress and restore
     echo -e "${YELLOW}Decompressing backup...${NC}"
     local temp_file="/tmp/${db_name}_restore.sql"
     gunzip -c "$backup_file" > "$temp_file"
-    
+
     echo -e "${YELLOW}Dropping existing database...${NC}"
     docker exec -t "$container_name" psql -U "$db_user" -d postgres -c "DROP DATABASE IF EXISTS ${db_name};"
-    
+
     echo -e "${YELLOW}Creating fresh database...${NC}"
     docker exec -t "$container_name" psql -U "$db_user" -d postgres -c "CREATE DATABASE ${db_name};"
-    
+
     echo -e "${YELLOW}Restoring from backup...${NC}"
     if docker exec -i "$container_name" psql -U "$db_user" -d "$db_name" < "$temp_file"; then
         echo -e "${GREEN}✓ Restore completed successfully${NC}\n"
@@ -114,7 +114,7 @@ while true; do
     echo
     read -p "Enter choice (1-4): " choice
     echo
-    
+
     case $choice in
         1)
             list_backups "$MLFLOW_BACKUP_DIR" "mlflow_db"

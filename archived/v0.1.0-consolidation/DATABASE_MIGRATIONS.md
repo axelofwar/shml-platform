@@ -67,26 +67,26 @@ ray_compute/
    -- Description: Add priority boost field to users
    -- Author: Your Name
    -- Date: 2023-11-23
-   
+
    -- Check if migration already applied
    DO $$
    BEGIN
        IF EXISTS (
-           SELECT 1 FROM schema_migrations 
+           SELECT 1 FROM schema_migrations
            WHERE migration_name = '002_add_priority_boost.sql'
        ) THEN
            RAISE NOTICE 'Migration already applied, skipping';
            RETURN;
        END IF;
-   
+
        -- Your migration code here
        ALTER TABLE users ADD COLUMN priority_boost INTEGER DEFAULT 0;
        CREATE INDEX idx_users_priority_boost ON users(priority_boost);
-   
+
        -- Record migration
-       INSERT INTO schema_migrations (migration_name, success) 
+       INSERT INTO schema_migrations (migration_name, success)
        VALUES ('002_add_priority_boost.sql', TRUE);
-       
+
        RAISE NOTICE 'Migration 002_add_priority_boost.sql applied successfully';
    END $$;
    ```
@@ -103,10 +103,10 @@ ray_compute/
    ```bash
    # Copy migration to container
    docker cp ray_compute/schemas/002_add_priority_boost.sql ray-compute-db:/tmp/
-   
+
    # Execute migration
    docker exec -i ray-compute-db psql -U ray_compute -d ray_compute < /tmp/002_add_priority_boost.sql
-   
+
    # Verify
    docker exec -it ray-compute-db psql -U ray_compute -d ray_compute -c "SELECT * FROM schema_migrations;"
    ```
@@ -117,10 +117,10 @@ ray_compute/
    ```sql
    -- test_migration.sql
    SELECT 'Testing migration system' AS status;
-   
+
    -- Check current migrations
-   SELECT migration_name, applied_at, success 
-   FROM schema_migrations 
+   SELECT migration_name, applied_at, success
+   FROM schema_migrations
    ORDER BY applied_at DESC;
    ```
 
@@ -212,7 +212,7 @@ docker exec -it ray-compute-db psql -U ray_compute -d ray_compute -c "SELECT * F
 
 # Check row counts
 docker exec -it ray-compute-db psql -U ray_compute -d ray_compute -c "
-    SELECT 
+    SELECT
         'users' as table_name, COUNT(*) as rows FROM users
     UNION ALL
     SELECT 'jobs', COUNT(*) FROM jobs
@@ -251,8 +251,8 @@ docker volume rm ml-platform_ray-postgres-data
 
 # Verify initialization
 docker exec -it ray-compute-db psql -U ray_compute -d ray_compute -c "
-    SELECT migration_name, applied_at 
-    FROM schema_migrations 
+    SELECT migration_name, applied_at
+    FROM schema_migrations
     ORDER BY applied_at;
 "
 ```
@@ -331,13 +331,13 @@ docker exec -it ray-compute-db psql -U ray_compute -d ray_compute -c "\dt"
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
+        SELECT 1 FROM information_schema.columns
         WHERE table_name='jobs' AND column_name='estimated_cost'
     ) THEN
         ALTER TABLE jobs ADD COLUMN estimated_cost NUMERIC(10, 2);
         CREATE INDEX idx_jobs_estimated_cost ON jobs(estimated_cost);
-        
-        INSERT INTO schema_migrations (migration_name, success) 
+
+        INSERT INTO schema_migrations (migration_name, success)
         VALUES ('002_add_cost_field.sql', TRUE);
     END IF;
 END $$;
@@ -355,10 +355,10 @@ BEGIN
             name VARCHAR(255) UNIQUE NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         ALTER TABLE users ADD COLUMN team_id UUID REFERENCES teams(team_id);
-        
-        INSERT INTO schema_migrations (migration_name, success) 
+
+        INSERT INTO schema_migrations (migration_name, success)
         VALUES ('003_add_teams.sql', TRUE);
     END IF;
 END $$;
@@ -373,8 +373,8 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE migration_name = '004_add_performance_indexes.sql') THEN
         CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status);
         CREATE INDEX IF NOT EXISTS idx_jobs_created_status ON jobs(created_at DESC, status);
-        
-        INSERT INTO schema_migrations (migration_name, success) 
+
+        INSERT INTO schema_migrations (migration_name, success)
         VALUES ('004_add_performance_indexes.sql', TRUE);
     END IF;
 END $$;

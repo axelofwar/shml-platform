@@ -1,4 +1,5 @@
 """Qwen3-VL configuration - environment-based settings."""
+
 import os
 from pathlib import Path
 

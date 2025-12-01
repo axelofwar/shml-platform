@@ -45,30 +45,30 @@ CREATE TABLE IF NOT EXISTS jobs (
     language VARCHAR(50) NOT NULL DEFAULT 'python',
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     priority VARCHAR(50) NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'critical')),
-    
+
     -- Resources
     cpu_requested INTEGER NOT NULL,
     memory_gb_requested INTEGER NOT NULL,
     gpu_requested DECIMAL(3, 2) NOT NULL DEFAULT 0.00,  -- Fractional GPU support
     timeout_hours INTEGER NOT NULL,
-    
+
     -- Actual usage (populated during/after execution)
     cpu_used_hours DECIMAL(10, 2),
     gpu_used_hours DECIMAL(10, 2),
     memory_peak_gb DECIMAL(10, 2),
     disk_used_gb DECIMAL(10, 2),
-    
+
     -- Docker configuration
     base_image VARCHAR(255),
     dockerfile_hash VARCHAR(64),  -- SHA256 of Dockerfile for caching
     custom_dockerfile BOOLEAN DEFAULT FALSE,
-    
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     queued_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
     ended_at TIMESTAMP WITH TIME ZONE,
-    
+
     -- Output
     output_mode VARCHAR(50) DEFAULT 'artifacts',
     artifact_path TEXT,
@@ -77,19 +77,19 @@ CREATE TABLE IF NOT EXISTS jobs (
     artifact_downloaded_at TIMESTAMP WITH TIME ZONE,
     mlflow_experiment VARCHAR(255),
     mlflow_run_id VARCHAR(255),
-    
+
     -- Metadata
     tags TEXT[],
     cost_center VARCHAR(255),
     depends_on VARCHAR(255)[],  -- Array of job_ids
-    
+
     -- Error handling
     error_message TEXT,
     error_traceback TEXT,
     exit_code INTEGER,
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
-    
+
     -- Audit
     cancelled_by UUID REFERENCES users(user_id),
     cancelled_at TIMESTAMP WITH TIME ZONE,
@@ -212,7 +212,7 @@ BEGIN
         WHEN 'premium' THEN 5.0
         ELSE 1.0
     END;
-    
+
     -- Job priority multiplier
     priority_multiplier := CASE p_job_priority
         WHEN 'critical' THEN 3.0
@@ -220,10 +220,10 @@ BEGIN
         WHEN 'normal' THEN 1.0
         ELSE 0.5
     END;
-    
+
     -- Age bonus (0.1 points per hour waiting, up to max 50)
     age_bonus := LEAST(p_queue_age_minutes / 600.0, 50.0);
-    
+
     RETURN (role_multiplier * priority_multiplier * p_priority_weight) + age_bonus;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
@@ -245,13 +245,13 @@ DECLARE
 BEGIN
     -- Get user quota
     SELECT * INTO v_quota FROM user_quotas WHERE user_id = p_user_id;
-    
+
     -- Count running jobs
     SELECT COUNT(*) INTO v_current_jobs
     FROM jobs
     WHERE user_id = p_user_id
       AND status IN ('PENDING', 'RUNNING');
-    
+
     -- Get usage today
     SELECT
         COALESCE(gpu_hours, 0),
@@ -260,7 +260,7 @@ BEGIN
     FROM resource_usage_daily
     WHERE user_id = p_user_id
       AND date = CURRENT_DATE;
-    
+
     -- Check quotas
     IF v_current_jobs >= v_quota.max_concurrent_jobs THEN
         RETURN QUERY SELECT FALSE, 'Max concurrent jobs exceeded', v_current_jobs, v_gpu_hours_today, v_cpu_hours_today;

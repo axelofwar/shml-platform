@@ -24,8 +24,8 @@ MODELS = [
             "version": "1.0",
             "dataset": "wider_face_occluded",
             "resolution": "640",
-            "model_type": "yolov8m"
-        }
+            "model_type": "yolov8m",
+        },
     },
     {
         "name": "v2.0-occluded",
@@ -37,8 +37,8 @@ MODELS = [
             "dataset": "wider_face_occluded_optimized",
             "resolution": "640",
             "model_type": "yolov8m",
-            "comprehensive_test_detections": "880"
-        }
+            "comprehensive_test_detections": "880",
+        },
     },
     {
         "name": "v3.0-negatives",
@@ -50,70 +50,67 @@ MODELS = [
             "dataset": "wider_face_occluded_with_negatives",
             "resolution": "640",
             "model_type": "yolov8m",
-            "comprehensive_test_detections": "916"
-        }
-    }
+            "comprehensive_test_detections": "916",
+        },
+    },
 ]
+
 
 def register_model(model_info, client):
     """Register a single model version"""
-    
+
     model_path = Path(model_info["path"])
-    
+
     if not model_path.exists():
         print(f"  ⚠️  Model not found: {model_path}")
         return False
-    
+
     print(f"\nRegistering: {model_info['name']}")
     print(f"  Path: {model_path}")
     print(f"  Size: {model_path.stat().st_size / (1024*1024):.1f} MB")
-    
+
     try:
         # Log model as artifact first
         with mlflow.start_run(run_name=f"register_{model_info['name']}"):
             # Log the model
             mlflow.log_artifact(str(model_path), "model")
-            
+
             # Log tags
             for key, value in model_info["tags"].items():
                 mlflow.set_tag(key, value)
-            
+
             # Register model
             model_uri = f"runs:/{mlflow.active_run().info.run_id}/model/best.pt"
-            
+
             result = mlflow.register_model(
-                model_uri=model_uri,
-                name=MODEL_NAME,
-                tags=model_info["tags"]
+                model_uri=model_uri, name=MODEL_NAME, tags=model_info["tags"]
             )
-            
+
             version = result.version
-            
+
             # Update version description
             client.update_model_version(
-                name=MODEL_NAME,
-                version=version,
-                description=model_info["description"]
+                name=MODEL_NAME, version=version, description=model_info["description"]
             )
-            
+
             # Set stage
             if model_info.get("stage"):
                 client.transition_model_version_stage(
-                    name=MODEL_NAME,
-                    version=version,
-                    stage=model_info["stage"]
+                    name=MODEL_NAME, version=version, stage=model_info["stage"]
                 )
-            
+
             print(f"  ✓ Registered as version {version}")
             print(f"  ✓ Stage: {model_info.get('stage', 'None')}")
-            
+
             return True
-            
+
     except Exception as e:
         print(f"  ✗ Error: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 def main():
     print("=" * 70)
@@ -123,11 +120,11 @@ def main():
     print(f"Model Name: {MODEL_NAME}")
     print(f"Models to register: {len(MODELS)}")
     print()
-    
+
     # Set tracking URI
     mlflow.set_tracking_uri(MLFLOW_URI)
     client = MlflowClient(MLFLOW_URI)
-    
+
     # Create registered model if it doesn't exist
     try:
         client.get_registered_model(MODEL_NAME)
@@ -136,15 +133,15 @@ def main():
         print(f"Creating registered model: {MODEL_NAME}")
         client.create_registered_model(
             name=MODEL_NAME,
-            description="PII-PRO Face Detection Model - YOLOv8m based detector for privacy protection"
+            description="PII-PRO Face Detection Model - YOLOv8m based detector for privacy protection",
         )
-    
+
     # Register each model
     registered = 0
     for model_info in MODELS:
         if register_model(model_info, client):
             registered += 1
-    
+
     print("\n" + "=" * 70)
     print(f"Registration Complete!")
     print(f"Successfully registered: {registered}/{len(MODELS)} models")
@@ -158,6 +155,7 @@ def main():
     print(f"  model_uri = 'models:/{MODEL_NAME}/Production'")
     print(f"  model = mlflow.pyfunc.load_model(model_uri)")
     print()
+
 
 if __name__ == "__main__":
     main()

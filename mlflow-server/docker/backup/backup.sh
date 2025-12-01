@@ -23,30 +23,30 @@ mkdir -p "$POSTGRES_BACKUP_DIR" "$ARTIFACTS_BACKUP_DIR"
 # Backup PostgreSQL
 backup_postgres() {
     log "Starting PostgreSQL backup..."
-    
+
     DATE=$(date +%Y%m%d_%H%M%S)
     BACKUP_FILE="$POSTGRES_BACKUP_DIR/mlflow_db_$DATE"
-    
+
     # Get password from secret
     export PGPASSWORD=$(cat /run/secrets/db_password)
-    
+
     # Custom format backup (for pg_restore)
     pg_dump -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
         -F c -f "$BACKUP_FILE.dump"
-    
+
     # SQL format backup (human readable)
     pg_dump -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
         -F p -f "$BACKUP_FILE.sql"
-    
+
     # Compress SQL backup
     gzip "$BACKUP_FILE.sql"
-    
+
     # Calculate sizes
     DUMP_SIZE=$(du -h "$BACKUP_FILE.dump" | cut -f1)
     SQL_SIZE=$(du -h "$BACKUP_FILE.sql.gz" | cut -f1)
-    
+
     log "✓ PostgreSQL backup complete: $DUMP_SIZE (custom), $SQL_SIZE (SQL)"
-    
+
     # Cleanup old backups (skip production if retention = 0)
     if [ "$RETENTION_PRODUCTION" -eq 0 ]; then
         log "⚠️  Production retention set to FOREVER - skipping production backup cleanup"
@@ -57,36 +57,36 @@ backup_postgres() {
         find "$POSTGRES_BACKUP_DIR" -name "*.dump" -mtime +$RETENTION_DAYS -delete
         find "$POSTGRES_BACKUP_DIR" -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete
     fi
-    
+
     log "✓ Cleaned up dev/staging backups older than $RETENTION_DAYS days"
 }
 
 # Backup artifacts directory (incremental)
 backup_artifacts() {
     log "Starting artifacts backup (incremental)..."
-    
+
     DATE=$(date +%Y%m%d_%H%M%S)
     BACKUP_FILE="$ARTIFACTS_BACKUP_DIR/artifacts_$DATE.tar.gz"
-    
+
     # Create incremental backup using tar
     tar -czf "$BACKUP_FILE" -C /mlflow/artifacts .
-    
+
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     log "✓ Artifacts backup complete: $BACKUP_SIZE"
-    
+
     # Cleanup old backups
     find "$ARTIFACTS_BACKUP_DIR" -name "*.tar.gz" -mtime +$RETENTION_DAYS -delete
-    
+
     log "✓ Cleaned up artifact backups older than $RETENTION_DAYS days"
 }
 
 # Create backup manifest
 create_manifest() {
     log "Creating backup manifest..."
-    
+
     DATE=$(date +%Y%m%d_%H%M%S)
     MANIFEST_FILE="$BACKUP_DIR/manifest_$DATE.json"
-    
+
     cat > "$MANIFEST_FILE" <<EOF
 {
   "backup_date": "$(date -Iseconds)",
@@ -104,7 +104,7 @@ done | paste -sd ',' -)
   "total_backup_size": "$(du -sh $BACKUP_DIR | cut -f1)"
 }
 EOF
-    
+
     log "✓ Manifest created: $MANIFEST_FILE"
 }
 
@@ -113,11 +113,11 @@ run_backup() {
     log "========================================="
     log "Starting MLflow backup service"
     log "========================================="
-    
+
     backup_postgres
     backup_artifacts
     create_manifest
-    
+
     log "========================================="
     log "Backup completed successfully"
     log "========================================="

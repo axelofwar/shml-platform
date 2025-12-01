@@ -56,7 +56,7 @@ get_docker_stats() {
 # Function to write metrics
 write_metrics() {
     local temp_file="${METRICS_FILE}.tmp"
-    
+
     # Start with header
     cat > "$temp_file" <<EOF
 # HELP ml_platform_cpu_usage_percent Current CPU usage percentage
@@ -68,7 +68,7 @@ EOF
     # Memory metrics
     local mem_usage=$(get_memory_usage)
     read -r mem_total mem_used mem_free mem_shared mem_buff mem_available <<< $(get_memory_details)
-    
+
     cat >> "$temp_file" <<EOF
 # HELP ml_platform_memory_usage_percent Current memory usage percentage
 # TYPE ml_platform_memory_usage_percent gauge
@@ -94,7 +94,7 @@ EOF
 
     # Disk metrics
     read -r disk_total disk_used disk_free disk_percent <<< $(get_disk_usage)
-    
+
     cat >> "$temp_file" <<EOF
 # HELP ml_platform_disk_usage_percent Root disk usage percentage
 # TYPE ml_platform_disk_usage_percent gauge
@@ -116,7 +116,7 @@ EOF
 
     # Docker container stats
     read -r docker_running docker_total <<< $(get_docker_stats)
-    
+
     cat >> "$temp_file" <<EOF
 # HELP ml_platform_docker_containers_running Number of running Docker containers
 # TYPE ml_platform_docker_containers_running gauge
@@ -156,14 +156,14 @@ ml_platform_gpu_power_draw_watts{gpu="$gpu_index"} $gpu_power
 EOF
         done
     fi
-    
+
     # Timestamp
     cat >> "$temp_file" <<EOF
 # HELP ml_platform_metrics_last_update_timestamp_seconds Timestamp of last metrics update
 # TYPE ml_platform_metrics_last_update_timestamp_seconds gauge
 ml_platform_metrics_last_update_timestamp_seconds $(date +%s)
 EOF
-    
+
     # Atomic move
     mv "$temp_file" "$METRICS_FILE"
 }
@@ -178,7 +178,7 @@ case "${1:-daemon}" in
         echo "Starting metrics exporter daemon (interval: ${UPDATE_INTERVAL}s)"
         echo "Metrics file: $METRICS_FILE"
         echo "Press Ctrl+C to stop"
-        
+
         while true; do
             write_metrics
             sleep "$UPDATE_INTERVAL"

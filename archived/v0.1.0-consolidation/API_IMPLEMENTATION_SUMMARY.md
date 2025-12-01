@@ -261,9 +261,9 @@ if validation["valid"]:
         },
         "validate_schema": True
     }).json()
-    
+
     run_id = run["run_id"]
-    
+
     # 4. Log metrics
     requests.post(f"{BASE_URL}/runs/{run_id}/metrics", json={
         "run_id": run_id,
@@ -274,7 +274,7 @@ if validation["valid"]:
             "fps_1080p": 58.3
         }
     })
-    
+
     # 5. Upload artifact
     with open("confusion_matrix.png", "rb") as f:
         requests.post(
@@ -282,10 +282,10 @@ if validation["valid"]:
             files={"file": f},
             data={"artifact_path": "plots"}
         )
-    
+
     # 6. Finish run
     requests.post(f"{BASE_URL}/runs/{run_id}/finish", json={"status": "FINISHED"})
-    
+
     # 7. Register model (with privacy validation)
     model = requests.post(f"{BASE_URL}/models/register", json={
         "run_id": run_id,
@@ -297,7 +297,7 @@ if validation["valid"]:
             "privacy_validated": "true"
         }
     }).json()
-    
+
     print(f"Model registered: {model['model_name']} v{model['version']}")
 ```
 
@@ -536,10 +536,10 @@ pii-pro register-model --run-id abc123 \
    ```bash
    # Health check
    curl http://localhost/api/v1/health
-   
+
    # Get schema
    curl http://localhost/api/v1/schema
-   
+
    # List experiments
    curl http://localhost/api/v1/experiments
    ```

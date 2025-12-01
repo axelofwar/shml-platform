@@ -1,4 +1,5 @@
 """Z-Image FastAPI service - Photorealistic image generation."""
+
 import uuid
 import time
 import logging
@@ -9,8 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import MODEL_ID, DEVICE, HOST, PORT, OUTPUT_DIR
 from .schemas import (
-    ImageGenerationRequest, ImageGenerationResponse,
-    HealthResponse, ModelStatusResponse
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    HealthResponse,
+    ModelStatusResponse,
 )
 from .model import model_instance
 
@@ -51,7 +54,7 @@ async def health():
     status = "healthy" if model_instance.loaded else "unloaded"
     if model_instance.loading:
         status = "loading"
-    
+
     return HealthResponse(
         status=status,
         model=MODEL_ID,
@@ -88,13 +91,13 @@ async def generate_image(request: ImageGenerationRequest):
             guidance_scale=request.guidance_scale,
             seed=request.seed,
         )
-        
+
         # Convert to base64
         image_base64 = model_instance.image_to_base64(image)
-        
+
         # Generate ID
         image_id = f"img-{uuid.uuid4().hex[:12]}"
-        
+
         return ImageGenerationResponse(
             id=image_id,
             created=int(time.time()),
@@ -105,7 +108,7 @@ async def generate_image(request: ImageGenerationRequest):
             inference_time_seconds=gen_time,
             image_base64=image_base64,
         )
-        
+
     except Exception as e:
         logger.error(f"Image generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -116,10 +119,10 @@ async def load_model(background_tasks: BackgroundTasks):
     """Manually trigger model loading."""
     if model_instance.loaded:
         return {"status": "already_loaded"}
-    
+
     if model_instance.loading:
         return {"status": "loading"}
-    
+
     background_tasks.add_task(model_instance.load)
     return {"status": "loading_started"}
 
@@ -129,7 +132,7 @@ async def unload_model():
     """Manually unload model (frees RTX 3090 for training)."""
     if not model_instance.loaded:
         return {"status": "already_unloaded"}
-    
+
     success = model_instance.unload(reason="manual")
     return {"status": "unloaded" if success else "error"}
 
@@ -146,4 +149,5 @@ async def yield_to_training():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=HOST, port=PORT)

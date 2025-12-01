@@ -55,7 +55,7 @@ prompt_password() {
     local service_name=$1
     local default_length=$2
     local is_secret=${3:-false}
-    
+
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}${service_name}${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -65,7 +65,7 @@ prompt_password() {
     echo ""
     read -p "Selection [1]: " choice
     choice=${choice:-1}
-    
+
     if [ "$choice" = "2" ]; then
         while true; do
             read -sp "Enter password: " password1
@@ -138,10 +138,10 @@ update_env_var() {
     local file=$1
     local key=$2
     local value=$3
-    
+
     # Create temporary file
     local temp_file="${file}.tmp"
-    
+
     # Update or append the variable
     if grep -q "^${key}=" "$file"; then
         # Replace existing line

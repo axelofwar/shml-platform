@@ -29,17 +29,17 @@ with mlflow.start_run():
     # Train model
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train, y_train)
-    
+
     # Log parameters
     mlflow.log_param("n_estimators", 100)
     mlflow.log_param("model_type", "RandomForest")
-    
+
     # Log metrics
     mlflow.log_metric("accuracy", model.score(X_test, y_test))
-    
+
     # Log model
     mlflow.sklearn.log_model(model, "model")
-    
+
     print(f"✓ Run logged: {mlflow.active_run().info.run_id}")
 ```
 
@@ -53,7 +53,7 @@ mlflow.set_tracking_uri("http://localhost/mlflow")
 # Option 1: Register during training
 with mlflow.start_run():
     mlflow.sklearn.log_model(
-        model, 
+        model,
         "model",
         registered_model_name="iris-classifier"
     )
@@ -125,35 +125,35 @@ with mlflow.start_run(run_name="rf-baseline") as run:
     # Train
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
-    
+
     # Predict
     y_pred = model.predict(X_test)
-    
+
     # Log
     mlflow.log_params({
         "n_estimators": 100,
         "random_state": 42,
         "test_size": 0.2
     })
-    
+
     mlflow.log_metrics({
         "accuracy": accuracy_score(y_test, y_pred),
         "f1_score": f1_score(y_test, y_pred, average='weighted')
     })
-    
+
     mlflow.set_tags({
         "model_type": "RandomForest",
         "dataset": "iris",
         "developer": "data-team"
     })
-    
+
     # Register model
     mlflow.sklearn.log_model(
         model,
         "model",
         registered_model_name="iris-classifier"
     )
-    
+
     print(f"✓ Model trained and registered")
     print(f"  Run ID: {run.info.run_id}")
 

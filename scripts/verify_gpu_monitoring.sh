@@ -8,11 +8,11 @@ echo ""
 echo "1. DCGM Exporter Status:"
 if sudo docker ps --filter name=dcgm-exporter --format "{{.Status}}" | grep -q "Up"; then
     echo "   ✓ DCGM Exporter running"
-    
+
     # Check metrics endpoint
     if curl -s http://localhost:9400/metrics | grep -q "DCGM_FI_DEV_GPU_UTIL"; then
         echo "   ✓ Metrics endpoint accessible"
-        
+
         # Show GPU info
         echo ""
         echo "   Detected GPUs:"
@@ -29,7 +29,7 @@ echo ""
 echo "2. Prometheus Integration:"
 if sudo docker exec global-prometheus wget -qO- 'http://localhost:9090/api/v1/targets' 2>/dev/null | grep -q "dcgm-exporter"; then
     echo "   ✓ DCGM target configured in Prometheus"
-    
+
     # Test query
     if sudo docker exec global-prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=DCGM_FI_DEV_GPU_UTIL' 2>/dev/null | grep -q '"status":"success"'; then
         echo "   ✓ GPU metrics queryable in Prometheus"
@@ -56,7 +56,7 @@ echo "4. Remote Access:"
 TAILSCALE_IP=$(tailscale ip -4 2>/dev/null)
 if [ -n "$TAILSCALE_IP" ]; then
     echo "   ✓ Tailscale configured: $TAILSCALE_IP"
-    
+
     if curl -s -o /dev/null -w "%{http_code}" "http://$TAILSCALE_IP/grafana/" | grep -q "302\|200"; then
         echo "   ✓ Grafana accessible via Tailscale"
         echo ""

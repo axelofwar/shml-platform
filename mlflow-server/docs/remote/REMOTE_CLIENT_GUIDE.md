@@ -53,20 +53,20 @@ with mlflow.start_run(run_name="logistic-regression-baseline"):
     mlflow.log_param("model_type", "logistic_regression")
     mlflow.log_param("test_size", 0.2)
     mlflow.log_param("solver", "lbfgs")
-    
+
     # Train model
     model = LogisticRegression(solver="lbfgs", max_iter=200)
     model.fit(X_train, y_train)
-    
+
     # Log metrics
     train_score = model.score(X_train, y_train)
     test_score = model.score(X_test, y_test)
     mlflow.log_metric("train_accuracy", train_score)
     mlflow.log_metric("test_accuracy", test_score)
-    
+
     # Log model
     mlflow.sklearn.log_model(model, "model")
-    
+
     print(f"Run ID: {mlflow.active_run().info.run_id}")
     print(f"Experiment ID: {mlflow.active_run().info.experiment_id}")
 ```
@@ -88,18 +88,18 @@ with mlflow.start_run():
     plt.title("Training Progress")
     plt.savefig("plot.png")
     mlflow.log_artifact("plot.png")
-    
+
     # Log a dataframe
     df = pd.DataFrame({"feature": ["A", "B", "C"], "importance": [0.5, 0.3, 0.2]})
     df.to_csv("feature_importance.csv", index=False)
     mlflow.log_artifact("feature_importance.csv")
-    
+
     # Log a JSON config
     config = {"learning_rate": 0.01, "batch_size": 32}
     with open("config.json", "w") as f:
         json.dump(config, f)
     mlflow.log_artifact("config.json")
-    
+
     # Log entire directory
     # mlflow.log_artifacts("output_dir/")
 ```
@@ -118,7 +118,7 @@ with mlflow.start_run():
     mlflow.set_tag("project", "customer-churn")
     mlflow.set_tag("version", "v2.1.0")
     mlflow.set_tag("jira_ticket", "DS-1234")
-    
+
     # Your training code here
     mlflow.log_param("epochs", 100)
     mlflow.log_metric("loss", 0.25)
@@ -142,10 +142,10 @@ with mlflow.start_run():
     # Train model
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train, y_train)
-    
+
     # Log metrics
     mlflow.log_metric("accuracy", 0.95)
-    
+
     # Log and register model in one step
     mlflow.sklearn.log_model(
         model,
@@ -313,7 +313,7 @@ with mlflow.start_run(run_name="rf-production-candidate") as run:
     mlflow.set_tag("environment", "production")
     mlflow.set_tag("model_type", "random_forest")
     mlflow.set_tag("dataset_version", "2024-11")
-    
+
     # Log parameters
     params = {
         "n_estimators": 100,
@@ -322,11 +322,11 @@ with mlflow.start_run(run_name="rf-production-candidate") as run:
         "random_state": 42
     }
     mlflow.log_params(params)
-    
+
     # Train model
     model = RandomForestClassifier(**params)
     model.fit(X_train, y_train)
-    
+
     # Evaluate
     y_pred = model.predict(X_test)
     metrics = {
@@ -336,23 +336,23 @@ with mlflow.start_run(run_name="rf-production-candidate") as run:
         "recall": recall_score(y_test, y_pred, average='weighted')
     }
     mlflow.log_metrics(metrics)
-    
+
     # Log feature importance
     feature_importance = pd.DataFrame({
         'feature': X_train.columns,
         'importance': model.feature_importances_
     }).sort_values('importance', ascending=False)
-    
+
     feature_importance.to_csv("feature_importance.csv", index=False)
     mlflow.log_artifact("feature_importance.csv")
-    
+
     # Log model and register
     mlflow.sklearn.log_model(
         model,
         "model",
         registered_model_name="customer-churn-classifier"
     )
-    
+
     run_id = run.info.run_id
     print(f"Training completed. Run ID: {run_id}")
     print(f"Metrics: {metrics}")
@@ -488,7 +488,7 @@ with mlflow.start_run():
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
         f.write("Test artifact")
         temp_path = f.name
-    
+
     try:
         # Upload artifact
         mlflow.log_artifact(temp_path, "test_artifacts")
@@ -554,14 +554,14 @@ with mlflow.start_run():
         "features": X_train.shape[1],
         "preprocessing": "standard_scaler"
     })
-    
+
     mlflow.log_metrics({
         "train_accuracy": train_acc,
         "test_accuracy": test_acc,
         "train_time_seconds": train_time,
         "inference_time_ms": inference_time
     })
-    
+
     mlflow.set_tags({
         "developer": "john.doe",
         "purpose": "baseline_model",
@@ -583,8 +583,8 @@ client.transition_model_version_stage("my-model", version=1, stage="Staging")
 
 # 3. Deploy to production
 client.transition_model_version_stage(
-    "my-model", 
-    version=1, 
+    "my-model",
+    version=1,
     stage="Production",
     archive_existing_versions=True
 )
@@ -602,7 +602,7 @@ try:
         # Your training code
         model = train_model()
         mlflow.sklearn.log_model(model, "model")
-        
+
 except Exception as e:
     # Log the error
     mlflow.log_param("error", str(e))

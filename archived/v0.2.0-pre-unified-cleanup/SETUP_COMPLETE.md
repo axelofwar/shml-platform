@@ -96,11 +96,11 @@ All passwords preserved from original setup:
    ```python
    import mlflow
    import requests
-   
+
    # Test MLflow
    response = requests.get(f"{os.getenv('MLFLOW_TRACKING_URI')}/api/2.0/mlflow/experiments/search")
    print(f"MLflow OK: {response.status_code == 200}")
-   
+
    # Test Ray
    from ray.job_submission import JobSubmissionClient
    client = JobSubmissionClient(os.getenv('RAY_ADDRESS'))

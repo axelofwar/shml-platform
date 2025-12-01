@@ -441,7 +441,7 @@ ufw deny 80
 - alert: MLflowDown
   expr: up{job="mlflow"} == 0
   for: 2m
-  
+
 - alert: RayHighMemory
   expr: ray_object_store_memory > 0.9
   for: 5m

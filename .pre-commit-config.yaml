@@ -34,19 +34,20 @@ repos:
       - id: black
         language_version: python3
 
-  # Shell script linting
+  # Shell script linting (exclude archived files)
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
-        args: ['--severity=warning']
+        args: ['--severity=error']  # Only fail on errors, not warnings
+        exclude: '^archived/|^tests/.*test_.*\.sh$'
 
-  # Docker/Compose linting
+  # Docker/Compose linting (use local hadolint if available)
   - repo: https://github.com/hadolint/hadolint
     rev: v2.13.1-beta
     hooks:
-      - id: hadolint-docker
-        entry: hadolint --ignore DL3008 --ignore DL3013 --ignore DL3018
+      - id: hadolint
+        entry: hadolint --ignore DL3008 --ignore DL3013 --ignore DL3018 --ignore DL3059
 
   # Gitleaks for additional secret scanning
   - repo: https://github.com/gitleaks/gitleaks

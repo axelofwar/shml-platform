@@ -51,13 +51,13 @@ fi
 if [ $SECRETS_MISSING -eq 1 ]; then
     echo ""
     echo -e "${YELLOW}Creating missing secrets with default values...${NC}"
-    
+
     mkdir -p ml-platform/mlflow-server/secrets ml-platform/ray_compute/secrets
-    
+
     [ ! -f "./ml-platform/mlflow-server/secrets/db_password.txt" ] && echo "mlflow_secure_password_$(date +%s)" > ./ml-platform/mlflow-server/secrets/db_password.txt
     [ ! -f "./ml-platform/mlflow-server/secrets/grafana_password.txt" ] && echo "admin" > ./ml-platform/mlflow-server/secrets/grafana_password.txt
     [ ! -f "./ml-platform/ray_compute/secrets/db_password.txt" ] && echo "ray_secure_password_$(date +%s)" > ./ml-platform/ray_compute/secrets/db_password.txt
-    
+
     echo -e "${GREEN}✓ Secrets created${NC}"
 else
     echo -e "${GREEN}✓ All secrets present${NC}"

@@ -45,13 +45,13 @@ if [ -z "$RECOMMENDED_DRIVER" ]; then
     echo ""
     read -p "Select driver [1-4] (default: 4): " choice
     choice=${choice:-4}
-    
+
     case $choice in
         1) RECOMMENDED_DRIVER="nvidia-driver-470" ;;
         2) RECOMMENDED_DRIVER="nvidia-driver-535" ;;
         3) RECOMMENDED_DRIVER="nvidia-driver-550" ;;
         4) RECOMMENDED_DRIVER="nvidia-driver-580" ;;
-        *) 
+        *)
             echo "Invalid choice, using nvidia-driver-580"
             RECOMMENDED_DRIVER="nvidia-driver-580"
             ;;

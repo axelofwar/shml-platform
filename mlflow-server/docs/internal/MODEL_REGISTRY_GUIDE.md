@@ -50,10 +50,10 @@ mlflow.set_tracking_uri("http://localhost/mlflow")
 with mlflow.start_run():
     # Train your model
     model = train_model()
-    
+
     # Log the model
     mlflow.sklearn.log_model(model, "model")
-    
+
     # Register to Model Registry
     model_uri = f"runs:/{mlflow.active_run().info.run_id}/model"
     mlflow.register_model(model_uri, "my-classifier")
@@ -161,7 +161,7 @@ curl -X POST "http://localhost/api/2.0/mlflow/model-versions/transition-stage" \
 Access the Model Registry UI at: `http://localhost/mlflow`
 
 1. **View Models**: Click "Models" in the top navigation
-2. **Register Model**: 
+2. **Register Model**:
    - Go to an experiment run
    - Click on a logged model artifact
    - Click "Register Model"

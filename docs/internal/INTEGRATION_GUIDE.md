@@ -247,7 +247,7 @@ mlflow.set_tracking_uri("http://mlflow-nginx:80")
 with mlflow.start_run():
     # Train model
     model.fit(X, y)
-    
+
     # Log to MLflow artifacts
     mlflow.sklearn.log_model(model, "model")
     mlflow.log_artifact("output.csv")
@@ -385,7 +385,7 @@ traefik.http.routers.ray-api.priority: 110
 - job_name: 'ray-cluster'
   static_configs:
     - targets: ['ray-head:8265']
-    
+
 - job_name: 'ray-api'
   static_configs:
     - targets: ['ray-compute-api:8000']

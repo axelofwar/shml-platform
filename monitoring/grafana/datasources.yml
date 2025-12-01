@@ -16,7 +16,7 @@ datasources:
       timeInterval: "15s"
       httpMethod: POST
     version: 1
-  
+
   # MLflow Metrics - Detailed MLflow tracking (30d retention)
   - name: MLflow Metrics
     type: prometheus
@@ -29,7 +29,7 @@ datasources:
       timeInterval: "15s"
       httpMethod: POST
     version: 1
-  
+
   # Ray Metrics - Detailed Ray compute metrics (7d retention)
   - name: Ray Metrics
     type: prometheus

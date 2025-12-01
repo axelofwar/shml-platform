@@ -18,11 +18,11 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'premium', 'user')),
     oauth_sub VARCHAR(255) UNIQUE,  -- Authentik OAuth subject
     api_key_hash VARCHAR(255),
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMP WITH TIME ZONE,
-    
+
     is_active BOOLEAN DEFAULT TRUE,
     is_suspended BOOLEAN DEFAULT FALSE,
     suspension_reason TEXT,
@@ -63,37 +63,37 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_id VARCHAR(255) PRIMARY KEY,
     ray_job_id VARCHAR(255) UNIQUE,
     user_id UUID NOT NULL REFERENCES users(user_id),
-    
+
     name VARCHAR(255) NOT NULL,
     description TEXT,
     job_type VARCHAR(50) NOT NULL,
     language VARCHAR(50) NOT NULL DEFAULT 'python',
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     priority VARCHAR(50) NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'critical')),
-    
+
     -- Resource requests
     cpu_requested INTEGER NOT NULL,
     memory_gb_requested INTEGER NOT NULL,
     gpu_requested NUMERIC(3, 2) NOT NULL DEFAULT 0.00,
     timeout_hours INTEGER NOT NULL,
-    
+
     -- Actual resource usage
     cpu_used_hours NUMERIC(10, 2),
     gpu_used_hours NUMERIC(10, 2),
     memory_peak_gb NUMERIC(10, 2),
     disk_used_gb NUMERIC(10, 2),
-    
+
     -- Docker configuration
     base_image VARCHAR(255),
     dockerfile_hash VARCHAR(64),
     custom_dockerfile BOOLEAN DEFAULT FALSE,
-    
+
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     queued_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
     ended_at TIMESTAMP WITH TIME ZONE,
-    
+
     -- Artifacts and outputs
     output_mode VARCHAR(50) DEFAULT 'artifacts',
     artifact_path TEXT,
@@ -102,19 +102,19 @@ CREATE TABLE IF NOT EXISTS jobs (
     artifact_downloaded_at TIMESTAMP WITH TIME ZONE,
     mlflow_experiment VARCHAR(255),
     mlflow_run_id VARCHAR(255),
-    
+
     -- Metadata
     tags TEXT[],
     cost_center VARCHAR(255),
     depends_on VARCHAR(255)[],
-    
+
     -- Error handling
     error_message TEXT,
     error_traceback TEXT,
     exit_code INTEGER,
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
-    
+
     -- Audit trail
     cancelled_by UUID REFERENCES users(user_id),
     cancelled_at TIMESTAMP WITH TIME ZONE,
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS resource_usage_daily (
     storage_gb NUMERIC(10, 2) DEFAULT 0.00,
     jobs_completed INTEGER DEFAULT 0,
     jobs_failed INTEGER DEFAULT 0,
-    
+
     UNIQUE(user_id, usage_date)
 );
 
@@ -251,7 +251,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 -- Record this migration
-INSERT INTO schema_migrations (migration_name, success) 
+INSERT INTO schema_migrations (migration_name, success)
 VALUES ('001_initial_schema.sql', TRUE)
 ON CONFLICT (migration_name) DO NOTHING;
 

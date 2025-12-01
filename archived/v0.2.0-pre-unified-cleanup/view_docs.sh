@@ -32,7 +32,7 @@ case "$1" in
     6) less ACCESS_GUIDE.md ;;
     7) less DEPLOYMENT_SUMMARY.md ;;
     8) less ml-platform/mlflow-server/CURRENT_DEPLOYMENT.md ;;
-    9) 
+    9)
         echo "Credentials files:"
         echo "  - ml-platform/mlflow-server/.env.credentials"
         echo "  - ml-platform/ray_compute/.env.credentials"

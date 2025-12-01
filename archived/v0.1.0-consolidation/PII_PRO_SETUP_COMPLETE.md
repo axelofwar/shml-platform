@@ -125,17 +125,17 @@ with mlflow.start_run(run_name="yolov8-face-v1"):
     mlflow.set_tag("developer", "john")
     mlflow.set_tag("dataset_version", "wider-faces-v1.2")
     mlflow.set_tag("hardware", "rtx3090")
-    
+
     # Training metrics
     mlflow.log_metric("recall", 0.96)
     mlflow.log_metric("precision", 0.94)
     mlflow.log_metric("f1_score", 0.95)
     mlflow.log_metric("false_negative_rate", 0.04)
-    
+
     # Performance metrics
     mlflow.log_metric("fps_1080p", 58.3)
     mlflow.log_metric("training_time_hours", 2.5)
-    
+
     # Log model
     mlflow.pytorch.log_model(model, "model")
     mlflow.log_artifact("confusion_matrix.png", "plots")
@@ -150,12 +150,12 @@ with mlflow.start_run(run_name="yolov8-vs-resnet50"):
     mlflow.set_tag("candidate_model", "yolov8n-v1.1")
     mlflow.set_tag("comparison_type", "ab-test")
     mlflow.set_tag("test_resolution", "1920x1080")
-    
+
     # Improvements
     mlflow.log_metric("recall_improvement", 0.08)
     mlflow.log_metric("fps_improvement", 12.5)
     mlflow.log_metric("false_negative_reduction", 0.02)
-    
+
     mlflow.log_artifact("comparison_report.html", "reports")
 ```
 
@@ -169,7 +169,7 @@ for res in resolutions:
         mlflow.set_tag("resolution", res)
         mlflow.set_tag("hardware", "rtx3090")
         mlflow.set_tag("optimization", "tensorrt-fp16")
-        
+
         # Run benchmarks...
         mlflow.log_metric("fps", measured_fps)
         mlflow.log_metric("avg_latency_ms", avg_lat)
@@ -177,7 +177,7 @@ for res in resolutions:
         mlflow.log_metric("p99_latency_ms", p99_lat)
         mlflow.log_metric("gpu_memory_mb", gpu_mem)
         mlflow.log_metric("frames_per_watt", fps_per_watt)
-        
+
         mlflow.log_artifact("fps_by_resolution.png", "plots")
 ```
 
@@ -192,13 +192,13 @@ with mlflow.start_run(run_name="wider-faces-v1.2"):
     mlflow.set_tag("source_url", "http://shuoyang1213.me/WIDERFACE/")
     mlflow.set_tag("annotation_format", "yolo")
     mlflow.set_tag("privacy_scrubbed", "true")
-    
+
     # Upload datasets
     mlflow.log_artifact("train.zip", "datasets/train")
     mlflow.log_artifact("val.zip", "datasets/val")
     mlflow.log_artifact("test.zip", "datasets/test")
     mlflow.log_artifact("labels_statistics.json")
-    
+
     mlflow.log_metric("num_images", 32203)
     mlflow.log_metric("num_annotations", 393703)
     mlflow.log_metric("avg_faces_per_image", 12.2)

@@ -34,7 +34,7 @@ if [ "$BUILD_GPU" = true ]; then
     echo "Building GPU image (this may take 10-15 minutes)..."
     docker build -t mlflow-compute-gpu:latest -f Dockerfile.gpu .
     echo "✓ GPU image built: mlflow-compute-gpu:latest"
-    
+
     echo ""
     echo "Testing GPU image..."
     if docker run --rm --gpus all mlflow-compute-gpu:latest python3 -c "import torch; assert torch.cuda.is_available(); print(f'✓ GPU accessible: {torch.cuda.get_device_name(0)}')"; then

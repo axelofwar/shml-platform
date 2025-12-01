@@ -50,10 +50,10 @@ mlflow.set_experiment("my-experiment")
 
 with mlflow.start_run():
     mlflow.log_param("param1", "value1")
-    
+
     # Run distributed training
     results = ray.get([train_model.remote(i) for i in range(10)])
-    
+
     mlflow.log_metric("accuracy", sum(r["accuracy"] for r in results) / len(results))
 
 ray.shutdown()
@@ -207,7 +207,7 @@ class AuthenticatedRayClient:
         self.client_secret = client_secret
         self.auth_url = auth_url
         self.token = None
-        
+
     def get_token(self):
         """Get OAuth token from Authentik"""
         response = requests.post(
@@ -221,12 +221,12 @@ class AuthenticatedRayClient:
         response.raise_for_status()
         self.token = response.json()["access_token"]
         return self.token
-    
+
     def submit_job(self, entrypoint, runtime_env=None, metadata=None):
         """Submit job with OAuth authentication"""
         if not self.token:
             self.get_token()
-        
+
         # Use Ray Compute API instead of direct Ray submission
         response = requests.post(
             f"{self.ray_address}/api/ray/jobs",
@@ -280,22 +280,22 @@ with mlflow.start_run(run_name="distributed-training"):
     # Log parameters
     mlflow.log_param("learning_rate", 0.001)
     mlflow.log_param("num_workers", 10)
-    
+
     # Distributed training
     @ray.remote
     def train_worker(worker_id):
         # Training logic
         return {"loss": 0.5, "accuracy": 0.95}
-    
+
     results = ray.get([train_worker.remote(i) for i in range(10)])
-    
+
     # Log metrics
     avg_loss = sum(r["loss"] for r in results) / len(results)
     avg_acc = sum(r["accuracy"] for r in results) / len(results)
-    
+
     mlflow.log_metric("avg_loss", avg_loss)
     mlflow.log_metric("avg_accuracy", avg_acc)
-    
+
     # Log artifacts
     mlflow.log_artifact("model.pkl")
     mlflow.log_artifact("training_plot.png")
@@ -332,26 +332,26 @@ class Trainer:
     def __init__(self, model_params):
         self.params = model_params
         mlflow.set_tracking_uri("http://mlflow-server:5000")
-        
+
     def train(self, data):
         mlflow.set_experiment("distributed-training")
-        
+
         with mlflow.start_run():
             # Log parameters
             for key, value in self.params.items():
                 mlflow.log_param(key, value)
-            
+
             # Training code
             model = self._build_model()
             history = model.fit(data)
-            
+
             # Log metrics per epoch
             for epoch, metrics in enumerate(history):
                 mlflow.log_metrics(metrics, step=epoch)
-            
+
             # Log model
             mlflow.pytorch.log_model(model, "model")
-            
+
         return model
 
 # Initialize Ray
@@ -755,10 +755,10 @@ import mlflow
 @mlflow_mixin
 def train_model(config):
     mlflow.log_params(config)
-    
+
     # Training code
     accuracy = train(config)
-    
+
     mlflow.log_metric("accuracy", accuracy)
     tune.report(accuracy=accuracy)
 
@@ -792,11 +792,11 @@ with mlflow.start_run():
     # Load data
     data = load_large_dataset()
     batches = np.array_split(data, 100)
-    
+
     # Process in parallel
     futures = [process_batch.remote(i, batch) for i, batch in enumerate(batches)]
     results = ray.get(futures)
-    
+
     # Log results
     total_processed = sum(r[1] for r in results)
     mlflow.log_metric("total_processed", total_processed)
@@ -816,22 +816,22 @@ import torch
 def train_func(config):
     mlflow.set_tracking_uri("http://mlflow-server:5000")
     mlflow.set_experiment("distributed-training")
-    
+
     with mlflow.start_run():
         model = build_model(config)
-        
+
         for epoch in range(config["epochs"]):
             metrics = train_epoch(model)
-            
+
             # Log to MLflow
             mlflow.log_metrics(metrics, step=epoch)
-            
+
             # Ray Train checkpoint
             train.report(metrics=metrics, checkpoint=train.Checkpoint.from_dict({
                 "model_state": model.state_dict(),
                 "epoch": epoch
             }))
-            
+
         # Log final model to MLflow
         mlflow.pytorch.log_model(model, "model")
 

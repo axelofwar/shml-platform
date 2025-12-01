@@ -82,7 +82,7 @@ prompt_yn() {
     local prompt="$1"
     local default="${2:-n}"
     local response
-    
+
     if [ "$default" = "y" ]; then
         read -p "$prompt [Y/n]: " response
         response=${response:-y}
@@ -90,7 +90,7 @@ prompt_yn() {
         read -p "$prompt [y/N]: " response
         response=${response:-n}
     fi
-    
+
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
@@ -99,7 +99,7 @@ prompt_password() {
     local description="$2"
     local allow_generate="${3:-true}"
     local default_length="${4:-24}"
-    
+
     # All prompts go to stderr, only password goes to stdout
     echo "" >&2
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
@@ -108,7 +108,7 @@ prompt_password() {
         echo -e "${CYAN}$description${NC}" >&2
     fi
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
-    
+
     if [ "$allow_generate" = "true" ]; then
         echo "Options:" >&2
         echo "  1) Auto-generate secure password (recommended)" >&2
@@ -116,7 +116,7 @@ prompt_password() {
         echo "" >&2
         read -p "Selection [1]: " choice
         choice=${choice:-1}
-        
+
         if [ "$choice" = "2" ]; then
             while true; do
                 read -sp "Enter password (min 12 chars): " password1
@@ -136,7 +136,7 @@ prompt_password() {
             done
         fi
     fi
-    
+
     # Auto-generate (only password to stdout)
     openssl rand -base64 $default_length | tr -dc 'a-zA-Z0-9' | head -c $default_length
 }
@@ -145,12 +145,12 @@ update_env_var() {
     local file=$1
     local key=$2
     local value=$3
-    
+
     if [ ! -f "$file" ]; then
         echo "${key}=${value}" >> "$file"
         return
     fi
-    
+
     # Use perl for reliable replacement
     local temp_file="${file}.tmp"
     if grep -q "^${key}=" "$file" 2>/dev/null; then
@@ -164,15 +164,15 @@ update_env_var() {
 validate_secret() {
     local file=$1
     local min_length=${2:-12}
-    
+
     if [ ! -f "$file" ]; then
         return 1
     fi
-    
+
     # Read and trim whitespace (newlines, spaces)
     local content=$(cat "$file" 2>/dev/null | tr -d '\n\r')
     local length=${#content}
-    
+
     if [ $length -ge $min_length ] && [ $length -le 200 ]; then
         return 0
     fi
@@ -185,9 +185,9 @@ validate_secret() {
 
 check_dependencies() {
     print_header "Phase 1: System Dependencies"
-    
+
     local missing_deps=()
-    
+
     # Docker
     print_section "Docker Engine"
     if command -v docker &>/dev/null; then
@@ -197,7 +197,7 @@ check_dependencies() {
         check_fail "Docker not installed"
         missing_deps+=("docker")
     fi
-    
+
     # Docker Compose
     if docker compose version &>/dev/null 2>&1; then
         local compose_version=$(docker compose version | cut -d' ' -f4)
@@ -206,14 +206,14 @@ check_dependencies() {
         check_fail "Docker Compose not installed"
         missing_deps+=("docker-compose")
     fi
-    
+
     # Docker permissions
     if groups | grep -q docker || [ "$EUID" -eq 0 ]; then
         check_pass "Docker permissions OK"
     else
         check_warn "User not in docker group (will use sudo)"
     fi
-    
+
     # NVIDIA Drivers
     print_section "NVIDIA GPU"
     if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
@@ -232,7 +232,7 @@ check_dependencies() {
         check_fail "NVIDIA drivers not installed"
         missing_deps+=("nvidia-drivers")
     fi
-    
+
     # NVIDIA Container Toolkit
     if command -v nvidia-ctk &>/dev/null; then
         check_pass "NVIDIA Container Toolkit installed"
@@ -240,7 +240,7 @@ check_dependencies() {
         check_fail "NVIDIA Container Toolkit not installed"
         missing_deps+=("nvidia-container-toolkit")
     fi
-    
+
     # Optional: Tailscale
     print_section "Network (Optional)"
     if command -v tailscale &>/dev/null; then
@@ -257,7 +257,7 @@ check_dependencies() {
     else
         check_warn "Tailscale not installed (optional for remote access)"
     fi
-    
+
     # PostgreSQL client
     if command -v psql &>/dev/null; then
         check_pass "PostgreSQL client installed"
@@ -265,7 +265,7 @@ check_dependencies() {
         check_warn "PostgreSQL client not installed (optional)"
         missing_deps+=("postgresql-client")
     fi
-    
+
     # Handle missing dependencies
     if [ ${#missing_deps[@]} -gt 0 ]; then
         echo ""
@@ -274,7 +274,7 @@ check_dependencies() {
             echo "  - $dep"
         done
         echo ""
-        
+
         if prompt_yn "Would you like to install missing dependencies now?" "y"; then
             install_dependencies "${missing_deps[@]}"
         else
@@ -286,9 +286,9 @@ check_dependencies() {
 
 install_dependencies() {
     local deps=("$@")
-    
+
     print_section "Installing Dependencies"
-    
+
     for dep in "${deps[@]}"; do
         case "$dep" in
             docker)
@@ -336,45 +336,45 @@ install_dependencies() {
 
 check_existing_data() {
     print_header "Phase 1.5: Existing Data Check"
-    
+
     local has_data=false
     local data_sources=()
-    
+
     print_section "Checking for existing platform data..."
-    
+
     # Check for Docker volumes with data
     if sudo docker volume ls | grep -q "shared-postgres-data"; then
         data_sources+=("PostgreSQL database (shared-postgres-data)")
         has_data=true
     fi
-    
+
     if sudo docker volume ls | grep -q "mlflow-mlruns"; then
         data_sources+=("MLflow runs (mlflow-mlruns)")
         has_data=true
     fi
-    
+
     if sudo docker volume ls | grep -q "mlflow-prometheus-data"; then
         data_sources+=("MLflow metrics (mlflow-prometheus-data)")
         has_data=true
     fi
-    
+
     if sudo docker volume ls | grep -q "unified-grafana-data"; then
         data_sources+=("Grafana dashboards (unified-grafana-data)")
         has_data=true
     fi
-    
+
     # Check for artifact storage
     if [ -d "/mlflow/artifacts" ] && [ "$(ls -A /mlflow/artifacts 2>/dev/null)" ]; then
         data_sources+=("MLflow artifacts (/mlflow/artifacts)")
         has_data=true
     fi
-    
+
     # Check for backup data
     if [ -d "backups/postgres" ] && [ "$(ls -A backups/postgres 2>/dev/null)" ]; then
         data_sources+=("PostgreSQL backups (backups/postgres)")
         has_data=true
     fi
-    
+
     if [ "$has_data" = true ]; then
         echo ""
         echo -e "${YELLOW}⚠️  Existing platform data detected:${NC}"
@@ -382,13 +382,13 @@ check_existing_data() {
             echo "  • $source"
         done
         echo ""
-        
+
         echo -e "${CYAN}Options:${NC}"
         echo "  1. Preserve existing data (recommended for updates/restarts)"
         echo "  2. Fresh installation (WARNING: will delete all existing data)"
         echo "  3. Create backup before proceeding"
         echo ""
-        
+
         local choice
         while true; do
             read -p "Select option [1-3]: " choice
@@ -410,17 +410,17 @@ check_existing_data() {
                     echo ""
                     if prompt_yn "Are you ABSOLUTELY SURE you want to delete all data?" "n"; then
                         echo -e "${RED}Removing all existing data...${NC}"
-                        
+
                         # Stop all services first
                         sudo docker compose down 2>&1 | grep -v "WARNING:" || true
-                        
+
                         # Remove volumes
                         sudo docker volume rm shared-postgres-data mlflow-mlruns mlflow-prometheus-data \
                             unified-grafana-data ray-prometheus-data global-prometheus-data 2>/dev/null || true
-                        
+
                         # Remove artifact storage
                         sudo rm -rf /mlflow/artifacts/* 2>/dev/null || true
-                        
+
                         check_fixed "All existing data removed"
                         PRESERVE_DATA=false
                         break
@@ -434,21 +434,21 @@ check_existing_data() {
                     local timestamp=$(date +%Y%m%d_%H%M%S)
                     local backup_dir="backups/pre-setup-${timestamp}"
                     mkdir -p "$backup_dir"
-                    
+
                     # Backup PostgreSQL if running
                     if sudo docker ps | grep -q "shared-postgres"; then
                         echo "Backing up PostgreSQL databases..."
                         sudo docker exec shared-postgres pg_dumpall -U postgres > "$backup_dir/postgres_full_backup.sql" 2>/dev/null || \
                             check_warn "Could not backup running PostgreSQL (container may not be running)"
                     fi
-                    
+
                     # Backup artifacts if they exist
                     if [ -d "/mlflow/artifacts" ]; then
                         echo "Backing up MLflow artifacts..."
                         sudo tar -czf "$backup_dir/mlflow_artifacts.tar.gz" /mlflow/artifacts 2>/dev/null || \
                             check_warn "Could not backup artifacts"
                     fi
-                    
+
                     check_pass "Backup created at: $backup_dir"
                     echo ""
                     echo "Now choose how to proceed:"
@@ -462,7 +462,7 @@ check_existing_data() {
         echo -e "${GREEN}✓ No existing data found - clean installation${NC}"
         PRESERVE_DATA=false
     fi
-    
+
     echo ""
 }
 
@@ -472,17 +472,17 @@ check_existing_data() {
 
 setup_network() {
     print_header "Phase 2: Network Configuration"
-    
+
     # Get IPs
     LOCAL_IP=$(hostname -I | awk '{print $1}')
     TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "")
-    
+
     echo "Local IP: ${LOCAL_IP}"
     if [ -n "$TAILSCALE_IP" ]; then
         echo "Tailscale IP: ${TAILSCALE_IP}"
     else
         echo "Tailscale IP: Not configured"
-        
+
         if command -v tailscale &>/dev/null; then
             if prompt_yn "Would you like to set up Tailscale now?" "n"; then
                 echo ""
@@ -497,10 +497,10 @@ setup_network() {
             fi
         fi
     fi
-    
+
     # Use local IP as fallback
     TAILSCALE_IP=${TAILSCALE_IP:-$LOCAL_IP}
-    
+
     # Create Docker network
     print_section "Docker Network"
     if docker network inspect ml-platform &>/dev/null 2>&1; then
@@ -518,52 +518,52 @@ setup_network() {
 
 configure_passwords() {
     print_header "Phase 3: Password Configuration"
-    
+
     echo -e "${CYAN}You'll be prompted for passwords for services you'll access directly.${NC}"
     echo -e "${CYAN}Database passwords will be auto-generated (you won't need them directly).${NC}"
     echo ""
     read -p "Press Enter to continue..."
-    
+
     # User-facing passwords
     print_section "User-Facing Services"
-    
+
     GRAFANA_PASSWORD=$(prompt_password \
         "Grafana Dashboard Password" \
         "Used to access monitoring dashboards at /grafana/ and /ray-grafana/\nUsername: admin" \
         "true" 24)
     echo ""
-    
+
     AUTHENTIK_BOOTSTRAP_PASSWORD=$(prompt_password \
         "Authentik Admin Password" \
         "Used for OAuth/SSO administration at :9000/\nUsername: akadmin\nNote: Change this after first login" \
         "true" 24)
     echo ""
-    
+
     # Database passwords with option
     print_section "Database Passwords"
     echo -e "${CYAN}These are only needed if you want to connect to databases directly via psql.${NC}"
     echo -e "${CYAN}For normal platform use, these are handled automatically.${NC}"
     echo ""
-    
+
     if prompt_yn "Would you like to set custom database passwords?" "n"; then
         MLFLOW_DB_PASSWORD=$(prompt_password \
             "MLflow Database Password" \
             "PostgreSQL database for MLflow metadata\nConnection: postgresql://mlflow:PASSWORD@localhost:5432/mlflow_db" \
             "true" 32)
         echo ""
-        
+
         RAY_DB_PASSWORD=$(prompt_password \
             "Ray Database Password" \
             "PostgreSQL database for Ray job history\nConnection: postgresql://ray_compute:PASSWORD@localhost:5433/ray_compute" \
             "true" 32)
         echo ""
-        
+
         AUTHENTIK_DB_PASSWORD=$(prompt_password \
             "Authentik Database Password" \
             "PostgreSQL database for Authentik users/sessions" \
             "true" 32)
         echo ""
-        
+
         SHARED_DB_PASSWORD=$(prompt_password \
             "Shared Database Password" \
             "Shared PostgreSQL for unified services" \
@@ -577,7 +577,7 @@ configure_passwords() {
         SHARED_DB_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
         check_pass "Database passwords generated"
     fi
-    
+
     # System secrets (always auto-generate)
     print_section "System Secrets"
     echo "Auto-generating system secrets..."
@@ -592,13 +592,13 @@ configure_passwords() {
 
 setup_env_files() {
     print_header "Phase 4: Environment Files"
-    
+
     # Backup existing files
     if [ -f .env ] || [ -f ray_compute/.env ] || [ -f mlflow-server/.env ]; then
         print_section "Backing Up Existing Configuration"
         mkdir -p "$BACKUP_DIR"
         local timestamp=$(date +%Y%m%d_%H%M%S)
-        
+
         [ -f .env ] && cp .env "$BACKUP_DIR/.env.backup.$timestamp" && \
             check_pass "Backed up .env"
         [ -f ray_compute/.env ] && cp ray_compute/.env "$BACKUP_DIR/ray_.env.backup.$timestamp" && \
@@ -606,14 +606,14 @@ setup_env_files() {
         [ -f mlflow-server/.env ] && cp mlflow-server/.env "$BACKUP_DIR/mlflow_.env.backup.$timestamp" && \
             check_pass "Backed up mlflow-server/.env"
     fi
-    
+
     # Create from examples
     print_section "Creating Environment Files"
     cp .env.example .env
     cp ray_compute/.env.example ray_compute/.env
     cp mlflow-server/.env.example mlflow-server/.env
     check_pass "Environment files created from templates"
-    
+
     # Update main .env
     print_section "Configuring Main Environment"
     update_env_var ".env" "AUTHENTIK_SECRET_KEY" "$AUTHENTIK_SECRET"
@@ -623,7 +623,7 @@ setup_env_files() {
     update_env_var ".env" "SHARED_DB_PASSWORD" "$SHARED_DB_PASSWORD"
     update_env_var ".env" "TAILSCALE_IP" "$TAILSCALE_IP"
     check_pass "Main .env configured"
-    
+
     # Update ray_compute/.env
     update_env_var "ray_compute/.env" "POSTGRES_PASSWORD" "$RAY_DB_PASSWORD"
     update_env_var "ray_compute/.env" "AUTHENTIK_SECRET_KEY" "$AUTHENTIK_SECRET"
@@ -632,7 +632,7 @@ setup_env_files() {
     update_env_var "ray_compute/.env" "API_SECRET_KEY" "$API_SECRET"
     update_env_var "ray_compute/.env" "TAILSCALE_IP" "$TAILSCALE_IP"
     check_pass "Ray Compute .env configured"
-    
+
     # Update mlflow-server/.env
     update_env_var "mlflow-server/.env" "DB_PASSWORD" "$MLFLOW_DB_PASSWORD"
     update_env_var "mlflow-server/.env" "SERVER_LOCAL_IP" "$LOCAL_IP"
@@ -649,7 +649,7 @@ setup_env_files() {
 
 setup_secret_files() {
     print_header "Phase 5: Secret Files"
-    
+
     # Main secrets directory
     print_section "Main Secrets"
     mkdir -p secrets
@@ -661,7 +661,7 @@ setup_secret_files() {
     echo "$RAY_DB_PASSWORD" > secrets/ray_db_password.txt
     chmod 600 secrets/*
     check_pass "Main secret files created (7 files)"
-    
+
     # MLflow secrets
     print_section "MLflow Secrets"
     mkdir -p mlflow-server/secrets
@@ -669,14 +669,14 @@ setup_secret_files() {
     echo "$GRAFANA_PASSWORD" > mlflow-server/secrets/grafana_password.txt
     chmod 600 mlflow-server/secrets/*
     check_pass "MLflow secret files created (2 files)"
-    
+
     # Provision Grafana dashboards
     print_section "Grafana Dashboards"
     if [ -f "monitoring/grafana/provision_dashboards.sh" ]; then
         echo "Provisioning Grafana dashboards..."
         sudo bash monitoring/grafana/provision_dashboards.sh >/dev/null 2>&1
         check_pass "Grafana dashboards provisioned"
-        
+
         # Ensure container metrics dashboard exists with proper structure
         if [ ! -f "monitoring/grafana/dashboards/platform/container-metrics.json" ]; then
             echo "Creating enhanced container metrics dashboard..."
@@ -685,7 +685,7 @@ setup_secret_files() {
     else
         check_warn "Dashboard provisioning script not found"
     fi
-    
+
     # Save credentials file
     print_section "Credentials File"
     cat > "$CREDENTIALS_FILE" << EOF
@@ -759,7 +759,7 @@ SECURITY NOTES
 
 Backup location: ${BACKUP_DIR}/
 EOF
-    
+
     chmod 600 "$CREDENTIALS_FILE"
     check_pass "Credentials saved to: $CREDENTIALS_FILE"
 }
@@ -770,92 +770,92 @@ EOF
 
 setup_directories() {
     print_header "Phase 5.5: Directory Structure and Permissions"
-    
+
     # ===== INFRASTRUCTURE DIRECTORIES =====
     print_section "Infrastructure Directories"
-    
+
     # PostgreSQL
     mkdir -p postgres
     mkdir -p backups/postgres
     chmod 755 postgres backups/postgres
-    
+
     # Monitoring - Prometheus
     mkdir -p monitoring/prometheus/alerts
     mkdir -p logs/prometheus
     chmod 755 monitoring/prometheus logs/prometheus
-    
+
     # Monitoring - Grafana (UID 472)
     mkdir -p monitoring/grafana/datasources
     mkdir -p monitoring/grafana/dashboards/{platform,mlflow,ray}
     mkdir -p logs/grafana
     sudo chown -R 472:472 monitoring/grafana logs/grafana 2>/dev/null || true
     chmod 755 monitoring/grafana
-    
+
     # Traefik
     mkdir -p logs/traefik
     chmod 755 logs/traefik
-    
+
     # Authentik
     mkdir -p logs/authentik
     chmod 755 logs/authentik
-    
+
     check_pass "Infrastructure directories created"
-    
+
     # ===== MLFLOW DIRECTORIES =====
     print_section "MLflow Directories"
-    
+
     # MLflow server directories (UID 1000 - mlflow user)
     mkdir -p mlflow-server/logs/mlflow
     mkdir -p mlflow-server/docker/mlflow/{plugins,scripts}
     mkdir -p mlflow-server/docker/nginx/{conf.d,ssl}
     mkdir -p mlflow-server/config/schema
     mkdir -p mlflow-server/api
-    
+
     # Central logs directory
     mkdir -p logs/mlflow
     mkdir -p logs/nginx
-    
+
     # Copy metrics exporter to scripts directory if not already there
     if [ -f "mlflow-server/docker/mlflow/scripts/metrics_exporter.py" ] && [ ! -f "mlflow-server/scripts/metrics_exporter.py" ]; then
         cp mlflow-server/docker/mlflow/scripts/metrics_exporter.py mlflow-server/scripts/
     fi
-    
+
     # Set ownership to mlflow user (UID 1000)
     sudo chown -R 1000:1000 mlflow-server/logs logs/mlflow logs/nginx 2>/dev/null || true
     chmod 755 mlflow-server/docker mlflow-server/config
-    
+
     check_pass "MLflow directories created with correct permissions"
-    
+
     # ===== RAY DIRECTORIES =====
     print_section "Ray Directories"
-    
+
     # Ray compute directories (UID 1000 - ray user)
     mkdir -p ray_compute/logs
     mkdir -p ray_compute/data/{ray,job_workspaces,artifacts}
     mkdir -p ray_compute/docker
-    
+
     # Central logs directory
     mkdir -p logs/ray
-    
+
     # Set ownership to ray user (UID 1000)
     sudo chown -R 1000:1000 ray_compute/logs ray_compute/data logs/ray 2>/dev/null || true
     chmod 755 ray_compute/docker ray_compute/data
-    
+
     check_pass "Ray directories created with correct permissions"
-    
+
     # ===== BACKUP DIRECTORIES =====
     print_section "Backup Directories"
-    
+
     mkdir -p backups/{platform,mlflow,ray,monitoring}
     chmod 755 backups backups/*
-    
+
     check_pass "Backup directories created"
-    
+
     # ===== VERIFY CRITICAL PATHS =====
     print_section "Path Verification"
-    
+
     local missing_paths=0
-    
+
     # Check critical directories exist
     for dir in secrets postgres monitoring/prometheus monitoring/grafana mlflow-server/docker ray_compute/data logs backups; do
         if [ ! -d "$dir" ]; then
@@ -863,7 +863,7 @@ setup_directories() {
             ((missing_paths++))
         fi
     done
-    
+
     if [ $missing_paths -eq 0 ]; then
         check_pass "All critical paths verified"
     else
@@ -878,9 +878,9 @@ setup_directories() {
 
 preflight_checks() {
     print_header "Phase 6: Pre-Flight Validation"
-    
+
     local validation_errors=0
-    
+
     # Docker config validation (main compose with all includes)
     print_section "Docker Configuration"
     if sudo docker compose config >/dev/null 2>&1; then
@@ -892,7 +892,7 @@ preflight_checks() {
         sudo docker compose config 2>&1 | head -10
         ((validation_errors++))
     fi
-    
+
     # Secret files validation (zero-knowledge)
     print_section "Secret Files (Zero-Knowledge Validation)"
     local secret_files=(
@@ -904,7 +904,7 @@ preflight_checks() {
         "mlflow-server/secrets/db_password.txt:16"
         "mlflow-server/secrets/grafana_password.txt:12"
     )
-    
+
     for entry in "${secret_files[@]}"; do
         IFS=':' read -r file min_len <<< "$entry"
         if validate_secret "$file" "$min_len"; then
@@ -914,7 +914,7 @@ preflight_checks() {
             ((validation_errors++))
         fi
     done
-    
+
     # GPU in Docker
     print_section "GPU Access"
     if groups | grep -q docker || [ "$EUID" -eq 0 ]; then
@@ -931,7 +931,7 @@ preflight_checks() {
             ((validation_errors++))
         fi
     fi
-    
+
     # Port availability
     print_section "Port Availability"
     local ports=(80 443 8090 5432 5433 6379 9000)
@@ -944,7 +944,7 @@ preflight_checks() {
             check_pass "Port $port available"
         fi
     done
-    
+
     if [ $port_conflicts -gt 0 ]; then
         echo ""
         echo -e "${YELLOW}Some ports are in use. This may cause conflicts.${NC}"
@@ -965,7 +965,7 @@ preflight_checks() {
             fi
         fi
     fi
-    
+
     # Summary
     print_section "Validation Summary"
     if [ $validation_errors -eq 0 ]; then
@@ -975,10 +975,10 @@ preflight_checks() {
         echo -e "${RED}✗ ${validation_errors} validation error(s) found${NC}"
         echo ""
         echo "Validation errors detected:"
-        
+
         # List specific errors found
         local error_count=0
-        
+
         # Check secret files again to report which ones failed
         local secret_files=(
             "secrets/shared_db_password.txt:20"
@@ -989,7 +989,7 @@ preflight_checks() {
             "mlflow-server/secrets/db_password.txt:20"
             "mlflow-server/secrets/grafana_password.txt:12"
         )
-        
+
         for entry in "${secret_files[@]}"; do
             IFS=':' read -r file min_len <<< "$entry"
             if ! validate_secret "$file" "$min_len"; then
@@ -997,26 +997,26 @@ preflight_checks() {
                 ((error_count++))
             fi
         done
-        
+
         # Check Docker compose config
         if ! sudo docker compose config >/dev/null 2>&1; then
             echo "  • Docker compose configuration has errors"
             ((error_count++))
         fi
-        
+
         # Check GPU access
         if ! sudo docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu20.04 nvidia-smi &>/dev/null 2>&1; then
             echo "  • GPU not accessible in Docker"
             ((error_count++))
         fi
-        
+
         echo ""
         echo -e "${YELLOW}To fix:${NC}"
         echo "  1. Ensure all secret files exist and have valid content"
         echo "  2. Run Phase 5 again to regenerate secrets: setup_secret_files"
         echo "  3. Check Docker compose syntax if configuration failed"
         echo ""
-        
+
         if prompt_yn "Continue anyway?" "n"; then
             echo -e "${YELLOW}Continuing with warnings...${NC}"
             return 0
@@ -1033,70 +1033,70 @@ preflight_checks() {
 
 start_services() {
     print_header "Phase 7: Starting Services"
-    
+
     # Comprehensive cleanup
     print_section "Cleanup"
     echo "Stopping all running services and removing orphaned containers..."
-    
+
     # Stop using unified compose (handles all included services)
     sudo docker compose down --remove-orphans 2>&1 | grep -v "WARNING:" | grep -v "Found orphan" || true
-    
+
     # Force stop any remaining containers from this project
     sudo docker ps -a --filter "label=com.docker.compose.project=sfml-platform" -q | xargs -r sudo docker rm -f 2>/dev/null || true
-    
+
     # Remove existing ml-platform network if it exists (to avoid label conflicts)
     if sudo docker network inspect ml-platform >/dev/null 2>&1; then
         echo "Removing existing ml-platform network..."
         sudo docker network rm ml-platform 2>/dev/null || true
     fi
-    
+
     check_pass "Clean slate ready"
-    
+
     # Start infrastructure (shared services) using unified compose
     print_section "Phase 1: Shared Infrastructure"
     echo "Starting: Traefik, Postgres, Redis, Authentik, System Monitoring..."
     sudo docker compose up -d --remove-orphans traefik shared-postgres ml-platform-redis \
         authentik-db authentik-redis authentik-server authentik-worker \
         global-prometheus unified-grafana node-exporter cadvisor 2>&1 | tail -15
-    
+
     echo "Waiting for infrastructure health checks (45 seconds)..."
     sleep 45
-    
+
     # Synchronize database passwords with current secrets
     print_section "Database Password Synchronization"
     echo "Updating database user passwords to match current secrets..."
-    
+
     SHARED_DB_PASS=$(cat secrets/shared_db_password.txt)
     AUTHENTIK_DB_PASS=$(cat secrets/authentik_db_password.txt)
-    
+
     # Update shared-postgres users
     sudo docker exec shared-postgres psql -U postgres -c "ALTER USER mlflow WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "MLflow user password synchronized" || check_warn "MLflow user password sync skipped"
-    
+
     sudo docker exec shared-postgres psql -U postgres -c "ALTER USER ray_compute WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Ray user password synchronized" || check_warn "Ray user password sync skipped"
-    
+
     sudo docker exec shared-postgres psql -U postgres -c "ALTER USER inference WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Inference user password synchronized" || check_warn "Inference user password sync skipped"
-    
+
     # Update authentik-db user (separate database instance)
     sudo docker exec authentik-postgres psql -U postgres -c "ALTER USER authentik WITH PASSWORD '$AUTHENTIK_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Authentik database user password synchronized" || check_warn "Authentik DB password sync skipped"
-    
+
     check_pass "Shared infrastructure started"
-    
+
     # Start MLflow services using unified compose
     print_section "Phase 2: MLflow Services"
     echo "Starting: MLflow Server, Nginx, API, Prometheus..."
     sudo docker compose up -d --remove-orphans mlflow-server mlflow-nginx mlflow-api mlflow-prometheus 2>&1 | tail -10
-    
+
     echo "Waiting for MLflow services (60 seconds)..."
     sleep 60
     check_pass "MLflow services started"
-    
+
     # Initialize MLflow with standard experiments and registries
     print_section "MLflow Platform Initialization"
-    
+
     if [ "$PRESERVE_DATA" = true ]; then
         echo -e "${CYAN}Preserving existing MLflow data - skipping initialization${NC}"
         echo "Existing experiments, models, and datasets will remain intact"
@@ -1109,60 +1109,60 @@ start_services() {
             check_warn "MLflow initialization had warnings (may already be initialized)"
         fi
     fi
-    
+
     # Start Ray services using unified compose
     print_section "Phase 3: Ray Compute Services"
     echo "Starting: Ray Head, Ray API, Prometheus..."
     sudo docker compose up -d --remove-orphans ray-head ray-compute-api ray-prometheus 2>&1 | tail -10
-    
+
     echo "Waiting for Ray services (45 seconds)..."
     sleep 45
     check_pass "Ray services started"
-    
-    
+
+
     # Start GPU monitoring
     print_section "Phase 3.5: GPU Monitoring"
     echo "Starting: DCGM Exporter (NVIDIA GPU metrics)..."
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
         sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d 2>&1 | tail -5
-        
+
         # Wait for DCGM to start
         sleep 5
-        
+
         # Verify GPU monitoring dashboard exists
         if [ ! -f "monitoring/grafana/dashboards/platform/gpu-monitoring.json" ]; then
             echo "Creating GPU monitoring dashboard..."
             # Dashboard will be created if missing
         fi
-        
+
         check_pass "GPU monitoring started"
     else
         check_warn "DCGM Exporter configuration not found"
     fi
-    
+
     # Start global monitoring (depends on service Prometheus instances)
     print_section "Phase 4: Global Monitoring"
     echo "Starting: Global Prometheus (federation), Unified Grafana..."
     # Note: Don't use --remove-orphans here as it would remove Ray/MLflow containers
     sudo docker compose -f docker-compose.infra.yml up -d global-prometheus unified-grafana 2>&1 | tail -10
-    
+
     echo "Waiting for global monitoring (20 seconds)..."
     sleep 20
-    
+
     # Synchronize service passwords
     print_section "Service Password Configuration"
-    
+
     # Grafana admin password
     echo "Configuring Grafana admin password..."
     GRAFANA_PASS=$(cat secrets/grafana_password.txt)
     sleep 5  # Wait for Grafana to be fully ready
-    
+
     if sudo docker exec unified-grafana grafana-cli admin reset-admin-password "$GRAFANA_PASS" >/dev/null 2>&1; then
         check_pass "Grafana admin password configured"
     else
         check_warn "Grafana password may need manual reset"
     fi
-    
+
     # Verify Authentik bootstrap password is set
     echo "Verifying Authentik bootstrap configuration..."
     if sudo docker exec authentik-server env | grep -q "AUTHENTIK_BOOTSTRAP_PASSWORD"; then
@@ -1172,7 +1172,7 @@ start_services() {
     else
         check_warn "Authentik bootstrap password may not be configured"
     fi
-    
+
     check_pass "Global monitoring started"
 }
 
@@ -1182,23 +1182,23 @@ start_services() {
 
 monitor_health() {
     print_header "Phase 8: Health Monitoring"
-    
+
     echo "Checking service health..."
     echo ""
-    
+
     # Get container status
     sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "ml-platform|mlflow|ray|authentik" || true
-    
+
     echo ""
     print_section "Service Health Checks"
-    
+
     # Check critical services
     local services=(
         "ml-platform-traefik:http://localhost:8090/ping"
         "mlflow-server:http://localhost/mlflow/"
         "authentik-server:http://localhost:9000/"
     )
-    
+
     for entry in "${services[@]}"; do
         IFS=':' read -r name url <<< "$entry"
         if curl -sf "$url" >/dev/null 2>&1; then
@@ -1207,44 +1207,44 @@ monitor_health() {
             check_warn "$name not responding (may still be starting)"
         fi
     done
-    
+
     echo ""
     print_section "Password Synchronization Verification"
     echo "Verifying all passwords are properly set..."
-    
+
     # Verify Grafana password
     if sudo docker exec unified-grafana grafana-cli admin reset-admin-password "$(cat secrets/grafana_password.txt)" >/dev/null 2>&1; then
         check_pass "Grafana password verified and synchronized"
     else
         check_warn "Grafana password verification failed"
     fi
-    
+
     # Verify Authentik bootstrap password is in environment
     if sudo docker exec authentik-server env | grep -q "AUTHENTIK_BOOTSTRAP_PASSWORD"; then
         check_pass "Authentik bootstrap password configured in container"
     else
         check_warn "Authentik bootstrap password not found in environment"
     fi
-    
+
     # Verify database passwords (check if connections work)
     if sudo docker exec shared-postgres psql -U mlflow -d mlflow_db -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "MLflow database password working"
     else
         check_warn "MLflow database password may need verification"
     fi
-    
+
     if sudo docker exec shared-postgres psql -U ray_compute -d ray_compute -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "Ray database password working"
     else
         check_warn "Ray database password may need verification"
     fi
-    
+
     if sudo docker exec authentik-postgres psql -U authentik -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "Authentik database password working"
     else
         check_warn "Authentik database password may need verification"
     fi
-    
+
     # Update container metrics dashboard with current container IDs
     print_section "Container Metrics Dashboard Update"
     if [ -f "scripts/update_container_dashboard.sh" ]; then
@@ -1260,7 +1260,7 @@ monitor_health() {
     else
         check_warn "Container dashboard update script not found"
     fi
-    
+
     echo ""
     echo -e "${CYAN}Note: Some services may take 2-3 minutes to fully start.${NC}"
     echo -e "${CYAN}Monitor with: sudo docker ps${NC}"
@@ -1273,16 +1273,16 @@ monitor_health() {
 
 print_summary() {
     print_header "Setup Complete!"
-    
+
     echo -e "${GREEN}Platform is starting up!${NC}"
     echo ""
-    
+
     echo "📊 Setup Statistics:"
     echo "  • Errors: $ERRORS"
     echo "  • Warnings: $WARNINGS"
     echo "  • Fixed: $FIXED"
     echo ""
-    
+
     echo "🚀 Service Status:"
     local healthy=0
     local total=0
@@ -1306,7 +1306,7 @@ print_summary() {
     done
     echo "  $healthy/$total core services running"
     echo ""
-    
+
     echo "🌐 Access Points (wait 2-3 minutes for full startup):"
     echo "  • MLflow UI:              http://${TAILSCALE_IP}/mlflow/"
     echo "  • Ray Dashboard:          http://${TAILSCALE_IP}/ray/"
@@ -1317,13 +1317,13 @@ print_summary() {
     echo "  • Traefik Dashboard:      http://${TAILSCALE_IP}:8090/"
     echo "  • Authentik (OAuth/SSO):  http://${TAILSCALE_IP}:9000/"
     echo ""
-    
+
     echo "📝 Credentials:"
     echo "  • Saved to: $CREDENTIALS_FILE"
     echo "  • Grafana:   admin / ${GRAFANA_PASSWORD}"
     echo "  • Authentik: akadmin / ${AUTHENTIK_BOOTSTRAP_PASSWORD}"
     echo ""
-    
+
     echo "🛠️  Useful Commands:"
     echo "  • Check status:      sudo docker ps"
     echo "  • View logs:         sudo docker logs <container-name>"
@@ -1331,7 +1331,7 @@ print_summary() {
     echo "  • Stop all:          sudo bash stop_all.sh"
     echo "  • Restart:           sudo bash $(basename $0)"
     echo ""
-    
+
     echo "🔒 Security Configuration:"
     echo "  • Ray GPU Access: Secure device passthrough (no privileged mode)"
     echo "    - Jobs inherit GPU access via Ray head container"
@@ -1341,7 +1341,7 @@ print_summary() {
     echo "  • All passwords synchronized to running services"
     echo "  • Database users verified and accessible"
     echo ""
-    
+
     echo "📋 Features Enabled:"
     echo "  • MLflow Schema Validation:  Enforces experiment metadata standards"
     echo "  • Artifact Compression:      Auto-compression for artifacts >10MB"
@@ -1352,7 +1352,7 @@ print_summary() {
     echo "  • Ray GPU Access:            Secure GPU passthrough for compute jobs"
     echo "    └─ Jobs inherit GPU access without privileged mode"
     echo ""
-    
+
     echo "💾 Data Persistence:"
     if [ "$PRESERVE_DATA" = true ]; then
         echo "  • Existing data PRESERVED - your experiments, models, and artifacts are intact"
@@ -1365,7 +1365,7 @@ print_summary() {
     echo "    - /mlflow/artifacts: Model artifacts and files"
     echo "    - unified-grafana-data: Grafana dashboards"
     echo ""
-    
+
     echo -e "${YELLOW}⚠️  Remember to:${NC}"
     echo "  1. Backup $CREDENTIALS_FILE to a secure location"
     echo "  2. Change Authentik password after first login"
@@ -1373,7 +1373,7 @@ print_summary() {
     echo "  4. MLflow schema validation requires proper tags on experiments"
     echo "  5. Regular backups: Data in volumes persists until explicitly deleted"
     echo ""
-    
+
     log "Setup completed successfully"
 }
 
@@ -1392,19 +1392,19 @@ main() {
     echo -e "${BLUE}${BOLD}║                                                        ║${NC}"
     echo -e "${BLUE}${BOLD}╚════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    
+
     log "=== ML Platform Setup Started ==="
-    
+
     # Check if running as root
     if [ "$EUID" -eq 0 ]; then
         echo -e "${RED}⚠️  Do not run this script as root (sudo)${NC}"
         echo "The script will request sudo when needed."
         exit 1
     fi
-    
+
     # Create log file
     mkdir -p "$(dirname "$LOG_FILE")"
-    
+
     # Run phases
     check_dependencies
     check_existing_data
@@ -1417,7 +1417,7 @@ main() {
     start_services
     monitor_health
     print_summary
-    
+
     log "=== ML Platform Setup Completed ==="
 }
 

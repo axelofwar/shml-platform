@@ -52,7 +52,7 @@
 ### Rules for Documentation Changes
 
 1. **ALWAYS update existing docs** - Never create new files without approval
-   
+
 2. **Check these files first:**
    - Setup/Status → README.md
    - System design → ARCHITECTURE.md  

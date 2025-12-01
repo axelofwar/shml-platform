@@ -24,9 +24,9 @@ test_service() {
     local name="$1"
     local url="$2"
     local expected="$3"
-    
+
     code=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>&1)
-    
+
     if [[ "$code" == "$expected" ]] || [[ "$expected" == "ANY" && "$code" =~ ^(200|302|301)$ ]]; then
         echo -e "${GREEN}✓${NC} $name → HTTP $code"
         return 0
@@ -39,7 +39,7 @@ test_service() {
 # Test container status
 test_container() {
     local name="$1"
-    
+
     if docker ps --format "{{.Names}}" | grep -q "^${name}$"; then
         status=$(docker ps --format "{{.Names}}: {{.Status}}" | grep "^${name}:")
         echo -e "${GREEN}✓${NC} $status"
@@ -132,7 +132,7 @@ else
 mlflow_grafana_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost/grafana/login \
   -H "Content-Type: application/json" \
   -d "{\"user\":\"admin\",\"password\":\"$PASSWORD\"}")
-  
+
 if [ "$mlflow_grafana_code" == "200" ]; then
     echo -e "${GREEN}✓${NC} MLflow Grafana login (admin / $PASSWORD)"
 else
@@ -143,7 +143,7 @@ fi
 ray_grafana_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost/ray-grafana/login \
   -H "Content-Type: application/json" \
   -d "{\"user\":\"admin\",\"password\":\"$PASSWORD\"}")
-  
+
 if [ "$ray_grafana_code" == "200" ]; then
     echo -e "${GREEN}✓${NC} Ray Grafana login (admin / $PASSWORD)"
 else

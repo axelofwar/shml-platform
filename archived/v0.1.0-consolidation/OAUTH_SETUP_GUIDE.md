@@ -184,17 +184,17 @@ export default function DashboardPage() {
       router.push('/login');
     },
   });
-  
+
   // CRITICAL: Prevent hydration mismatch
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
-  
+
   if (!mounted || status === "loading") {
     return <div>Loading...</div>;
   }
-  
+
   return <div>Welcome {session.user?.name}!</div>;
 }
 ```

@@ -31,7 +31,7 @@ echo ""
 if [ ! -f .env ]; then
     echo "Creating .env file from template..."
     cp .env.example .env
-    
+
     # Generate random passwords
     DB_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
     AUTHENTIK_SECRET=$(openssl rand -base64 50 | tr -dc 'a-zA-Z0-9' | head -c 50)
@@ -39,7 +39,7 @@ if [ ! -f .env ]; then
     API_SECRET=$(openssl rand -base64 50 | tr -dc 'a-zA-Z0-9' | head -c 50)
     GRAFANA_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
     NTFY_ID=$(openssl rand -hex 8)
-    
+
     # Update .env
     sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$DB_PASSWORD/" .env
     sed -i "s/AUTHENTIK_SECRET_KEY=.*/AUTHENTIK_SECRET_KEY=$AUTHENTIK_SECRET/" .env
@@ -49,7 +49,7 @@ if [ ! -f .env ]; then
     sed -i "s/NTFY_ADMIN_TOPIC=.*/NTFY_ADMIN_TOPIC=ray-compute-admin-$NTFY_ID/" .env
     sed -i "s/NTFY_USER_TOPIC=.*/NTFY_USER_TOPIC=ray-compute-jobs-$NTFY_ID/" .env
     sed -i "s/NTFY_SYSTEM_TOPIC=.*/NTFY_SYSTEM_TOPIC=ray-compute-system-$NTFY_ID/" .env
-    
+
     echo "✅ Generated .env with random passwords"
     echo "⚠️  IMPORTANT: Save these credentials!"
     echo ""

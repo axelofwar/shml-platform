@@ -14,7 +14,7 @@ providers:
     options:
       path: /var/lib/grafana/dashboards/platform
       foldersFromFilesStructure: true
-  
+
   - name: 'MLflow Dashboards'
     orgId: 1
     folder: 'MLflow'
@@ -25,7 +25,7 @@ providers:
     options:
       path: /var/lib/grafana/dashboards/mlflow
       foldersFromFilesStructure: true
-  
+
   - name: 'Ray Dashboards'
     orgId: 1
     folder: 'Ray'

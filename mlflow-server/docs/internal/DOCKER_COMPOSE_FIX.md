@@ -61,7 +61,7 @@ docker-compose up -d
    # Install Docker Compose v2
    sudo apt-get update
    sudo apt-get install docker-compose-plugin
-   
+
    # Use with: docker compose (not docker-compose)
    ```
 

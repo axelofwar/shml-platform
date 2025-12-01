@@ -142,14 +142,14 @@ X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target)
 with mlflow.start_run(run_name="rf-model"):
     model = RandomForestClassifier(n_estimators=100, max_depth=5)
     model.fit(X_train, y_train)
-    
+
     accuracy = model.score(X_test, y_test)
-    
+
     mlflow.log_param("n_estimators", 100)
     mlflow.log_param("max_depth", 5)
     mlflow.log_metric("accuracy", accuracy)
     mlflow.sklearn.log_model(model, "model")
-    
+
     print(f"✅ Logged with accuracy: {accuracy:.4f}")
 ```
 
@@ -234,22 +234,22 @@ def train_on_gpu(epochs=10):
     # Set MLflow tracking (use internal DNS)
     mlflow.set_tracking_uri("http://mlflow-server:5000")
     mlflow.set_experiment("gpu-training")
-    
+
     with mlflow.start_run():
         # Check GPU availability
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {device}")
-        
+
         if torch.cuda.is_available():
             print(f"GPU: {torch.cuda.get_device_name(0)}")
             mlflow.log_param("gpu", torch.cuda.get_device_name(0))
-        
+
         # Your training code here
         model = nn.Linear(10, 1).to(device)
-        
+
         mlflow.log_param("epochs", epochs)
         mlflow.log_param("device", str(device))
-        
+
         print("✅ Training complete")
         return "Success"
 

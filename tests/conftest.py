@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures for ML Platform tests
 """
+
 import pytest
 import os
 import tempfile
@@ -10,7 +11,7 @@ from typing import Dict, List
 TEST_HOSTS = {
     "local": "http://localhost",
     "lan": "http://localhost",
-    "vpn": "http://${TAILSCALE_IP}"
+    "vpn": "http://${TAILSCALE_IP}",
 }
 
 # Inference stack endpoints
@@ -21,47 +22,52 @@ INFERENCE_ENDPOINTS = {
     "llm_completions": "/api/llm/v1/chat/completions",
     "image_generate": "/api/image/v1/generate",
     "queue_status": "/inference/queue/status",
-    "conversations": "/inference/conversations"
+    "conversations": "/inference/conversations",
 }
 
 # Set MLflow artifact directory to a temp directory accessible to tests
 # This prevents permission issues when trying to write to /mlflow
-os.environ.setdefault("MLFLOW_ARTIFACT_ROOT", tempfile.gettempdir() + "/mlflow-test-artifacts")
+os.environ.setdefault(
+    "MLFLOW_ARTIFACT_ROOT", tempfile.gettempdir() + "/mlflow-test-artifacts"
+)
 os.makedirs(os.environ["MLFLOW_ARTIFACT_ROOT"], exist_ok=True)
+
 
 @pytest.fixture(scope="session")
 def test_hosts() -> Dict[str, str]:
     """Provide test host URLs for local, LAN, and VPN access"""
     return TEST_HOSTS
 
+
 @pytest.fixture(scope="session")
 def api_base_url() -> str:
     """Get base API URL from environment or use default LAN"""
     return os.getenv("ML_PLATFORM_URL", TEST_HOSTS["lan"])
+
 
 @pytest.fixture(scope="session")
 def mlflow_tracking_uri(api_base_url: str) -> str:
     """Get MLflow tracking URI"""
     return f"{api_base_url}/mlflow"
 
+
 @pytest.fixture(scope="session")
 def api_v1_url(api_base_url: str) -> str:
     """Get API v1 base URL"""
     return f"{api_base_url}/api/v1"
+
 
 @pytest.fixture(scope="session")
 def test_experiment_name() -> str:
     """Test experiment name"""
     return "test-schema-validation"
 
+
 @pytest.fixture(scope="session")
 def test_tags() -> Dict[str, str]:
     """Standard test tags for run creation"""
-    return {
-        "test": "true",
-        "environment": "testing",
-        "developer": "automated-test"
-    }
+    return {"test": "true", "environment": "testing", "developer": "automated-test"}
+
 
 @pytest.fixture(scope="session")
 def incomplete_tags() -> Dict[str, str]:
@@ -75,6 +81,7 @@ def incomplete_tags() -> Dict[str, str]:
 # ============================================================================
 # Inference Stack Fixtures
 # ============================================================================
+
 
 @pytest.fixture(scope="session")
 def inference_base_url() -> str:
@@ -113,10 +120,10 @@ def sample_chat_request() -> Dict:
         "model": "qwen3-vl-8b",
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Hello, can you help me plan a project?"}
+            {"role": "user", "content": "Hello, can you help me plan a project?"},
         ],
         "max_tokens": 256,
-        "temperature": 0.7
+        "temperature": 0.7,
     }
 
 
@@ -129,7 +136,7 @@ def sample_image_request() -> Dict:
         "width": 1024,
         "height": 1024,
         "num_inference_steps": 8,
-        "guidance_scale": 1.0
+        "guidance_scale": 1.0,
     }
 
 
@@ -137,6 +144,7 @@ def sample_image_request() -> Dict:
 def mock_chat_response() -> Dict:
     """Mock chat completion response for testing without GPU"""
     import time
+
     return {
         "id": "chatcmpl-mock-123",
         "object": "chat.completion",
@@ -147,16 +155,12 @@ def mock_chat_response() -> Dict:
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": "I'd be happy to help you plan your project! Let's start by understanding the scope and goals."
+                    "content": "I'd be happy to help you plan your project! Let's start by understanding the scope and goals.",
                 },
-                "finish_reason": "stop"
+                "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": 25,
-            "completion_tokens": 20,
-            "total_tokens": 45
-        }
+        "usage": {"prompt_tokens": 25, "completion_tokens": 20, "total_tokens": 45},
     }
 
 
@@ -165,23 +169,18 @@ def mock_image_response() -> Dict:
     """Mock image generation response for testing without GPU"""
     import time
     import base64
+
     # 1x1 pixel transparent PNG
     mock_image = base64.b64encode(
-        b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
-        b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00'
-        b'\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+        b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
     ).decode()
-    
+
     return {
         "id": "img-mock-123",
         "created": int(time.time()),
-        "data": [
-            {
-                "url": None,
-                "b64_json": mock_image,
-                "revised_prompt": None
-            }
-        ]
+        "data": [{"url": None, "b64_json": mock_image, "revised_prompt": None}],
     }
 
 
@@ -196,7 +195,7 @@ def mock_health_response() -> Dict:
         "gpu_memory_used_mb": 6500,
         "gpu_memory_total_mb": 8192,
         "uptime_seconds": 3600,
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
 
 
@@ -207,14 +206,15 @@ def pytest_addoption(parser):
         action="store",
         default="lan",
         choices=["local", "lan", "vpn", "all"],
-        help="Which host to test against: local, lan, vpn, or all"
+        help="Which host to test against: local, lan, vpn, or all",
     )
     parser.addoption(
         "--skip-slow",
         action="store_true",
         default=False,
-        help="Skip slow integration tests"
+        help="Skip slow integration tests",
     )
+
 
 def pytest_configure(config):
     """Register custom markers"""
@@ -227,6 +227,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "inference: test inference stack")
     config.addinivalue_line("markers", "gpu: test requires GPU")
 
+
 def pytest_collection_modifyitems(config, items):
     """Modify test collection based on options"""
     if config.getoption("--skip-slow"):
@@ -234,7 +235,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-    
+
     # Filter by host if specified
     host_option = config.getoption("--host")
     if host_option != "all":

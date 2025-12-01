@@ -28,7 +28,7 @@ scrape_configs:
       - targets: ['mlflow-prometheus:9090']
         labels:
           source: 'mlflow-prometheus'
-  
+
   # Ray Prometheus Federation
   - job_name: 'federate-ray'
     scrape_interval: 60s
@@ -46,38 +46,38 @@ scrape_configs:
       - targets: ['ray-prometheus:9090']
         labels:
           source: 'ray-prometheus'
-  
+
   # Platform Infrastructure Metrics (direct scrape)
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
         labels:
           component: 'node-exporter'
-  
+
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
         labels:
           component: 'cadvisor'
-  
+
   - job_name: 'traefik'
     static_configs:
       - targets: ['traefik:8080']
         labels:
           component: 'traefik'
-  
+
   - job_name: 'redis'
     static_configs:
       - targets: ['ml-platform-redis:6379']
         labels:
           component: 'redis'
-  
+
   - job_name: 'postgres'
     static_configs:
       - targets: ['shared-postgres:5432']
         labels:
           component: 'postgres'
-  
+
   # DCGM Exporter - NVIDIA GPU Metrics
   - job_name: 'dcgm-exporter'
     static_configs:
@@ -85,7 +85,7 @@ scrape_configs:
         labels:
           component: 'dcgm-exporter'
           instance: 'ml-platform-gpus'
-  
+
   - job_name: 'authentik'
     static_configs:
       - targets: ['authentik-server:9000']

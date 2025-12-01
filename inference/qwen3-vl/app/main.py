@@ -1,4 +1,5 @@
 """Qwen3-VL FastAPI service - OpenAI-compatible LLM API."""
+
 import uuid
 import time
 import logging
@@ -9,9 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import MODEL_ID, QUANTIZATION, DEVICE, HOST, PORT
 from .schemas import (
-    ChatCompletionRequest, ChatCompletionResponse,
-    ChatCompletionChoice, Message, Usage,
-    HealthResponse, ModelStatusResponse
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionChoice,
+    Message,
+    Usage,
+    HealthResponse,
+    ModelStatusResponse,
 )
 from .model import model_instance
 
@@ -53,7 +58,7 @@ async def health():
     status = "healthy" if model_instance.loaded else "unloaded"
     if model_instance.loading:
         status = "loading"
-    
+
     return HealthResponse(
         status=status,
         model=MODEL_ID,
@@ -88,7 +93,7 @@ async def chat_completions(request: ChatCompletionRequest):
             max_tokens=request.max_tokens,
             top_p=request.top_p,
         )
-        
+
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
             created=int(time.time()),
@@ -106,7 +111,7 @@ async def chat_completions(request: ChatCompletionRequest):
                 total_tokens=prompt_tokens + completion_tokens,
             ),
         )
-        
+
     except Exception as e:
         logger.error(f"Chat completion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -117,10 +122,10 @@ async def load_model(background_tasks: BackgroundTasks):
     """Manually trigger model loading."""
     if model_instance.loaded:
         return {"status": "already_loaded"}
-    
+
     if model_instance.loading:
         return {"status": "loading"}
-    
+
     background_tasks.add_task(model_instance.load)
     return {"status": "loading_started"}
 
@@ -130,11 +135,12 @@ async def unload_model():
     """Manually trigger model unloading (frees GPU memory)."""
     if not model_instance.loaded:
         return {"status": "already_unloaded"}
-    
+
     success = model_instance.unload()
     return {"status": "unloaded" if success else "error"}
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=HOST, port=PORT)

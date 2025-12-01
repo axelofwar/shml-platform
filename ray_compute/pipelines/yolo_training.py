@@ -68,8 +68,8 @@ job_id = client.submit_job(
     mlflow_tags={
         "model": "yolov8n",
         "task": "object-detection",
-        "pipeline": "training"
-    }
+        "pipeline": "training",
+    },
 )
 
 print(f"✓ Job submitted: {job_id}")
@@ -81,7 +81,7 @@ print("\nWaiting for job to complete...")
 result = client.wait_for_job(job_id, poll_interval=10)
 print(f"\nJob status: {result['status']}")
 
-if result['status'] == 'SUCCEEDED':
+if result["status"] == "SUCCEEDED":
     print("✓ Training completed successfully!")
 else:
     print(f"✗ Training failed: {result.get('error', 'Unknown error')}")

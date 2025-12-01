@@ -15,10 +15,10 @@ test_endpoint() {
     local name="$1"
     local url="$2"
     local expected="$3"
-    
+
     echo -n "Testing $name... "
     response=$(curl -s "$url" 2>&1)
-    
+
     if echo "$response" | grep -q "$expected"; then
         echo "✓ PASS"
         ((PASSED++))
@@ -34,10 +34,10 @@ test_http_code() {
     local name="$1"
     local url="$2"
     local expected_code="$3"
-    
+
     echo -n "Testing $name... "
     http_code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-    
+
     if [ "$http_code" = "$expected_code" ]; then
         echo "✓ PASS (HTTP $http_code)"
         ((PASSED++))
@@ -52,10 +52,10 @@ test_json_post() {
     local url="$2"
     local data="$3"
     local expected="$4"
-    
+
     echo -n "Testing $name... "
     response=$(curl -s -X POST "$url" -H "Content-Type: application/json" -d "$data" 2>&1)
-    
+
     if echo "$response" | grep -q "$expected"; then
         echo "✓ PASS"
         ((PASSED++))

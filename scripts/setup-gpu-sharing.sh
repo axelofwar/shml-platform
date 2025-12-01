@@ -13,7 +13,7 @@ echo "================================================"
 echo ""
 
 # Check if running as root or with sudo
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "❌ This script requires root privileges"
     echo "Please run: sudo $0"
     exit 1

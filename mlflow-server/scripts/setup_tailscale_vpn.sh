@@ -39,7 +39,7 @@ echo "════════════════════════�
 echo ""
 
 # Check if running as root
-if [ "$EUID" -eq 0 ]; then 
+if [ "$EUID" -eq 0 ]; then
     log_error "Please run as regular user, not root. Script will prompt for sudo when needed."
     exit 1
 fi
@@ -60,7 +60,7 @@ read -p "Press Enter to continue with installation..."
 # Check if Tailscale is already installed
 if command -v tailscale &> /dev/null; then
     log_warning "Tailscale is already installed"
-    
+
     if tailscale status &> /dev/null; then
         log_info "Tailscale is already connected!"
         TAILSCALE_IP=$(tailscale ip -4)
@@ -78,10 +78,10 @@ if command -v tailscale &> /dev/null; then
 else
     # Install Tailscale
     log_info "Installing Tailscale..."
-    
+
     # Download and run official install script
     curl -fsSL https://tailscale.com/install.sh | sh
-    
+
     log_success "Tailscale installed"
 fi
 
@@ -106,7 +106,7 @@ sleep 5
 if tailscale status &> /dev/null; then
     TAILSCALE_IP=$(tailscale ip -4)
     HOSTNAME=$(hostname)
-    
+
     echo ""
     log_success "✓ Tailscale connected successfully!"
     echo ""
@@ -188,7 +188,7 @@ if tailscale status &> /dev/null; then
     echo ""
     log_success "Tailscale setup complete! 🎉"
     echo ""
-    
+
     # Save configuration to file
     CONFIG_FILE="/opt/mlflow/tailscale_config.txt"
     sudo tee "$CONFIG_FILE" > /dev/null << EOF
@@ -208,10 +208,10 @@ Development machine configuration:
 export MLFLOW_TRACKING_URI="http://$TAILSCALE_IP:5000"
 EOF
     sudo chown mlflow:mlflow "$CONFIG_FILE"
-    
+
     log_info "Configuration saved to: $CONFIG_FILE"
     echo ""
-    
+
 else
     log_error "Failed to connect to Tailscale. Please check logs: sudo journalctl -u tailscaled"
     exit 1

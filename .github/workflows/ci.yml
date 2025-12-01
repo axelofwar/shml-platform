@@ -32,7 +32,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio pytest-cov httpx
-          
+
           # Install project-specific requirements if they exist
           for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
             if [ -f "$req" ]; then
@@ -65,7 +65,7 @@ jobs:
           echo "dummy-password" > secrets/shared_db_password.txt
           echo "dummy-password" > secrets/grafana_password.txt
           echo "dummy-password" > secrets/db_password.txt
-          
+
           # Create minimal .env for compose validation
           cat > .env << 'EOF'
           AUTHENTIK_SECRET_KEY=dummy-key-for-ci

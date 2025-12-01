@@ -31,7 +31,7 @@ else
         --subnet "$SUBNET" \
         --gateway "$GATEWAY" \
         "$NETWORK_NAME"
-    
+
     echo "✓ Network '$NETWORK_NAME' created successfully"
     echo ""
     echo "Network configuration:"
