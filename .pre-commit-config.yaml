@@ -1,0 +1,64 @@
+# Pre-commit hooks for SFML Platform
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # GitGuardian secret scanning - prevents pushing secrets
+  - repo: https://github.com/gitguardian/ggshield
+    rev: v1.45.0
+    hooks:
+      - id: ggshield
+        language_version: python3
+        stages: [pre-commit, pre-push]
+
+  # Basic file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom tags in docker-compose
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  # Python formatting and linting
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        language_version: python3
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ['--severity=warning']
+
+  # Docker/Compose linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.1-beta
+    hooks:
+      - id: hadolint-docker
+        entry: hadolint --ignore DL3008 --ignore DL3013 --ignore DL3018
+
+  # Gitleaks for additional secret scanning
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from hooks
+  autofix_prs: true
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: [ggshield]  # GitGuardian requires API key in CI

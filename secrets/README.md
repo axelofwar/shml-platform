@@ -9,13 +9,32 @@ This directory contains sensitive credentials for the ML Platform. **These files
 - **ALWAYS** use strong, randomly generated passwords
 - **ALWAYS** backup secrets securely before system changes
 
+## 🛡️ Pre-Commit Protection
+
+This repository uses **ggshield** (GitGuardian) to prevent accidental secret commits:
+
+```bash
+# Install pre-commit hooks (REQUIRED for all developers)
+pip install pre-commit ggshield
+pre-commit install
+pre-commit install --hook-type pre-push
+
+# Authenticate with GitGuardian (one-time)
+ggshield auth login
+
+# Test the hooks work
+pre-commit run --all-files
+```
+
+If you accidentally try to commit a secret, the commit will be **blocked** automatically.
+
 ## Directory Structure
 
 ```
 secrets/
 ├── README.md                       # This file (tracked)
 ├── shared_db_password.txt          # PostgreSQL shared database password
-├── grafana_password.txt            # Grafana admin password  
+├── grafana_password.txt            # Grafana admin password
 ├── authentik_secret_key.txt        # Authentik encryption key
 ├── authentik_db_password.txt       # Authentik PostgreSQL password
 ├── authentik_bootstrap_password.txt # Authentik initial admin password

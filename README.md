@@ -302,13 +302,36 @@ sudo docker network create --subnet=172.30.0.0/16 ml-platform
 
 ### Security Features
 
-- ✓ **No privileged containers** - NVIDIA CDI mode for GPU access
-- ✓ **Scoped device access** - Only required devices mounted
-- ✓ **OAuth/SSO ready** - Authentik integration (disabled by default)
-- ✓ **Secrets management** - All credentials in gitignored `secrets/` directory
-- ✓ **Secure remote access** - Tailscale VPN for encrypted connections
-- ✓ **No hardcoded secrets** - All credentials loaded from environment
-- ✓ **CI/CD security scanning** - Automated secret detection on push
+- ✅ **Pre-commit secret scanning** - ggshield + Gitleaks block secrets before commit
+- ✅ **CI/CD security scanning** - GitGuardian, Trivy, pip-audit on all PRs
+- ✅ **No privileged containers** - NVIDIA CDI mode for GPU access
+- ✅ **Scoped device access** - Only required devices mounted
+- ✅ **OAuth/SSO ready** - Authentik integration (disabled by default)
+- ✅ **Secrets management** - All credentials in gitignored `secrets/` directory
+- ✅ **Secure remote access** - Tailscale VPN for encrypted connections
+- ✅ **No hardcoded secrets** - All credentials loaded from environment
+- ✅ **Git history cleaned** - BFG Repo-Cleaner removes any leaked secrets
+
+### Developer Setup (REQUIRED)
+
+**Install pre-commit hooks to prevent accidental secret commits:**
+
+```bash
+# Install tools
+pip install pre-commit ggshield
+
+# Install hooks
+pre-commit install
+pre-commit install --hook-type pre-push
+
+# Authenticate GitGuardian (one-time)
+ggshield auth login
+
+# Verify setup
+pre-commit run --all-files
+```
+
+> ⚠️ **All developers must run this setup.** Commits with secrets will be blocked.
 
 ### Secrets Management
 
@@ -356,6 +379,7 @@ cp .env.example .env
 
 Before deploying to production:
 
+- [ ] Pre-commit hooks installed (`pre-commit install`)
 - [ ] All secrets generated with `openssl rand`
 - [ ] `.env` and `secrets/` not in version control
 - [ ] Tailscale or VPN configured for remote access
