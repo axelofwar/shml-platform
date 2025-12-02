@@ -57,10 +57,11 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.qwen3-vl.rule=PathPrefix(`/api/llm`)"
       - "traefik.http.routers.qwen3-vl.priority=2147483647"
-      - "traefik.http.routers.qwen3-vl.entrypoints=web"
+      - "traefik.http.routers.qwen3-vl.entrypoints=web,websecure"
       - "traefik.http.services.qwen3-vl.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.qwen3-strip.stripprefix.prefixes=/api/llm"
-      - "traefik.http.routers.qwen3-vl.middlewares=qwen3-strip"
+      # SECURITY: Require FusionAuth authentication for LLM inference
+      - "traefik.http.routers.qwen3-vl.middlewares=oauth2-errors,oauth2-auth,qwen3-strip"
     # No postgres dependency - qwen3-vl doesn't need DB directly
 
   # ==========================================================================
@@ -112,10 +113,11 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.z-image.rule=PathPrefix(`/api/image`)"
       - "traefik.http.routers.z-image.priority=2147483647"
-      - "traefik.http.routers.z-image.entrypoints=web"
+      - "traefik.http.routers.z-image.entrypoints=web,websecure"
       - "traefik.http.services.z-image.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.z-image-strip.stripprefix.prefixes=/api/image"
-      - "traefik.http.routers.z-image.middlewares=z-image-strip"
+      # SECURITY: Require FusionAuth authentication for image generation
+      - "traefik.http.routers.z-image.middlewares=oauth2-errors,oauth2-auth,z-image-strip"
     # No postgres dependency - z-image doesn't need DB directly
     # No postgres dependency - z-image doesn't need DB directly
 
@@ -173,10 +175,11 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.inference.rule=PathPrefix(`/inference`)"
       - "traefik.http.routers.inference.priority=2147483647"
-      - "traefik.http.routers.inference.entrypoints=web"
+      - "traefik.http.routers.inference.entrypoints=web,websecure"
       - "traefik.http.services.inference.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.inference-strip.stripprefix.prefixes=/inference"
-      - "traefik.http.routers.inference.middlewares=inference-strip"
+      # SECURITY: Require FusionAuth authentication for inference gateway
+      - "traefik.http.routers.inference.middlewares=oauth2-errors,oauth2-auth,inference-strip"
     depends_on:
       qwen3-vl-api:
         condition: service_started

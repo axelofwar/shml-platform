@@ -7,7 +7,6 @@ Provides fixtures for both unit and integration tests.
 import os
 import pytest
 import logging
-from typing import Generator
 from unittest.mock import MagicMock, AsyncMock
 
 # Add scripts to path

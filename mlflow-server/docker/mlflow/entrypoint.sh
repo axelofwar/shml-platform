@@ -50,9 +50,22 @@ if [ -n "${MLFLOW_STATIC_PREFIX}" ]; then
     echo "   Using static prefix: ${MLFLOW_STATIC_PREFIX}"
 fi
 
-# MLflow 3.x: Disable security middleware for internal Docker network communication
-# External security is handled by Traefik reverse proxy
-CMD="$CMD --disable-security-middleware"
+# MLflow 3.x: Security hardening - defense-in-depth
+# Primary auth is via Traefik/OAuth2-Proxy, but we also configure MLflow's security
+# IMPORTANT: Do NOT use --disable-security-middleware in production!
+if [ -n "${MLFLOW_ALLOWED_HOSTS}" ]; then
+    CMD="$CMD --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS}\""
+    echo "   Enforcing allowed hosts: ${MLFLOW_ALLOWED_HOSTS}"
+else
+    # Default: Only allow internal Docker network and Traefik proxy
+    CMD="$CMD --allowed-hosts \"localhost,mlflow,traefik,*.ml-platform\""
+    echo "   Enforcing default allowed hosts (internal network only)"
+fi
+
+if [ -n "${MLFLOW_CORS_ALLOWED_ORIGINS}" ]; then
+    CMD="$CMD --cors-allowed-origins \"${MLFLOW_CORS_ALLOWED_ORIGINS}\""
+    echo "   Enforcing CORS origins: ${MLFLOW_CORS_ALLOWED_ORIGINS}"
+fi
 
 # Start server in background to allow experiment initialization
 eval "$CMD &"

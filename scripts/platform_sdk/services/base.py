@@ -9,7 +9,7 @@ Provides common functionality for all services:
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..http import HTTPClient

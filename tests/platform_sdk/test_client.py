@@ -327,9 +327,9 @@ class TestSDKConfig:
 
         # The validate_connection method raises ValueError for empty key
         try:
-            result = config.validate_connection()
-            # If it didn't raise, that's also OK for this test
-            # (depends on Pydantic allowing empty string)
+            # Call validate_connection - we just want to verify it can be called
+            # without checking the result (depends on Pydantic allowing empty string)
+            config.validate_connection()
         except ValueError:
             pass  # Expected
 

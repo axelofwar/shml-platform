@@ -295,6 +295,65 @@ cleanup_containers() {
 }
 
 # =============================================================================
+# Rebuild All Images (Ensures containers use latest code)
+# =============================================================================
+
+rebuild_images() {
+    echo ""
+    log_info "━━━ Rebuilding Container Images ━━━"
+    echo "Building images with cache (fast if no changes)..."
+    echo ""
+
+    # Build services that have custom Dockerfiles
+    # Docker's layer cache makes this fast when nothing changed
+    local build_failed=0
+
+    # MLflow server (has security middleware changes)
+    echo -n "  Building mlflow-server..."
+    if docker compose build mlflow-server >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${YELLOW}⚠ (using existing)${NC}"
+        build_failed=$((build_failed + 1))
+    fi
+
+    # MLflow API
+    echo -n "  Building mlflow-api..."
+    if docker compose build mlflow-api >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${YELLOW}⚠ (using existing)${NC}"
+        build_failed=$((build_failed + 1))
+    fi
+
+    # Ray head (if custom Dockerfile exists)
+    echo -n "  Building ray-head..."
+    if docker compose build ray-head >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${YELLOW}⚠ (using existing)${NC}"
+        build_failed=$((build_failed + 1))
+    fi
+
+    # Ray compute API
+    echo -n "  Building ray-compute-api..."
+    if docker compose build ray-compute-api >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${YELLOW}⚠ (using existing)${NC}"
+        build_failed=$((build_failed + 1))
+    fi
+
+    echo ""
+    if [ $build_failed -eq 0 ]; then
+        log_success "All images rebuilt successfully"
+    else
+        log_warn "Some builds used existing images (this is OK if no code changes)"
+    fi
+    echo ""
+}
+
+# =============================================================================
 # Start All Services (Proper Dependency Order)
 # =============================================================================
 
@@ -349,10 +408,30 @@ start_all_services() {
     # =========================================================================
     # Phase 3: Tailscale Funnel (Needs Traefik for routing)
     # OAuth2 Proxy requires public URL for OIDC discovery
+    #
+    # SECURITY MODEL:
+    # ----------------
+    # All public traffic goes through: Funnel → Traefik → OAuth2-Proxy → FusionAuth
+    #
+    # Protected by FusionAuth OAuth2 (require login):
+    #   - /mlflow/*, /api/2.0/mlflow/*, /api/v1/* (MLflow)
+    #   - /ray/*, /api/ray/*, /api/compute/* (Ray)
+    #   - /grafana/* (Grafana)
+    #   - /prometheus/* (Prometheus)
+    #   - /traefik/* (Traefik dashboard)
+    #   - /api/llm/*, /api/image/*, /inference/* (Inference services)
+    #
+    # Public (required for auth flow):
+    #   - /auth/*, /oauth2/*, /.well-known/* (FusionAuth)
+    #   - /oauth2-proxy/* (OAuth2-Proxy callbacks)
+    #   - Static assets (CSS, JS, fonts)
+    #
+    # Self-registration is DISABLED - admin must create users in FusionAuth.
     # =========================================================================
     log_info "━━━ Phase 3: Tailscale Funnel (Public HTTPS) ━━━"
     if command -v tailscale &>/dev/null; then
         echo "Starting Tailscale Funnel (required for OAuth2 OIDC discovery)..."
+        echo -e "${CYAN}Security: All services are protected by FusionAuth OAuth2${NC}"
         if [ -f "$SCRIPT_DIR/scripts/manage_funnel.sh" ]; then
             "$SCRIPT_DIR/scripts/manage_funnel.sh" start 2>/dev/null || log_warn "Funnel may need manual start"
         else
@@ -917,6 +996,7 @@ fix_fusionauth_oauth() {
 
 case "${1:-restart}" in
     start)
+        rebuild_images
         start_all_services
         ;;
     stop)
@@ -925,6 +1005,7 @@ case "${1:-restart}" in
     restart|"")
         stop_all_services
         cleanup_containers
+        rebuild_images
         start_all_services
         ;;
     status)
@@ -941,14 +1022,18 @@ case "${1:-restart}" in
     fix-oauth)
         fix_fusionauth_oauth
         ;;
+    build|rebuild)
+        rebuild_images
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|cleanup|diagnose|fix-oauth}"
+        echo "Usage: $0 {start|stop|restart|status|cleanup|diagnose|fix-oauth|build}"
         echo ""
         echo "Commands:"
-        echo "  start     - Start all services (assumes clean state)"
+        echo "  start     - Rebuild images + start all services"
         echo "  stop      - Stop all services"
-        echo "  restart   - Full restart: stop + cleanup + start (default)"
+        echo "  restart   - Full restart: stop + cleanup + rebuild + start (default)"
         echo "  status    - Show service status and access URLs"
+        echo "  build     - Rebuild all container images only"
         echo "  cleanup   - Stop and remove all containers"
         echo "  diagnose  - Debug OAuth2/middleware issues"
         echo "  fix-oauth - Fix FusionAuth OAuth client callback URLs"

@@ -15,27 +15,12 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Any, Union
-from contextlib import asynccontextmanager, contextmanager
+from typing import Optional, Dict, Any
 
 import httpx
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 from .config import SDKConfig
 from .models import APIResponse
-from .exceptions import (
-    PlatformSDKError,
-    AuthenticationError,
-    RateLimitError,
-    ServiceUnavailableError,
-    ConnectionError,
-    TimeoutError,
-)
 
 logger = logging.getLogger("platform_sdk.http")
 

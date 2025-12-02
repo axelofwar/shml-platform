@@ -5,6 +5,32 @@ After=network-online.target tailscaled.service
 Wants=network-online.target
 Requires=tailscaled.service
 
+# =============================================================================
+# SECURITY MODEL:
+# This service exposes the platform's Traefik reverse proxy to the public internet.
+# ALL requests go through Traefik which enforces OAuth2 authentication via FusionAuth.
+#
+# Authentication Flow:
+#   Public Request → Tailscale Funnel → Traefik → OAuth2-Proxy → FusionAuth → Service
+#
+# Protected Services (require FusionAuth login):
+#   - /mlflow/* (MLflow UI & API)
+#   - /ray/* (Ray Dashboard & API)
+#   - /grafana/* (Grafana dashboards)
+#   - /prometheus/* (Prometheus metrics)
+#   - /traefik/* (Traefik dashboard)
+#   - /api/llm/* (LLM inference)
+#   - /api/image/* (Image generation)
+#   - /inference/* (Inference gateway)
+#
+# Unprotected (required for auth flow):
+#   - /auth/*, /oauth2/*, /.well-known/* (FusionAuth endpoints)
+#   - /oauth2-proxy/* (OAuth2-Proxy callbacks)
+#   - Static assets (CSS, JS, fonts, images)
+#
+# Self-registration is DISABLED - users must be created by admin in FusionAuth.
+# =============================================================================
+
 [Service]
 Type=oneshot
 RemainAfterExit=yes

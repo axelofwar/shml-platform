@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from .auth import (
     get_current_user,
-    get_current_admin_user,
     log_audit_event,
     can_submit_jobs,
     PUBLIC_AUTH_URL,

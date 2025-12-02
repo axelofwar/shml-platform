@@ -5,7 +5,6 @@ Provides operations for API keys with permission enforcement.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 from .base import BaseService
 from ..models import APIResponse, Permission
@@ -73,35 +72,47 @@ class APIKeysService(BaseService):
             APIResponse with {"apiKey": {...}}
         """
         # Use a temporary client if checking a different key
-        if api_key and api_key != self._http._api_key:
+        if api_key and api_key != self._http.config.api_key:
             from ..http import HTTPClient
+            from ..config import SDKConfig
 
-            temp_client = HTTPClient(
-                base_url=self._http._base_url,
+            # Create a new config with the different API key
+            temp_config = SDKConfig(
                 api_key=api_key,
-                timeout=self._http._timeout,
+                fusionauth_url=self._http.config.fusionauth_url,
+                fusionauth_tenant_id=self._http.config.fusionauth_tenant_id,
+                timeout=self._http.config.timeout,
+                max_retries=self._http.config.max_retries,
+                retry_delay=self._http.config.retry_delay,
+                rate_limit_calls=self._http.config.rate_limit_calls,
+                rate_limit_period=self._http.config.rate_limit_period,
             )
-            try:
+
+            with HTTPClient(temp_config) as temp_client:
                 return temp_client.get_sync("/api/api-key")
-            finally:
-                temp_client.close()
 
         return self._http.get_sync("/api/api-key")
 
     async def introspect_async(self, api_key: Optional[str] = None) -> APIResponse:
         """Async version of introspect()."""
-        if api_key and api_key != self._http._api_key:
+        if api_key and api_key != self._http.config.api_key:
             from ..http import HTTPClient
+            from ..config import SDKConfig
 
-            temp_client = HTTPClient(
-                base_url=self._http._base_url,
+            # Create a new config with the different API key
+            temp_config = SDKConfig(
                 api_key=api_key,
-                timeout=self._http._timeout,
+                fusionauth_url=self._http.config.fusionauth_url,
+                fusionauth_tenant_id=self._http.config.fusionauth_tenant_id,
+                timeout=self._http.config.timeout,
+                max_retries=self._http.config.max_retries,
+                retry_delay=self._http.config.retry_delay,
+                rate_limit_calls=self._http.config.rate_limit_calls,
+                rate_limit_period=self._http.config.rate_limit_period,
             )
-            try:
+
+            async with HTTPClient(temp_config) as temp_client:
                 return await temp_client.get("/api/api-key")
-            finally:
-                await temp_client.close_async()
 
         return await self._http.get("/api/api-key")
 

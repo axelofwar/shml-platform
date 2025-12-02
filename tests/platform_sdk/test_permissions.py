@@ -3,7 +3,6 @@ Unit tests for Platform SDK permission system.
 """
 
 import pytest
-from unittest.mock import MagicMock
 
 from platform_sdk.models import Role, Permission
 from platform_sdk.permissions import (

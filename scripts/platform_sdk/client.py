@@ -9,11 +9,7 @@ import logging
 from typing import Optional, Dict, Any, Set
 
 from .config import SDKConfig
-from .exceptions import (
-    AuthenticationError,
-    PermissionDeniedError,
-    PlatformSDKError,
-)
+from .exceptions import AuthenticationError
 from .http import HTTPClient
 from .models import Permission, Role, APIResponse
 from .permissions import PermissionContext

@@ -10,9 +10,9 @@ Provides:
 import asyncio
 import functools
 import logging
-from typing import Callable, Optional, List, Set, Any, TypeVar, Union
+from typing import Callable, Optional, List, Set, Any, TypeVar
 
-from .models import Role, Permission, ROLE_PERMISSIONS, get_permissions_for_role
+from .models import Role, Permission, get_permissions_for_role
 from .exceptions import PermissionDeniedError, AuthenticationError
 
 logger = logging.getLogger("platform_sdk.permissions")
@@ -269,10 +269,6 @@ def requires_role(minimum_role: Role):
         return wrapper
 
     return decorator
-
-
-# Need asyncio import for iscoroutinefunction
-import asyncio
 
 
 class PermissionIntrospector:

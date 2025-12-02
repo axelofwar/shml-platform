@@ -64,9 +64,9 @@ class TestServerV2Imports:
 
     def test_auth_imports_exist(self, server_v2_source):
         """Verify the auth imports exist as expected"""
+        # NOTE: get_current_admin_user was removed as unused (PR #7 fix)
         expected_imports = [
             "get_current_user",
-            "get_current_admin_user",
             "log_audit_event",
             "can_submit_jobs",
             "PUBLIC_AUTH_URL",
@@ -84,33 +84,18 @@ class TestServerV2Imports:
         # Count actual usages
         print(f"get_current_user is used {len(matches)} times in Depends()")
 
-    def test_get_current_admin_user_usage(self, server_v2_source):
+    def test_get_current_admin_user_removed(self, server_v2_source):
         """
-        Check if get_current_admin_user is used anywhere.
+        Verify get_current_admin_user is NOT imported (unused import removed).
 
-        CURRENT STATE: Copilot reports this is unused.
-        This test documents the current state and will help us decide
-        whether to remove it or add admin-only endpoints.
+        Previously this import was flagged by Copilot as unused.
+        As part of PR #7 fixes, this unused import was removed.
+        This test verifies the cleanup was done correctly.
         """
-        # Check for usage in Depends()
-        usage_pattern = r"Depends\s*\(\s*get_current_admin_user\s*\)"
-        matches = re.findall(usage_pattern, server_v2_source)
-
-        # Document current state
-        if len(matches) == 0:
-            print("\n⚠️  FINDING: get_current_admin_user is imported but NOT used")
-            print("   OPTIONS:")
-            print("   1. Remove the unused import (Copilot suggestion)")
-            print("   2. Add admin-only endpoints that use it")
-            print("   3. Keep for future planned admin features")
-        else:
-            print(f"\n✓ get_current_admin_user is used {len(matches)} times")
-
-        # This assertion documents the CURRENT state (unused)
-        # If we add admin endpoints later, this test should be updated
+        # get_current_admin_user should NOT be in imports anymore
         assert (
-            len(matches) == 0
-        ), "Expected get_current_admin_user to be unused (current state)"
+            "get_current_admin_user" not in server_v2_source
+        ), "get_current_admin_user should have been removed as unused import"
 
     def test_can_submit_jobs_is_used(self, server_v2_source):
         """Verify can_submit_jobs is used for authorization"""
