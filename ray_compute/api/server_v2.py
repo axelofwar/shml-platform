@@ -14,7 +14,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .auth import get_current_user, get_current_admin_user, log_audit_event
+from .auth import (
+    get_current_user,
+    get_current_admin_user,
+    log_audit_event,
+    can_submit_jobs,
+    PUBLIC_AUTH_URL,
+    ADMIN_CONTACT,
+)
 from .database import get_db
 from .models import User, Job, UserQuota
 import logging
@@ -229,8 +236,26 @@ async def submit_job(
     db: Session = Depends(get_db),
 ):
     """
-    Submit a new job for execution
+    Submit a new job for execution.
+
+    Requires user role or higher. Viewers (read-only) cannot submit jobs.
     """
+    # Check if user has permission to submit jobs
+    if not can_submit_jobs(current_user.role):
+        await log_audit_event(
+            db=db,
+            user_id=current_user.user_id,
+            action="submit_job",
+            resource_type="job",
+            details=f"Permission denied: viewer role cannot submit jobs",
+            request=request,
+            success=False,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers do not have permission to submit jobs. Contact an administrator to upgrade your access.",
+        )
+
     # TODO: Implement job validation, scheduling, and submission
     # For now, return a placeholder response
 
@@ -312,8 +337,27 @@ async def cancel_job(
     db: Session = Depends(get_db),
 ):
     """
-    Cancel a running or queued job
+    Cancel a running or queued job.
+
+    Requires user role or higher. Viewers (read-only) cannot cancel jobs.
     """
+    # Check if user has permission to cancel jobs
+    if not can_submit_jobs(current_user.role):
+        await log_audit_event(
+            db=db,
+            user_id=current_user.user_id,
+            action="cancel_job",
+            resource_type="job",
+            resource_id=job_id,
+            details=f"Permission denied: viewer role cannot cancel jobs",
+            request=request,
+            success=False,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers do not have permission to cancel jobs. Contact an administrator to upgrade your access.",
+        )
+
     job = db.query(Job).filter(Job.job_id == job_id).first()
 
     if not job:
@@ -364,14 +408,50 @@ async def cancel_job(
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Custom HTTP exception handler"""
+    """Custom HTTP exception handler with authentication guidance"""
+    content = {
+        "error": exc.detail,
+        "status_code": exc.status_code,
+        "path": str(request.url),
+    }
+
+    # Add helpful authentication instructions for 401 errors
+    if exc.status_code == 401:
+        content["authentication"] = {
+            "message": "You must authenticate to access this resource.",
+            "auth_url": PUBLIC_AUTH_URL,
+            "instructions": [
+                f"1. Contact your {ADMIN_CONTACT} to request an account",
+                "2. Once registered, authenticate via OAuth at the auth_url",
+                "3. Include the Bearer token in your Authorization header",
+                "4. Example: Authorization: Bearer <your_access_token>",
+            ],
+            "note": "User registration is admin-only. Self-registration is not available.",
+        }
+
+    # Add role upgrade instructions for 403 (forbidden) errors
+    elif exc.status_code == 403:
+        if "viewer" in str(exc.detail).lower():
+            content["authorization"] = {
+                "message": "Your current role does not have permission for this action.",
+                "current_access": "viewer (read-only)",
+                "required_access": "user or higher",
+                "instructions": [
+                    f"Contact your {ADMIN_CONTACT} to request role upgrade",
+                    "Admins can change your role in FusionAuth Groups",
+                ],
+            }
+        elif "admin" in str(exc.detail).lower():
+            content["authorization"] = {
+                "message": "This action requires administrator privileges.",
+                "instructions": [
+                    f"Contact your {ADMIN_CONTACT} if you need admin access"
+                ],
+            }
+
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code,
-            "path": str(request.url),
-        },
+        content=content,
     )
 
 

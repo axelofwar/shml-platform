@@ -1,0 +1,74 @@
+# MLflow 3.x Development Environment
+# For testing upgrade from 2.17.2 before production deployment
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml logs -f mlflow-dev
+#   docker compose -f docker-compose.dev.yml down
+#
+# Access: http://localhost:5001
+
+services:
+  # Development PostgreSQL (isolated from production)
+  mlflow-dev-postgres:
+    image: postgres:15-alpine
+    container_name: mlflow-dev-postgres
+    environment:
+      POSTGRES_USER: mlflow_dev
+      POSTGRES_PASSWORD: mlflow_dev_password
+      POSTGRES_DB: mlflow_dev_db
+    volumes:
+      - mlflow-dev-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow_dev -d mlflow_dev_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mlflow-dev-network
+
+  # MLflow 3.x Development Server
+  mlflow-dev:
+    build:
+      context: ./docker/mlflow-dev
+      dockerfile: Dockerfile
+    container_name: mlflow-dev-server
+    depends_on:
+      mlflow-dev-postgres:
+        condition: service_healthy
+    environment:
+      MLFLOW_HOST: "0.0.0.0"
+      MLFLOW_PORT: "5001"
+      MLFLOW_WORKERS: "4"
+      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow_dev:mlflow_dev_password@mlflow-dev-postgres:5432/mlflow_dev_db"
+      MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
+      # Enable debug logging for testing
+      MLFLOW_LOGGING_LEVEL: "DEBUG"
+    ports:
+      - "5001:5001"
+    volumes:
+      - mlflow-dev-artifacts:/mlflow/artifacts
+      - mlflow-dev-logs:/mlflow/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - mlflow-dev-network
+
+volumes:
+  mlflow-dev-postgres-data:
+    name: mlflow-dev-postgres-data
+  mlflow-dev-artifacts:
+    name: mlflow-dev-artifacts
+  mlflow-dev-logs:
+    name: mlflow-dev-logs
+
+networks:
+  mlflow-dev-network:
+    name: mlflow-dev-network
+    driver: bridge

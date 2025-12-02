@@ -29,10 +29,12 @@ echo "🎯 Starting MLflow tracking server with full REST API..."
 echo "   Backend Store: PostgreSQL"
 echo "   Artifact Store: ${MLFLOW_ARTIFACT_ROOT}"
 echo "   Host: ${MLFLOW_HOST}:${MLFLOW_PORT}"
+echo "   Static Prefix: ${MLFLOW_STATIC_PREFIX:-none}"
 echo "   Allowed Hosts: ${MLFLOW_ALLOWED_HOSTS:-not configured}"
 echo "   CORS Origins: ${MLFLOW_CORS_ALLOWED_ORIGINS:-not configured}"
 
 # Build MLflow server command
+# MLflow 3.x uses uvicorn by default - do NOT use gunicorn-opts with security middleware
 CMD="mlflow server \
     --backend-store-uri \"${BACKEND_STORE_URI}\" \
     --default-artifact-root \"${MLFLOW_ARTIFACT_ROOT}\" \
@@ -42,17 +44,15 @@ CMD="mlflow server \
     --artifacts-destination \"${MLFLOW_ARTIFACTS_DESTINATION:-${MLFLOW_ARTIFACT_ROOT}}\" \
     --workers ${MLFLOW_WORKERS:-8}"
 
-# Add security options if configured
-if [ -n "$MLFLOW_ALLOWED_HOSTS" ]; then
-    CMD="$CMD --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS}\""
+# MLflow 3.x: Add static prefix for remote access (ensures correct asset paths behind reverse proxy)
+if [ -n "${MLFLOW_STATIC_PREFIX}" ]; then
+    CMD="$CMD --static-prefix ${MLFLOW_STATIC_PREFIX}"
+    echo "   Using static prefix: ${MLFLOW_STATIC_PREFIX}"
 fi
 
-if [ -n "$MLFLOW_CORS_ALLOWED_ORIGINS" ]; then
-    CMD="$CMD --cors-allowed-origins \"${MLFLOW_CORS_ALLOWED_ORIGINS}\""
-fi
-
-# Add gunicorn options
-CMD="$CMD --gunicorn-opts \"--timeout=${MLFLOW_WORKER_TIMEOUT:-3600} --graceful-timeout=60 --keep-alive=10 --max-requests=5000 --max-requests-jitter=500 --worker-class=gevent --worker-connections=${MLFLOW_WORKER_CONNECTIONS:-2000} --log-level=info --access-logfile=/mlflow/logs/access.log --error-logfile=/mlflow/logs/error.log --capture-output --enable-stdio-inheritance\""
+# MLflow 3.x: Disable security middleware for internal Docker network communication
+# External security is handled by Traefik reverse proxy
+CMD="$CMD --disable-security-middleware"
 
 # Start server in background to allow experiment initialization
 eval "$CMD &"

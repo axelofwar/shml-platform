@@ -1,0 +1,128 @@
+{
+  "variables": {
+    "adminEmail": "admin@ml-platform.local",
+    "adminPassword": "#{ENV.FUSIONAUTH_ADMIN_PASSWORD:-AiSolutions2350!}"
+  },
+  "apiKeys": [
+    {
+      "key": "#{ENV.FUSIONAUTH_API_KEY:-replace-with-secure-api-key}",
+      "description": "ML Platform API Key",
+      "permissions": {
+        "endpoints": {
+          "/api/application": ["GET", "POST", "PUT", "DELETE"],
+          "/api/user": ["GET", "POST", "PUT", "DELETE"],
+          "/api/login": ["POST"],
+          "/api/jwt/refresh": ["POST"],
+          "/api/jwt/validate": ["GET"],
+          "/api/oauth2/token": ["POST"],
+          "/api/oauth2/userinfo": ["GET"]
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "url": "/api/tenant",
+      "tenantId": "d7d09513-a3f5-401c-9685-34ab6c552453",
+      "body": {
+        "tenant": {
+          "name": "ML Platform",
+          "issuer": "#{ENV.FUSIONAUTH_ISSUER:-http://localhost:9011}",
+          "jwtConfiguration": {
+            "accessTokenKeyId": "#{ENV.FUSIONAUTH_ACCESS_TOKEN_KEY_ID}",
+            "idTokenKeyId": "#{ENV.FUSIONAUTH_ID_TOKEN_KEY_ID}",
+            "refreshTokenTimeToLiveInMinutes": 43200,
+            "timeToLiveInSeconds": 3600
+          },
+          "loginConfiguration": {
+            "requireAuthentication": true
+          },
+          "emailConfiguration": {
+            "host": "#{ENV.SMTP_HOST:-localhost}",
+            "port": "#{ENV.SMTP_PORT:-25}"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/application/e9fdb985-9173-4e01-9d73-ac2d60d1dc8e",
+      "body": {
+        "application": {
+          "name": "MLflow",
+          "oauthConfiguration": {
+            "authorizedRedirectURLs": [
+              "http://localhost/mlflow/callback",
+              "http://localhost:5000/callback",
+              "#{ENV.MLFLOW_REDIRECT_URI:-http://localhost/mlflow/oauth2/callback}"
+            ],
+            "clientId": "mlflow-client",
+            "clientSecret": "#{ENV.MLFLOW_CLIENT_SECRET:-change-me-mlflow-secret}",
+            "enabledGrants": ["authorization_code", "refresh_token"],
+            "logoutURL": "http://localhost/mlflow",
+            "generateRefreshTokens": true,
+            "requireClientAuthentication": true
+          },
+          "loginConfiguration": {
+            "allowTokenRefresh": true,
+            "generateRefreshTokens": true,
+            "requireAuthentication": true
+          },
+          "roles": [
+            {"name": "admin", "isDefault": false, "isSuperRole": true},
+            {"name": "user", "isDefault": true, "isSuperRole": false},
+            {"name": "readonly", "isDefault": false, "isSuperRole": false}
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/application/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "body": {
+        "application": {
+          "name": "Ray Compute",
+          "oauthConfiguration": {
+            "authorizedRedirectURLs": [
+              "http://localhost/ray/callback",
+              "http://localhost:8265/callback",
+              "#{ENV.RAY_REDIRECT_URI:-http://localhost/ray/oauth2/callback}"
+            ],
+            "clientId": "ray-client",
+            "clientSecret": "#{ENV.RAY_CLIENT_SECRET:-change-me-ray-secret}",
+            "enabledGrants": ["authorization_code", "refresh_token"],
+            "logoutURL": "http://localhost/ray",
+            "generateRefreshTokens": true,
+            "requireClientAuthentication": true
+          },
+          "loginConfiguration": {
+            "allowTokenRefresh": true,
+            "generateRefreshTokens": true,
+            "requireAuthentication": true
+          },
+          "roles": [
+            {"name": "admin", "isDefault": false, "isSuperRole": true},
+            {"name": "developer", "isDefault": true, "isSuperRole": false},
+            {"name": "viewer", "isDefault": false, "isSuperRole": false}
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/user/registration",
+      "body": {
+        "user": {
+          "email": "#{adminEmail}",
+          "password": "#{adminPassword}",
+          "username": "admin"
+        },
+        "registration": {
+          "applicationId": "e9fdb985-9173-4e01-9d73-ac2d60d1dc8e",
+          "roles": ["admin"]
+        }
+      }
+    }
+  ]
+}

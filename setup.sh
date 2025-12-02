@@ -1,8 +1,35 @@
 #!/bin/bash
 # ML Platform - Unified Setup & Startup Script
 # Handles everything from dependency checks to service monitoring
-# Version: 2.0
-# Last Updated: 2025-11-30
+# Version: 2.1
+# Last Updated: 2025-12-01
+#
+# LESSONS LEARNED (December 2025):
+# ================================
+# 1. OAuth2 Proxy Health Check Issue:
+#    - The quay.io/oauth2-proxy/oauth2-proxy image is SCRATCH/DISTROLESS
+#    - Contains NO shell tools (no wget, curl, ls, sh, etc.)
+#    - Health checks using shell commands will ALWAYS fail
+#    - Solution: Use "healthcheck: disable: true" in docker-compose
+#    - Traefik will use container "running" status instead of "healthy"
+#
+# 2. Traefik Container Filtering:
+#    - Traefik FILTERS OUT containers with status "unhealthy" or "starting"
+#    - Middleware/routers from filtered containers are NEVER registered
+#    - Debug: docker logs traefik 2>&1 | grep -i "filter"
+#    - Check: docker inspect <container> --format='{{.State.Health.Status}}'
+#
+# 3. OAuth2 Proxy Path Conflict:
+#    - FusionAuth uses /oauth2/* for OIDC endpoints
+#    - OAuth2 Proxy defaults to /oauth2/* prefix
+#    - Solution: Use /oauth2-proxy/* prefix for OAuth2 Proxy
+#    - Set OAUTH2_PROXY_PROXY_PREFIX=/oauth2-proxy
+#
+# 4. Startup Order:
+#    - Infrastructure (Traefik, Postgres, Redis) → FusionAuth → Tailscale →
+#      OAuth2 Proxy → Protected Services
+#    - OAuth2 Proxy needs FusionAuth for OIDC discovery
+#    - Protected services need oauth2-auth middleware registered first
 
 # Don't exit on errors - we handle them explicitly
 set +e
@@ -533,11 +560,21 @@ configure_passwords() {
         "true" 24)
     echo ""
 
-    AUTHENTIK_BOOTSTRAP_PASSWORD=$(prompt_password \
-        "Authentik Admin Password" \
-        "Used for OAuth/SSO administration at :9000/\nUsername: akadmin\nNote: Change this after first login" \
+    # FusionAuth configuration (primary OAuth/SSO provider)
+    print_section "FusionAuth (OAuth/SSO Provider)"
+    echo -e "${CYAN}FusionAuth provides OAuth/SSO authentication for all platform services.${NC}"
+    echo ""
+
+    FUSIONAUTH_ADMIN_PASSWORD=$(prompt_password \
+        "FusionAuth Admin Password" \
+        "Used for FusionAuth administration at :9011/\nNote: Set during initial setup wizard" \
         "true" 24)
     echo ""
+
+    FUSIONAUTH_API_KEY=$(openssl rand -hex 32)
+    FUSIONAUTH_MLFLOW_SECRET=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+    FUSIONAUTH_RAY_SECRET=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+    check_pass "FusionAuth secrets generated"
 
     # Database passwords with option
     print_section "Database Passwords"
@@ -558,22 +595,15 @@ configure_passwords() {
             "true" 32)
         echo ""
 
-        AUTHENTIK_DB_PASSWORD=$(prompt_password \
-            "Authentik Database Password" \
-            "PostgreSQL database for Authentik users/sessions" \
-            "true" 32)
-        echo ""
-
         SHARED_DB_PASSWORD=$(prompt_password \
             "Shared Database Password" \
-            "Shared PostgreSQL for unified services" \
+            "Shared PostgreSQL for unified services (includes FusionAuth)" \
             "true" 32)
         echo ""
     else
         echo "Auto-generating database passwords..."
         MLFLOW_DB_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
         RAY_DB_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
-        AUTHENTIK_DB_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
         SHARED_DB_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
         check_pass "Database passwords generated"
     fi
@@ -581,7 +611,6 @@ configure_passwords() {
     # System secrets (always auto-generate)
     print_section "System Secrets"
     echo "Auto-generating system secrets..."
-    AUTHENTIK_SECRET=$(openssl rand -base64 50 | tr -d '\n')
     API_SECRET=$(openssl rand -base64 50 | tr -d '\n')
     check_pass "System secrets generated"
 }
@@ -616,18 +645,19 @@ setup_env_files() {
 
     # Update main .env
     print_section "Configuring Main Environment"
-    update_env_var ".env" "AUTHENTIK_SECRET_KEY" "$AUTHENTIK_SECRET"
-    update_env_var ".env" "AUTHENTIK_DB_PASSWORD" "$AUTHENTIK_DB_PASSWORD"
-    update_env_var ".env" "AUTHENTIK_BOOTSTRAP_PASSWORD" "$AUTHENTIK_BOOTSTRAP_PASSWORD"
     update_env_var ".env" "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_PASSWORD"
     update_env_var ".env" "SHARED_DB_PASSWORD" "$SHARED_DB_PASSWORD"
     update_env_var ".env" "TAILSCALE_IP" "$TAILSCALE_IP"
+    # FusionAuth configuration
+    update_env_var ".env" "FUSIONAUTH_RUNTIME_MODE" "development"
+    update_env_var ".env" "FUSIONAUTH_ADMIN_PASSWORD" "$FUSIONAUTH_ADMIN_PASSWORD"
+    update_env_var ".env" "FUSIONAUTH_API_KEY" "$FUSIONAUTH_API_KEY"
+    update_env_var ".env" "FUSIONAUTH_MLFLOW_CLIENT_SECRET" "$FUSIONAUTH_MLFLOW_SECRET"
+    update_env_var ".env" "FUSIONAUTH_RAY_CLIENT_SECRET" "$FUSIONAUTH_RAY_SECRET"
     check_pass "Main .env configured"
 
     # Update ray_compute/.env
     update_env_var "ray_compute/.env" "POSTGRES_PASSWORD" "$RAY_DB_PASSWORD"
-    update_env_var "ray_compute/.env" "AUTHENTIK_SECRET_KEY" "$AUTHENTIK_SECRET"
-    update_env_var "ray_compute/.env" "AUTHENTIK_DB_PASSWORD" "$AUTHENTIK_DB_PASSWORD"
     update_env_var "ray_compute/.env" "GRAFANA_ADMIN_PASSWORD" "$GRAFANA_PASSWORD"
     update_env_var "ray_compute/.env" "API_SECRET_KEY" "$API_SECRET"
     update_env_var "ray_compute/.env" "TAILSCALE_IP" "$TAILSCALE_IP"
@@ -654,13 +684,12 @@ setup_secret_files() {
     print_section "Main Secrets"
     mkdir -p secrets
     echo "$SHARED_DB_PASSWORD" > secrets/shared_db_password.txt
-    echo "$AUTHENTIK_DB_PASSWORD" > secrets/authentik_db_password.txt
-    echo "$AUTHENTIK_SECRET" > secrets/authentik_secret_key.txt
-    echo "$AUTHENTIK_BOOTSTRAP_PASSWORD" > secrets/authentik_bootstrap_password.txt
     echo "$GRAFANA_PASSWORD" > secrets/grafana_password.txt
     echo "$RAY_DB_PASSWORD" > secrets/ray_db_password.txt
+    # FusionAuth secrets (uses shared database)
+    echo "$SHARED_DB_PASSWORD" > secrets/fusionauth_db_password.txt
     chmod 600 secrets/*
-    check_pass "Main secret files created (7 files)"
+    check_pass "Main secret files created (4 files)"
 
     # MLflow secrets
     print_section "MLflow Secrets"
@@ -707,11 +736,12 @@ Grafana Dashboards:
   Username: admin
   Password: ${GRAFANA_PASSWORD}
 
-Authentik Admin (OAuth/SSO):
-  URL: http://localhost:9000/ or http://${TAILSCALE_IP}:9000/
-  Username: akadmin
-  Password: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
-  ⚠️  IMPORTANT: Change this password after first login!
+FusionAuth Admin (OAuth/SSO):
+  URL: http://localhost:9011/ or http://${TAILSCALE_IP}:9011/
+  Admin Password: ${FUSIONAUTH_ADMIN_PASSWORD}
+  API Key: ${FUSIONAUTH_API_KEY}
+  MLflow Client Secret: ${FUSIONAUTH_MLFLOW_SECRET}
+  Ray Client Secret: ${FUSIONAUTH_RAY_SECRET}
 
 MLflow UI:
   URL: http://localhost/mlflow/ or http://${TAILSCALE_IP}/mlflow/
@@ -734,9 +764,6 @@ Ray Database:
   Connection: postgresql://ray_compute:${RAY_DB_PASSWORD}@localhost:5433/ray_compute
   Password: ${RAY_DB_PASSWORD}
 
-Authentik Database:
-  Password: ${AUTHENTIK_DB_PASSWORD}
-
 Shared Database:
   Password: ${SHARED_DB_PASSWORD}
 
@@ -744,7 +771,6 @@ Shared Database:
 SYSTEM SECRETS (for reference only)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Authentik Secret Key: ${AUTHENTIK_SECRET}
 API Secret Key: ${API_SECRET}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -753,7 +779,6 @@ SECURITY NOTES
 
 ⚠️  Keep this file secure - it contains all platform passwords
 ⚠️  Never commit CREDENTIALS.txt or .env files to git
-⚠️  Change Authentik password after first login
 ⚠️  Backup this file to a secure location
 ⚠️  File permissions: 600 (read/write owner only)
 
@@ -794,10 +819,6 @@ setup_directories() {
     # Traefik
     mkdir -p logs/traefik
     chmod 755 logs/traefik
-
-    # Authentik
-    mkdir -p logs/authentik
-    chmod 755 logs/authentik
 
     check_pass "Infrastructure directories created"
 
@@ -897,9 +918,6 @@ preflight_checks() {
     print_section "Secret Files (Zero-Knowledge Validation)"
     local secret_files=(
         "secrets/shared_db_password.txt:16"
-        "secrets/authentik_db_password.txt:16"
-        "secrets/authentik_secret_key.txt:40"
-        "secrets/authentik_bootstrap_password.txt:12"
         "secrets/grafana_password.txt:12"
         "mlflow-server/secrets/db_password.txt:16"
         "mlflow-server/secrets/grafana_password.txt:12"
@@ -982,9 +1000,6 @@ preflight_checks() {
         # Check secret files again to report which ones failed
         local secret_files=(
             "secrets/shared_db_password.txt:20"
-            "secrets/authentik_db_password.txt:20"
-            "secrets/authentik_secret_key.txt:40"
-            "secrets/authentik_bootstrap_password.txt:12"
             "secrets/grafana_password.txt:12"
             "mlflow-server/secrets/db_password.txt:20"
             "mlflow-server/secrets/grafana_password.txt:12"
@@ -1054,9 +1069,9 @@ start_services() {
 
     # Start infrastructure (shared services) using unified compose
     print_section "Phase 1: Shared Infrastructure"
-    echo "Starting: Traefik, Postgres, Redis, Authentik, System Monitoring..."
+    echo "Starting: Traefik, Postgres, Redis, FusionAuth, System Monitoring..."
     sudo docker compose up -d --remove-orphans traefik shared-postgres ml-platform-redis \
-        authentik-db authentik-redis authentik-server authentik-worker \
+        fusionauth \
         global-prometheus unified-grafana node-exporter cadvisor 2>&1 | tail -15
 
     echo "Waiting for infrastructure health checks (45 seconds)..."
@@ -1067,7 +1082,7 @@ start_services() {
     echo "Updating database user passwords to match current secrets..."
 
     SHARED_DB_PASS=$(cat secrets/shared_db_password.txt)
-    AUTHENTIK_DB_PASS=$(cat secrets/authentik_db_password.txt)
+    FUSIONAUTH_DB_PASS=$(cat secrets/fusionauth_db_password.txt 2>/dev/null || echo "$SHARED_DB_PASS")
 
     # Update shared-postgres users
     sudo docker exec shared-postgres psql -U postgres -c "ALTER USER mlflow WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
@@ -1079,9 +1094,9 @@ start_services() {
     sudo docker exec shared-postgres psql -U postgres -c "ALTER USER inference WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Inference user password synchronized" || check_warn "Inference user password sync skipped"
 
-    # Update authentik-db user (separate database instance)
-    sudo docker exec authentik-postgres psql -U postgres -c "ALTER USER authentik WITH PASSWORD '$AUTHENTIK_DB_PASS';" >/dev/null 2>&1 && \
-        check_pass "Authentik database user password synchronized" || check_warn "Authentik DB password sync skipped"
+    # Update FusionAuth user if it exists
+    sudo docker exec shared-postgres psql -U postgres -c "ALTER USER fusionauth WITH PASSWORD '$FUSIONAUTH_DB_PASS';" >/dev/null 2>&1 && \
+        check_pass "FusionAuth user password synchronized" || check_warn "FusionAuth DB password sync skipped (may need first run)"
 
     check_pass "Shared infrastructure started"
 
@@ -1163,14 +1178,14 @@ start_services() {
         check_warn "Grafana password may need manual reset"
     fi
 
-    # Verify Authentik bootstrap password is set
-    echo "Verifying Authentik bootstrap configuration..."
-    if sudo docker exec authentik-server env | grep -q "AUTHENTIK_BOOTSTRAP_PASSWORD"; then
-        check_pass "Authentik bootstrap password configured"
-        echo "  → Login with: akadmin / <your chosen password>"
-        echo "  → Change this password after first login!"
+    # Verify FusionAuth is running
+    echo "Verifying FusionAuth configuration..."
+    if sudo docker ps --format "{{.Names}}" | grep -q "fusionauth"; then
+        check_pass "FusionAuth container running"
+        echo "  → Admin URL: http://localhost:9011/admin/"
+        echo "  → Complete setup wizard on first access"
     else
-        check_warn "Authentik bootstrap password may not be configured"
+        check_warn "FusionAuth may not be running"
     fi
 
     check_pass "Global monitoring started"
@@ -1187,7 +1202,7 @@ monitor_health() {
     echo ""
 
     # Get container status
-    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "ml-platform|mlflow|ray|authentik" || true
+    sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "ml-platform|mlflow|ray|fusionauth" || true
 
     echo ""
     print_section "Service Health Checks"
@@ -1196,7 +1211,7 @@ monitor_health() {
     local services=(
         "ml-platform-traefik:http://localhost:8090/ping"
         "mlflow-server:http://localhost/mlflow/"
-        "authentik-server:http://localhost:9000/"
+        "fusionauth:http://localhost:9011/"
     )
 
     for entry in "${services[@]}"; do
@@ -1219,11 +1234,11 @@ monitor_health() {
         check_warn "Grafana password verification failed"
     fi
 
-    # Verify Authentik bootstrap password is in environment
-    if sudo docker exec authentik-server env | grep -q "AUTHENTIK_BOOTSTRAP_PASSWORD"; then
-        check_pass "Authentik bootstrap password configured in container"
+    # Verify FusionAuth is accessible
+    if curl -sf "http://localhost:9011/" >/dev/null 2>&1; then
+        check_pass "FusionAuth accessible"
     else
-        check_warn "Authentik bootstrap password not found in environment"
+        check_warn "FusionAuth not responding (may need setup wizard)"
     fi
 
     # Verify database passwords (check if connections work)
@@ -1239,10 +1254,10 @@ monitor_health() {
         check_warn "Ray database password may need verification"
     fi
 
-    if sudo docker exec authentik-postgres psql -U authentik -c "SELECT 1" >/dev/null 2>&1; then
-        check_pass "Authentik database password working"
+    if sudo docker exec shared-postgres psql -U fusionauth -d fusionauth -c "SELECT 1" >/dev/null 2>&1; then
+        check_pass "FusionAuth database password working"
     else
-        check_warn "Authentik database password may need verification"
+        check_warn "FusionAuth database password may need verification"
     fi
 
     # Update container metrics dashboard with current container IDs
@@ -1286,7 +1301,7 @@ print_summary() {
     echo "🚀 Service Status:"
     local healthy=0
     local total=0
-    for service in ml-platform-traefik shared-postgres mlflow-server mlflow-nginx ray-head authentik-server; do
+    for service in ml-platform-traefik shared-postgres mlflow-server mlflow-nginx ray-head fusionauth; do
         ((total++))
         if sudo docker inspect "$service" 2>/dev/null | grep -q '"Status": "running"'; then
             if sudo docker inspect "$service" 2>/dev/null | grep -q '"Health"'; then
@@ -1315,13 +1330,13 @@ print_summary() {
     echo "    └─ MLflow: Service metrics and performance"
     echo "    └─ Ray: Cluster metrics and job stats"
     echo "  • Traefik Dashboard:      http://${TAILSCALE_IP}:8090/"
-    echo "  • Authentik (OAuth/SSO):  http://${TAILSCALE_IP}:9000/"
+    echo "  • FusionAuth (OAuth/SSO): http://${TAILSCALE_IP}:9011/admin/"
     echo ""
 
     echo "📝 Credentials:"
     echo "  • Saved to: $CREDENTIALS_FILE"
-    echo "  • Grafana:   admin / ${GRAFANA_PASSWORD}"
-    echo "  • Authentik: akadmin / ${AUTHENTIK_BOOTSTRAP_PASSWORD}"
+    echo "  • Grafana:    admin / ${GRAFANA_PASSWORD}"
+    echo "  • FusionAuth: Complete setup wizard on first access"
     echo ""
 
     echo "🛠️  Useful Commands:"

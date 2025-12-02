@@ -45,6 +45,9 @@ create_database "ray_compute" "ray_compute"
 # Create Inference database
 create_database "inference" "inference"
 
+# Create FusionAuth database
+create_database "fusionauth" "fusionauth"
+
 echo "========================================"
 echo "All databases initialized successfully!"
 echo "========================================"

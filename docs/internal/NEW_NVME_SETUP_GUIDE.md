@@ -15,7 +15,7 @@ This guide walks you through setting up the SFML ML Platform on your new NVMe dr
 - **Ray Compute** - Distributed computing with GPU scheduling
 - **Traefik** - API gateway for unified access
 - **Monitoring** - Grafana, Prometheus, and system metrics
-- **Authentication** - Authentik OAuth provider
+- **Authentication** - FusionAuth OAuth provider
 
 ---
 

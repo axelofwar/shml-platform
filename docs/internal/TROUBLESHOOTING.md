@@ -212,20 +212,20 @@ sudo systemctl restart docker
 
 **Fix:**
 ```bash
-# Check Authentik
-docker logs authentik-server --tail 50
+# Check FusionAuth logs
+docker logs fusionauth --tail 50
 
-# Verify redirect URIs
-docker exec authentik-postgres psql -U authentik -d authentik \
-  -c "SELECT _redirect_uris FROM authentik_providers_oauth2_oauth2provider WHERE client_id='ray-compute-api';"
+# Verify OAuth application in FusionAuth admin
+# URL: http://localhost:9011/admin/ or https://sfml-platform.tail38b60a.ts.net/auth/admin/
+# Navigate to Applications > Ray Compute > OAuth tab
 
 # Check environment (.env):
-# AUTHENTIK_CLIENT_ID=ray-compute-api
-# AUTHENTIK_CLIENT_SECRET=<secret>
+# FUSIONAUTH_RAY_CLIENT_ID=<client-id>
+# FUSIONAUTH_RAY_CLIENT_SECRET=<secret>
 # NEXTAUTH_URL=http://${TAILSCALE_IP}:3002
 
 # Restart
-docker restart authentik-server ray-compute-ui
+docker restart fusionauth ray-compute-ui
 ```
 
 ### API 500 Errors
