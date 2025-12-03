@@ -168,17 +168,17 @@ ML Platform Credentials
 
 Network Configuration:
   Local IP: 10.0.0.163
-  Tailscale IP: 100.80.251.28
+  Tailscale IP: 100.66.26.115
 
 USER-FACING SERVICES
 ━━━━━━━━━━━━━━━━━━━━
 Grafana Dashboards:
-  URL: http://100.80.251.28/grafana/
+  URL: http://100.66.26.115/grafana/
   Username: admin
   Password: [your-password]
 
 FusionAuth Admin:
-  URL: http://100.80.251.28:9011/admin/
+  URL: http://100.66.26.115:9011/admin/
   Public URL: https://sfml-platform.tail38b60a.ts.net/auth/admin/
   Login: Email-based (configured during setup)
 

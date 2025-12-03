@@ -10,6 +10,7 @@ from .groups import GroupsService
 from .applications import ApplicationsService
 from .registrations import RegistrationsService
 from .api_keys import APIKeysService
+from .roles import RolesService
 
 __all__ = [
     "BaseService",
@@ -18,4 +19,5 @@ __all__ = [
     "ApplicationsService",
     "RegistrationsService",
     "APIKeysService",
+    "RolesService",
 ]
