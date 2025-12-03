@@ -3,10 +3,8 @@ Unit tests for Platform SDK services (with mocked HTTP).
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
 
-from platform_sdk.models import APIResponse, Permission, Role
-from platform_sdk.permissions import PermissionContext
+from platform_sdk.models import APIResponse
 from platform_sdk.exceptions import PermissionDeniedError
 
 

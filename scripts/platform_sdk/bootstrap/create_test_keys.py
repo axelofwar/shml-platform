@@ -7,7 +7,6 @@ in FusionAuth for testing the Platform SDK.
 
 import os
 import sys
-import json
 import httpx
 
 # FusionAuth configuration

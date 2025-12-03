@@ -10,7 +10,6 @@ import os
 import pytest
 import uuid
 
-from platform_sdk import PlatformSDK, Role, Permission
 from platform_sdk.exceptions import PermissionDeniedError
 
 
