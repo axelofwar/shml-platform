@@ -277,7 +277,7 @@ echo -e "\n✅ All systems operational!"
 
 After startup, access:
 
-Traefik Dashboard: http://100.80.251.28:8090/
-MLflow UI: http://100.80.251.28/mlflow/
-Ray Dashboard: http://100.80.251.28/ray/
-Grafana: http://100.80.251.28/grafana/ (admin / your-password)
+Traefik Dashboard: http://100.66.26.115:8090/
+MLflow UI: http://100.66.26.115/mlflow/
+Ray Dashboard: http://100.66.26.115/ray/
+Grafana: http://100.66.26.115/grafana/ (admin / your-password)

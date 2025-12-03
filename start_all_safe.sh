@@ -377,6 +377,37 @@ start_all_services() {
     fi
 
     # =========================================================================
+    # Pre-flight: Tailscale IP Validation
+    # After Tailscale reset/logout, the IP may change. This check catches
+    # stale configuration BEFORE services fail with cryptic errors.
+    # =========================================================================
+    if command -v tailscale &>/dev/null && tailscale status >/dev/null 2>&1; then
+        CURRENT_TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
+        CONFIGURED_TS_IP=$(grep "^TAILSCALE_IP=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+
+        if [ -n "$CURRENT_TS_IP" ] && [ -n "$CONFIGURED_TS_IP" ] && [ "$CURRENT_TS_IP" != "$CONFIGURED_TS_IP" ]; then
+            echo ""
+            log_error "═══════════════════════════════════════════════════════════════"
+            log_error "  TAILSCALE IP MISMATCH DETECTED!"
+            log_error "═══════════════════════════════════════════════════════════════"
+            echo ""
+            echo "  Current Tailscale IP:    $CURRENT_TS_IP"
+            echo "  Configured in .env:      $CONFIGURED_TS_IP"
+            echo ""
+            echo "  This usually happens after a Tailscale reset/logout."
+            echo "  OAuth2 and other services will fail with the wrong IP."
+            echo ""
+            echo "  Run the recovery script to fix this:"
+            echo -e "    ${GREEN}./scripts/recover-tailscale.sh${NC}"
+            echo ""
+            echo "  Or manually update TAILSCALE_IP in .env and restart."
+            echo ""
+            log_error "═══════════════════════════════════════════════════════════════"
+            exit 1
+        fi
+    fi
+
+    # =========================================================================
     # Phase 1: Core Infrastructure (No dependencies)
     # =========================================================================
     log_info "━━━ Phase 1: Core Infrastructure ━━━"
@@ -718,7 +749,7 @@ verify_auth_protection() {
 
 show_status() {
     # Get Tailscale IP and public domain
-    local TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.80.251.28")
+    local TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.66.26.115")
     local PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "sfml-platform.tail38b60a.ts.net")
 
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
