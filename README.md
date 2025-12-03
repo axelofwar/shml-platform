@@ -65,6 +65,26 @@ The setup script will:
 ./check_platform_status.sh
 ```
 
+```bash
+# Check status
+sudo systemctl status sfml-platform
+
+# Start manually
+sudo systemctl start sfml-platform
+
+# Stop
+sudo systemctl stop sfml-platform
+
+# Restart
+sudo systemctl restart sfml-platform
+
+# View logs
+sudo journalctl -u sfml-platform -f
+
+# Disable auto-start
+sudo systemctl disable sfml-platform
+```
+
 ## Service Access
 
 All services accessible via Traefik routing:
@@ -288,6 +308,25 @@ sudo docker network rm ml-platform
 sudo docker network create --subnet=172.30.0.0/16 ml-platform
 ```
 
+### Tailscale Reset / TPM Lockout Recovery
+
+If Tailscale is reset (e.g., TPM lockout requiring `tailscale logout`), several services may break:
+- OAuth2 authentication loops
+- MLflow "Invalid Host header" errors
+- Services unable to resolve Tailscale domain
+
+**Quick Recovery:**
+```bash
+# Run the automated recovery script
+./scripts/recover-tailscale.sh
+
+# Or manually update the Tailscale IP
+tailscale ip -4  # Get new IP
+# Update TAILSCALE_IP in .env files
+```
+
+**See:** `docs/TAILSCALE_RECOVERY.md` for full troubleshooting guide.
+
 ## Documentation
 
 - `ARCHITECTURE.md` - Detailed architecture overview
@@ -297,6 +336,7 @@ sudo docker network create --subnet=172.30.0.0/16 ml-platform
 - `REMOTE_ACCESS_NEW.md` - Remote access guide
 - `REMOTE_JOB_SUBMISSION.md` - Ray job submission
 - `RAY_GPU_TESTING_SUMMARY.md` - GPU testing results
+- `docs/TAILSCALE_RECOVERY.md` - Tailscale reset/TPM recovery guide
 
 ## Security
 

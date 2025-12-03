@@ -1,0 +1,52 @@
+[Unit]
+Description=SFML Platform (MLflow + Ray + Auth Services)
+Documentation=https://github.com/axelofwar/sfml-platform
+After=docker.service network-online.target tailscaled.service
+Requires=docker.service
+Wants=network-online.target tailscaled.service
+
+# Give time for network and Tailscale to fully initialize
+# This is critical for OAuth/FusionAuth which need Tailscale Funnel URLs
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=axelofwar
+Group=docker
+
+# Working directory for docker-compose
+WorkingDirectory=/home/axelofwar/Projects/sfml-platform
+
+# Wait for dependencies before starting
+ExecStartPre=/bin/sleep 10
+ExecStartPre=/bin/bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+ExecStartPre=/bin/bash -c 'until tailscale status >/dev/null 2>&1; do sleep 2; done || true'
+
+# Start all services using the safe startup script
+# The script handles all internal dependencies (Postgres -> FusionAuth -> OAuth2 Proxy -> Services)
+ExecStart=/home/axelofwar/Projects/sfml-platform/start_all_safe.sh start
+
+# Stop all services gracefully
+ExecStop=/home/axelofwar/Projects/sfml-platform/stop_all.sh
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Timeout for long-running startup (FusionAuth can take 2-3 minutes)
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+# Environment
+Environment=HOME=/home/axelofwar
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sfml-platform
+
+[Install]
+WantedBy=multi-user.target

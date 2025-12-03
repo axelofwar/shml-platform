@@ -31,7 +31,7 @@ services:
       - --metrics.prometheus=true
       - --ping=true
     ports:
-      # Bind to LAN IP only - leave Tailscale IP (100.80.251.28) free for tailscale serve
+      # Bind to LAN IP only - leave Tailscale IP (100.66.26.115) free for tailscale serve
       - "127.0.0.1:80:80"
       - "127.0.0.1:443:443"
       - "10.0.0.163:80:80"
@@ -234,6 +234,10 @@ services:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     container_name: oauth2-proxy
     restart: unless-stopped
+    # Allow container to resolve Tailscale domain to Tailscale IP
+    # NOTE: Update TAILSCALE_IP in .env after any Tailscale reset
+    extra_hosts:
+      - "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}:${TAILSCALE_IP:-100.66.26.115}"
     deploy:
       resources:
         limits:
@@ -253,12 +257,12 @@ services:
       # Cookie configuration
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
       OAUTH2_PROXY_COOKIE_SECURE: "true"
-      OAUTH2_PROXY_COOKIE_DOMAINS: ".${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
       OAUTH2_PROXY_COOKIE_NAME: "_sfml_oauth2"
 
       # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
       OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
-      OAUTH2_PROXY_WHITELIST_DOMAINS: ".${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
       # Proxy prefix - tells oauth2-proxy to use /oauth2-proxy instead of default /oauth2
       OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
 
@@ -315,11 +319,15 @@ services:
       disable: true
     labels:
       - "traefik.enable=true"
+      # Headers middleware to ensure X-Forwarded-Proto is https (Tailscale Funnel terminates TLS)
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Port=443"
       # OAuth2-Proxy routes - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
       # OAuth2-Proxy handles the /oauth2-proxy prefix internally via OAUTH2_PROXY_PROXY_PREFIX
       - "traefik.http.routers.oauth2-proxy.rule=PathPrefix(`/oauth2-proxy`)"
       - "traefik.http.routers.oauth2-proxy.entrypoints=web,websecure"
       - "traefik.http.routers.oauth2-proxy.priority=300"
+      - "traefik.http.routers.oauth2-proxy.middlewares=oauth2-proxy-headers"
       - "traefik.http.services.oauth2-proxy.loadbalancer.server.port=4180"
 
       # Forward auth middleware - other services use this to verify auth
