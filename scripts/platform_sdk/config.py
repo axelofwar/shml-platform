@@ -139,7 +139,14 @@ class SDKConfig(BaseModel):
                     load_dotenv(path)
                     break
 
-        return cls()
+        # Explicitly pass environment values to bypass default field values
+        return cls(
+            api_key=os.environ.get("FUSIONAUTH_API_KEY", ""),
+            fusionauth_url=os.environ.get("FUSIONAUTH_URL", "http://localhost:9011"),
+            fusionauth_tenant_id=os.environ.get("FUSIONAUTH_TENANT_ID"),
+            timeout=float(os.environ.get("SDK_TIMEOUT", "30.0")),
+            log_level=os.environ.get("SDK_LOG_LEVEL", "INFO"),
+        )
 
     def validate_connection(self) -> bool:
         """

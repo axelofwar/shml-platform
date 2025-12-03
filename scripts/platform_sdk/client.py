@@ -19,6 +19,7 @@ from .services import (
     ApplicationsService,
     RegistrationsService,
     APIKeysService,
+    RolesService,
 )
 
 
@@ -101,9 +102,9 @@ class PlatformSDK:
             self._permissions = self._get_permissions_for_role(role_override)
             auto_introspect = False
 
-        # Create permission context
+        # Create permission context - don't pass explicit permissions,
+        # let it derive from role to avoid empty set issues
         self._permission_context = PermissionContext(
-            permissions=self._permissions,
             role=self._role,
         )
 
@@ -117,6 +118,7 @@ class PlatformSDK:
         self._applications: Optional[ApplicationsService] = None
         self._registrations: Optional[RegistrationsService] = None
         self._api_keys: Optional[APIKeysService] = None
+        self._roles: Optional[RolesService] = None
 
         logger.info(f"PlatformSDK initialized with role: {self._role.value}")
 
@@ -288,6 +290,10 @@ class PlatformSDK:
             # Default to most restrictive on error
             self._role = Role.VIEWER
             self._permissions = self._get_permissions_for_role(Role.VIEWER)
+            # Recreate permission context - don't pass permissions, let it derive from role
+            self._permission_context = PermissionContext(
+                role=self._role,
+            )
 
     def _get_permissions_for_role(self, role: Role) -> Set[Permission]:
         """
@@ -312,6 +318,8 @@ class PlatformSDK:
                 Permission.GROUPS_READ,
                 # Applications
                 Permission.APPLICATIONS_READ,
+                # Roles
+                Permission.ROLES_READ,
                 # Registrations - developers can register users
                 Permission.REGISTRATIONS_READ,
                 Permission.REGISTRATIONS_CREATE,
@@ -325,6 +333,7 @@ class PlatformSDK:
                 Permission.USERS_READ,
                 Permission.GROUPS_READ,
                 Permission.APPLICATIONS_READ,
+                Permission.ROLES_READ,
                 Permission.REGISTRATIONS_READ,
             }
 
@@ -388,6 +397,16 @@ class PlatformSDK:
                 permission_context=self._permission_context,
             )
         return self._api_keys
+
+    @property
+    def roles(self) -> RolesService:
+        """Get the Roles service."""
+        if self._roles is None:
+            self._roles = RolesService(
+                http_client=self._http,
+                permission_context=self._permission_context,
+            )
+        return self._roles
 
     # =========================================================================
     # SDK Info & Utilities
