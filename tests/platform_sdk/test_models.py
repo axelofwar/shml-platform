@@ -8,7 +8,6 @@ from platform_sdk.models import (
     Permission,
     APIResponse,
     PaginatedResponse,
-    ROLE_PERMISSIONS,
     get_permissions_for_role,
     role_has_permission,
 )

@@ -4,7 +4,7 @@ Users Service for FusionAuth user management.
 Provides CRUD operations for users with permission enforcement.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 
 from .base import BaseService
 from ..models import APIResponse, Permission
