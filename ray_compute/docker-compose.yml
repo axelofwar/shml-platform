@@ -11,7 +11,7 @@ services:
     build:
       context: ./docker
       dockerfile: Dockerfile.ray-head
-    image: ml-platform-ray-head:2.9.0-gpu-mlflow
+    image: ml-platform-ray-head:2.35.0-gpu-mlflow3
     container_name: ray-head
     restart: unless-stopped
     shm_size: 2gb
@@ -33,6 +33,21 @@ services:
       - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
       - MLFLOW_TRACKING_URI=http://mlflow-server:5000
       - MLFLOW_S3_ENDPOINT_URL=
+      # =======================================================================
+      # Ray Dashboard -> Prometheus/Grafana Integration
+      # These enable the cluster utilization and autoscaler charts in Ray Dashboard
+      # See: https://docs.ray.io/en/latest/cluster/configure-manage-dashboard.html
+      # =======================================================================
+      # Prometheus endpoint for Ray head node health checks (internal Docker network)
+      - RAY_PROMETHEUS_HOST=http://ray-prometheus:9090
+      # Prometheus datasource name in Grafana (must match datasources.yml)
+      - RAY_PROMETHEUS_NAME=Ray Metrics
+      # Grafana endpoint for head node health checks (internal Docker network)
+      - RAY_GRAFANA_HOST=http://unified-grafana:3000
+      # Grafana endpoint for browser iframes (external URL via reverse proxy)
+      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/grafana
+      # Grafana organization ID (default: 1)
+      - RAY_GRAFANA_ORG_ID=1
     volumes:
       - ./data/ray:/tmp/ray
       - ./data/job_workspaces:/opt/ray/job_workspaces
@@ -65,10 +80,12 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ray-dashboard.rule=PathPrefix(`/ray`)"
-      - "traefik.http.routers.ray-dashboard.entrypoints=web"
+      - "traefik.http.routers.ray-dashboard.entrypoints=web,websecure"
       - "traefik.http.services.ray-dashboard.loadbalancer.server.port=8265"
       - "traefik.http.middlewares.ray-stripprefix.stripprefix.prefixes=/ray"
-      - "traefik.http.routers.ray-dashboard.middlewares=ray-stripprefix"
+      # OAuth2 protection - requires authentication for Ray Dashboard
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.ray-dashboard.middlewares=oauth2-errors,oauth2-auth,ray-stripprefix"
       - "traefik.http.routers.ray-dashboard.priority=100"
 
   # ==========================================================================
@@ -110,11 +127,11 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - JOB_WORKSPACE=/opt/ray/job_workspaces
       - ARTIFACT_RETENTION_HOURS=24
-      # OAuth (optional)
+      # OAuth (optional - use FusionAuth)
       - OAUTH_ENABLED=${OAUTH_ENABLED:-false}
-      - AUTHENTIK_URL=${AUTHENTIK_INTERNAL_URL:-http://authentik-server:9000}
-      - AUTHENTIK_CLIENT_ID=${RAY_OAUTH_CLIENT_ID}
-      - AUTHENTIK_CLIENT_SECRET=${RAY_OAUTH_CLIENT_SECRET}
+      - FUSIONAUTH_URL=${FUSIONAUTH_URL:-http://fusionauth:9011}
+      - FUSIONAUTH_CLIENT_ID=${FUSIONAUTH_RAY_CLIENT_ID}
+      - FUSIONAUTH_CLIENT_SECRET=${FUSIONAUTH_RAY_CLIENT_SECRET}
       - API_KEY_ENABLED=false
       # Observability
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
@@ -143,10 +160,12 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ray-api.rule=PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)"
-      - "traefik.http.routers.ray-api.entrypoints=web"
+      - "traefik.http.routers.ray-api.entrypoints=web,websecure"
       - "traefik.http.services.ray-api.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.ray-api-strip.stripprefix.prefixes=/api/ray,/api/compute"
-      - "traefik.http.routers.ray-api.middlewares=ray-api-strip"
+      # OAuth2 protection - requires authentication for Ray Compute API
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.ray-api.middlewares=oauth2-errors,oauth2-auth,ray-api-strip"
       - "traefik.http.routers.ray-api.priority=300"
 
   # ==========================================================================

@@ -31,4 +31,6 @@ regexes = [
     '''\$\{[A-Z_]+\}''',
     '''sk-1234567890''',
     '''JsDs6mClPCWKqEq''',
+    # Historical Ray Grafana password (rotated, service deprecated)
+    '''oVkbwOk7AtELl2xz''',
 ]

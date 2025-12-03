@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2025-12-01
+
+### Changed
+
+- **Authentication Migration**: Migrated from Authentik to FusionAuth for OAuth/SSO
+  - Simplified authentication setup with streamlined configuration
+  - FusionAuth admin URL: `http://localhost:9011/admin/` or via Tailscale Funnel
+  - Email-based admin login (configured during setup)
+  - Port changed from 9000/9443 (Authentik) to 9011 (FusionAuth)
+  - OAuth endpoints changed from `/application/o/` to `/oauth2/`
+- **Social Login Support**: Added OAuth providers
+  - Google OAuth integration
+  - GitHub OAuth integration  
+  - Twitter OAuth integration
+- **Public HTTPS Access**: Configured Tailscale Funnel
+  - Public URL: `https://sfml-platform.tail38b60a.ts.net/`
+  - FusionAuth accessible at `https://sfml-platform.tail38b60a.ts.net/auth/admin/`
+  - Automatic SSL/TLS termination via Tailscale
+
+### Removed
+
+- Authentik OAuth provider (replaced by FusionAuth)
+- Authentik-specific containers (authentik-server, authentik-worker, authentik-postgres, authentik-redis)
+
+---
+
 ## [Unreleased]
 
 ### Added
@@ -69,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL Consolidation**: Merged 3 PostgreSQL instances into 1 shared instance
   - `mlflow-postgres` + `ray-postgres` + `inference-postgres` → `shared-postgres`
   - **Savings**: ~1 GB RAM (513 + 513 + 512 = 1538 MB → 768 MB)
-  - Authentik-postgres remains separate for security isolation
+  - FusionAuth uses its own PostgreSQL for security isolation
   - New init script: `postgres/init-databases.sh` (creates mlflow_db, ray_compute, inference)
   - Unified backup directory: `./backups/postgres/`
   - Updated all services to use `shared-postgres` with `shared_db_password` secret
@@ -106,7 +132,7 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 #### Architecture
 
 - **MLflow Stack**: 8 services (tracking server, PostgreSQL, Redis, Nginx, Grafana, Prometheus, Adminer, backup)
-- **Ray Stack**: 10 services (head node, API server, PostgreSQL, Redis, Grafana, Prometheus, Authentik OAuth)
+- **Ray Stack**: 10 services (head node, API server, PostgreSQL, Redis, Grafana, Prometheus, FusionAuth OAuth)
 - **Gateway**: Traefik v2.10 reverse proxy with Docker provider
 - **Network**: Unified `ml-platform` Docker network (172.30.0.0/16)
 - **VPN**: Tailscale integration for secure remote access
@@ -116,7 +142,7 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 - MLflow 2.9.2 tracking server with PostgreSQL backend
 - Ray 2.9.0-gpu with CUDA support (NVIDIA RTX 2070)
 - Traefik gateway with automatic service discovery
-- Authentik OAuth provider for authentication
+- FusionAuth OAuth provider for authentication
 - Prometheus + Grafana monitoring for both stacks
 - Redis shared cache (multi-database support)
 
@@ -177,7 +203,7 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 
 #### OAuth Integration
 
-- Authentik OAuth provider configured
+- FusionAuth OAuth provider configured
 - Client ID/Secret for API authentication
 - Ready for web UI authentication (not yet enforced)
 
@@ -274,14 +300,14 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 
 - Services not exposed to public internet
 - Tailscale VPN for remote access
-- Optional OAuth with Authentik
+- Optional OAuth with FusionAuth
 - Network-level isolation between services
 
 #### Current Credentials
 
 - MLflow Grafana: admin / <your-password-from-.env>
 - Ray Grafana: admin / oVkbwOk7AtELl2xz
-- Authentik: akadmin / <your-password-from-.env>
+- FusionAuth: (email-based login configured during setup)
 - Database passwords: In secrets/\*.txt files
 - OAuth secrets: In ray_compute/.env
 
@@ -457,7 +483,7 @@ Planned features:
 - **MLflow Team**: Excellent experiment tracking platform
 - **Ray Team**: Powerful distributed computing framework
 - **Traefik Team**: Robust reverse proxy with Docker integration
-- **Authentik Team**: Modern OAuth/OIDC provider
+- **FusionAuth Team**: Modern OAuth/OIDC provider with social login
 
 ---
 

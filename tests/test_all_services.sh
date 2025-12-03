@@ -75,10 +75,7 @@ test_container "ray-compute-db" || ((failed++))
 test_container "ray-grafana" || ((failed++))
 test_container "ray-prometheus" || ((failed++))
 test_container "ray-redis" || ((failed++))
-test_container "authentik-server" || ((failed++))
-test_container "authentik-worker" || ((failed++))
-test_container "authentik-postgres" || ((failed++))
-test_container "authentik-redis" || ((failed++))
+test_container "fusionauth" || ((failed++))
 echo ""
 
 # Gateway
@@ -102,7 +99,7 @@ echo ""
 echo "Ray Services:"
 test_service "Ray Dashboard" "http://localhost/ray/" "200" || ((failed++))
 test_service "Ray Grafana" "http://localhost/ray-grafana/" "302" || ((failed++))
-test_service "Authentik" "http://localhost:9000" "302" || ((failed++))
+test_service "FusionAuth" "http://localhost:9011" "200" || ((failed++))
 echo ""
 
 # Gateway

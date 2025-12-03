@@ -296,7 +296,7 @@ REDIS_HOST=ml-platform-redis
 REDIS_PORT=6379
 REDIS_DB=1
 MLFLOW_TRACKING_URI=http://mlflow-nginx:80
-AUTHENTIK_URL=http://authentik-server:9000
+FUSIONAUTH_URL=http://fusionauth:9011
 ```
 
 ---
@@ -310,8 +310,8 @@ AUTHENTIK_URL=http://authentik-server:9000
 sudo ufw allow 80/tcp comment "Traefik Gateway (MLflow, Ray)"
 sudo ufw allow 8090/tcp comment "Traefik Dashboard"
 
-# Optional: Direct Authentik (if not behind Traefik)
-sudo ufw allow 9000/tcp comment "Authentik OAuth"
+# Optional: Direct FusionAuth (if not behind Traefik)
+sudo ufw allow 9011/tcp comment "FusionAuth OAuth"
 ```
 
 ### Internal Only (No Firewall Needed)
@@ -486,7 +486,7 @@ docker compose up -d mlflow-nginx ray-compute-api
 - Access via Traefik (can add middleware)
 
 **Ray Compute (when deployed):**
-- OAuth2 via Authentik
+- OAuth2 via FusionAuth
 - JWT tokens for API
 - Session cookies (HTTP-only)
 - Role-based access (admin, premium, user)
@@ -498,8 +498,8 @@ docker compose up -d mlflow-nginx ray-compute-api
 ml-platform/mlflow-server/secrets/db_password.txt
 ml-platform/mlflow-server/secrets/grafana_password.txt
 
-# Ray
-ml-platform/ray_compute/.env (AUTHENTIK_CLIENT_SECRET, etc.)
+# Ray (FusionAuth OAuth credentials)
+ml-platform/ray_compute/.env (FUSIONAUTH_RAY_CLIENT_SECRET, etc.)
 
 # Never commit secrets to git
 echo "secrets/" >> .gitignore
@@ -590,7 +590,7 @@ curl http://localhost:8090/api/http/middlewares | jq
 ### Planned Integrations
 
 - [ ] Ray Serve + MLflow model registry
-- [ ] Unified authentication (Authentik for MLflow too)
+- [ ] Unified authentication (FusionAuth for MLflow too)
 - [ ] Shared Loki logs (both stacks)
 - [ ] Cross-stack alerts (Prometheus federation)
 - [ ] Unified backup strategy

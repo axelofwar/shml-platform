@@ -85,9 +85,3 @@ scrape_configs:
         labels:
           component: 'dcgm-exporter'
           instance: 'ml-platform-gpus'
-
-  - job_name: 'authentik'
-    static_configs:
-      - targets: ['authentik-server:9000']
-        labels:
-          component: 'authentik'

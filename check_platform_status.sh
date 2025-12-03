@@ -56,12 +56,9 @@ check_service "unified-grafana"
 check_service "dcgm-exporter"
 echo ""
 
-# Authentik Services
-echo -e "${CYAN}━━━ Authentik (OAuth/SSO) ━━━${NC}"
-check_service "authentik-postgres"
-check_service "authentik-redis"
-check_service "authentik-server"
-check_service "authentik-worker"
+# FusionAuth Services
+echo -e "${CYAN}━━━ FusionAuth (OAuth/SSO) ━━━${NC}"
+check_service "fusionauth"
 echo ""
 
 # MLflow Services
@@ -81,8 +78,8 @@ echo ""
 
 # Summary
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-RUNNING=$(sudo docker ps --filter "status=running" | grep -c "ml-platform\|mlflow\|ray\|authentik\|grafana\|prometheus" || echo "0")
-TOTAL=19
+RUNNING=$(sudo docker ps --filter "status=running" | grep -c "ml-platform\|mlflow\|ray\|fusionauth\|grafana\|prometheus" || echo "0")
+TOTAL=16
 echo -e "Running Services: ${GREEN}$RUNNING${NC}/$TOTAL"
 echo ""
 
@@ -92,6 +89,6 @@ TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "localhost")
 echo "  • MLflow UI:       http://${TAILSCALE_IP}/mlflow/"
 echo "  • Ray Dashboard:   http://${TAILSCALE_IP}/ray/"
 echo "  • Grafana:         http://${TAILSCALE_IP}/grafana/"
-echo "  • Authentik:       http://${TAILSCALE_IP}:9000/"
+echo "  • FusionAuth:      http://${TAILSCALE_IP}:9011/admin/"
 echo "  • Traefik:         http://${TAILSCALE_IP}:8090/"
 echo ""

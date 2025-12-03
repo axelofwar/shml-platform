@@ -34,6 +34,10 @@ services:
       MLFLOW_WORKERS: "8"
       MLFLOW_WORKER_CONNECTIONS: "2000"
       MLFLOW_WORKER_TIMEOUT: "3600"
+      # MLflow 3.x - Static prefix for remote access (ensures correct asset paths)
+      MLFLOW_STATIC_PREFIX: "/mlflow"
+      # MLflow 3.x Security Settings - allow internal Docker network hosts
+      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-nginx,ray-head,ray-compute-api,mlflow-api"
       # Schema & Validation
       MLFLOW_SCHEMA_VALIDATION: "true"
       MLFLOW_REQUIRE_METADATA: "true"
@@ -90,7 +94,7 @@ services:
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
       - ./logs/nginx:/var/log/nginx
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -100,25 +104,38 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.mlflow.loadbalancer.server.port=80"
-      # API Routes (highest priority)
+      # Static files route (MLflow generates /mlflow/static-files/ paths with --static-prefix)
+      # Static files don't need auth - they're just CSS/JS
+      - "traefik.http.routers.mlflow-static.rule=PathPrefix(`/mlflow/static-files`)"
+      - "traefik.http.routers.mlflow-static.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-static.service=mlflow"
+      - "traefik.http.routers.mlflow-static.priority=500"
+      # Health endpoint (no auth needed for health checks)
+      - "traefik.http.routers.mlflow-health.rule=Path(`/mlflow/health`)"
+      - "traefik.http.routers.mlflow-health.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-health.service=mlflow"
+      - "traefik.http.routers.mlflow-health.priority=600"
+      # API Routes (protected by OAuth2)
       - "traefik.http.routers.mlflow-api.rule=PathPrefix(`/api/2.0/mlflow`)"
-      - "traefik.http.routers.mlflow-api.entrypoints=web"
+      - "traefik.http.routers.mlflow-api.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api.service=mlflow"
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.mlflow-api.middlewares=oauth2-errors,oauth2-auth"
       - "traefik.http.routers.mlflow-api.priority=400"
-      # AJAX API Routes
+      # AJAX API Routes (protected by OAuth2)
       - "traefik.http.middlewares.mlflow-ajax-strip.stripprefix.prefixes=/ajax"
       - "traefik.http.routers.mlflow-ajax.rule=PathPrefix(`/ajax-api/2.0/mlflow`)"
-      - "traefik.http.routers.mlflow-ajax.entrypoints=web"
+      - "traefik.http.routers.mlflow-ajax.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-ajax.service=mlflow"
-      - "traefik.http.routers.mlflow-ajax.middlewares=mlflow-ajax-strip"
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.mlflow-ajax.middlewares=oauth2-errors,oauth2-auth,mlflow-ajax-strip"
       - "traefik.http.routers.mlflow-ajax.priority=350"
-      # UI Routes
-      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.prefixes=/mlflow"
-      - "traefik.http.middlewares.mlflow-stripprefix.stripprefix.forceslash=false"
+      # UI Routes (protected by OAuth2)
       - "traefik.http.routers.mlflow-ui.rule=PathPrefix(`/mlflow`)"
-      - "traefik.http.routers.mlflow-ui.entrypoints=web"
+      - "traefik.http.routers.mlflow-ui.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-ui.service=mlflow"
-      - "traefik.http.routers.mlflow-ui.middlewares=mlflow-stripprefix"
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.mlflow-ui.middlewares=oauth2-errors,oauth2-auth"
       - "traefik.http.routers.mlflow-ui.priority=10"
 
   # ==========================================================================
@@ -145,11 +162,11 @@ services:
       # MLflow Connection
       MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
       MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
-      # OAuth (optional)
+      # OAuth (optional - use FusionAuth credentials from .env)
       OAUTH_ENABLED: ${OAUTH_ENABLED:-false}
-      AUTHENTIK_URL: ${AUTHENTIK_INTERNAL_URL:-http://authentik-server:9000}
-      MLFLOW_OAUTH_CLIENT_ID: ${MLFLOW_OAUTH_CLIENT_ID}
-      MLFLOW_OAUTH_CLIENT_SECRET: ${MLFLOW_OAUTH_CLIENT_SECRET}
+      FUSIONAUTH_URL: ${FUSIONAUTH_URL:-http://fusionauth:9011}
+      MLFLOW_OAUTH_CLIENT_ID: ${FUSIONAUTH_MLFLOW_CLIENT_ID}
+      MLFLOW_OAUTH_CLIENT_SECRET: ${FUSIONAUTH_MLFLOW_CLIENT_SECRET}
     volumes:
       - /mlflow/artifacts:/mlflow/artifacts
       - ./config/schema:/mlflow/config/schema:ro
@@ -169,14 +186,18 @@ services:
       - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
       # Custom API routes (highest priority to override MLflow native API)
       - "traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)"
-      - "traefik.http.routers.mlflow-api-v1.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-v1.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api-v1.service=mlflow-api-service"
       - "traefik.http.routers.mlflow-api-v1.priority=2147483647"
+      # SECURITY: Require authentication for API access
+      - "traefik.http.routers.mlflow-api-v1.middlewares=oauth2-errors,oauth2-auth"
       # API Documentation
       - "traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`) || PathPrefix(`/api/v1/openapi.json`)"
-      - "traefik.http.routers.mlflow-api-docs.entrypoints=web"
+      - "traefik.http.routers.mlflow-api-docs.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api-docs.service=mlflow-api-service"
       - "traefik.http.routers.mlflow-api-docs.priority=450"
+      # SECURITY: Require authentication for API docs (exposes API schema)
+      - "traefik.http.routers.mlflow-api-docs.middlewares=oauth2-errors,oauth2-auth"
 
   # ==========================================================================
   # MLFLOW PROMETHEUS - Service-Specific Metrics (30d retention)

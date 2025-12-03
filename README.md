@@ -74,7 +74,7 @@ All services accessible via Traefik routing:
 | **MLflow UI** | http://localhost/mlflow/ | None (open) |
 | **Ray Dashboard** | http://localhost/ray/ | None (open) |
 | **Grafana** | http://localhost/grafana/ | admin / (from secrets/) |
-| **Authentik** | http://localhost:9000/ | akadmin / (from secrets/) |
+| **FusionAuth** | http://localhost:9011/admin/ | Email-based login |
 | **Traefik** | http://localhost:8090/ | Dashboard |
 
 ### Remote Access (Tailscale)
@@ -199,7 +199,7 @@ sfml-platform/
 ├── stop_all.sh                     # Safe shutdown
 ├── check_platform_status.sh        # Status checker
 │
-├── docker-compose.yml              # Main services (MLflow, Ray, Authentik)
+├── docker-compose.yml              # Main services (MLflow, Ray, FusionAuth)
 ├── docker-compose.infra.yml        # Infrastructure (Traefik, PostgreSQL, Redis)
 │
 ├── monitoring/
@@ -221,7 +221,7 @@ sfml-platform/
 │   ├── monitoring/                 # Ray Prometheus
 │   └── .env                        # Ray environment
 │
-├── authentik/                      # OAuth/SSO config
+├── fusionauth/                     # OAuth/SSO config
 ├── secrets/                        # Generated passwords
 ├── scripts/                        # Utility scripts
 ├── tests/                          # All test scripts (unit, integration)
@@ -306,7 +306,7 @@ sudo docker network create --subnet=172.30.0.0/16 ml-platform
 - ✅ **CI/CD security scanning** - GitGuardian, Trivy, pip-audit on all PRs
 - ✅ **No privileged containers** - NVIDIA CDI mode for GPU access
 - ✅ **Scoped device access** - Only required devices mounted
-- ✅ **OAuth/SSO ready** - Authentik integration (disabled by default)
+- ✅ **OAuth/SSO ready** - FusionAuth with social logins (Google, GitHub, Twitter)
 - ✅ **Secrets management** - All credentials in gitignored `secrets/` directory
 - ✅ **Secure remote access** - Tailscale VPN for encrypted connections
 - ✅ **No hardcoded secrets** - All credentials loaded from environment
@@ -341,7 +341,7 @@ All sensitive credentials are stored in `secrets/` (gitignored):
 secrets/
 ├── shared_db_password.txt     # PostgreSQL password
 ├── grafana_password.txt       # Grafana admin password
-├── authentik_secret_key.txt   # Authentik encryption key
+├── fusionauth_api_key.txt     # FusionAuth API key
 ├── authentik_db_password.txt  # Authentik database password
 └── authentik_bootstrap_password.txt  # Initial admin password
 ```

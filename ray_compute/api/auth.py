@@ -1,5 +1,5 @@
 """
-OAuth2 authentication with Authentik
+OAuth2 authentication with FusionAuth
 Session management and token validation
 """
 
@@ -18,17 +18,57 @@ from .models import User
 from .database import get_db
 
 
-# Environment configuration
-AUTHENTIK_URL = os.getenv("AUTHENTIK_URL", "http://localhost:9000")
-AUTHENTIK_CLIENT_ID = os.getenv("AUTHENTIK_CLIENT_ID")
-AUTHENTIK_CLIENT_SECRET = os.getenv("AUTHENTIK_CLIENT_SECRET")
+# Environment configuration - Support both FusionAuth and legacy Authentik env vars
+FUSIONAUTH_URL = os.getenv(
+    "FUSIONAUTH_URL", os.getenv("AUTHENTIK_URL", "http://fusionauth:9011")
+)
+FUSIONAUTH_CLIENT_ID = os.getenv(
+    "FUSIONAUTH_CLIENT_ID",
+    os.getenv("FUSIONAUTH_RAY_CLIENT_ID", os.getenv("AUTHENTIK_CLIENT_ID")),
+)
+FUSIONAUTH_CLIENT_SECRET = os.getenv(
+    "FUSIONAUTH_CLIENT_SECRET",
+    os.getenv("FUSIONAUTH_RAY_CLIENT_SECRET", os.getenv("AUTHENTIK_CLIENT_SECRET")),
+)
 API_SECRET_KEY = os.getenv("API_SECRET_KEY")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-# OAuth2 configuration
+# Public URL for authentication (what users see)
+PUBLIC_AUTH_URL = os.getenv(
+    "PUBLIC_AUTH_URL", "https://sfml-platform.tail38b60a.ts.net/auth"
+)
+ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "platform administrator")
+
+# Role hierarchy: admin > premium > user > viewer
+# Viewers can only read, not submit jobs
+ROLE_HIERARCHY = {
+    "admin": 4,
+    "premium": 3,
+    "user": 2,
+    "viewer": 1,
+}
+
+
+def can_submit_jobs(role: str) -> bool:
+    """
+    Check if a role has permission to submit jobs.
+    Viewers are read-only and cannot submit jobs.
+    """
+    return role in ["admin", "premium", "user"]
+
+
+def has_role_permission(user_role: str, required_role: str) -> bool:
+    """
+    Check if user_role has at least the permissions of required_role.
+    Uses role hierarchy for comparison.
+    """
+    return ROLE_HIERARCHY.get(user_role, 0) >= ROLE_HIERARCHY.get(required_role, 0)
+
+
+# OAuth2 configuration for FusionAuth
 oauth2_scheme = OAuth2AuthorizationCodeBearer(
-    authorizationUrl=f"{AUTHENTIK_URL}/application/o/authorize/",
-    tokenUrl=f"{AUTHENTIK_URL}/application/o/token/",
+    authorizationUrl=f"{FUSIONAUTH_URL}/oauth2/authorize",
+    tokenUrl=f"{FUSIONAUTH_URL}/oauth2/token",
 )
 
 
@@ -40,18 +80,18 @@ class AuthError(Exception):
         self.detail = detail
 
 
-async def verify_authentik_token(token: str) -> Dict[str, Any]:
+async def verify_fusionauth_token(token: str) -> Dict[str, Any]:
     """
-    Verify OAuth token with Authentik introspection endpoint
+    Verify OAuth token with FusionAuth introspection endpoint
     """
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                f"{AUTHENTIK_URL}/application/o/introspect/",
+                f"{FUSIONAUTH_URL}/oauth2/introspect",
                 data={
                     "token": token,
-                    "client_id": AUTHENTIK_CLIENT_ID,
-                    "client_secret": AUTHENTIK_CLIENT_SECRET,
+                    "client_id": FUSIONAUTH_CLIENT_ID,
+                    "client_secret": FUSIONAUTH_CLIENT_SECRET,
                 },
                 timeout=10.0,
             )
@@ -75,12 +115,12 @@ async def verify_authentik_token(token: str) -> Dict[str, Any]:
             )
 
 
-async def get_user_from_authentik(token: str, db: Session) -> User:
+async def get_user_from_fusionauth(token: str, db: Session) -> User:
     """
-    Get or create user from Authentik OAuth token
+    Get or create user from FusionAuth OAuth token
     """
-    # Verify token with Authentik
-    token_data = await verify_authentik_token(token)
+    # Verify token with FusionAuth
+    token_data = await verify_fusionauth_token(token)
 
     oauth_sub = token_data.get("sub")
     email = token_data.get("email")
@@ -94,13 +134,17 @@ async def get_user_from_authentik(token: str, db: Session) -> User:
 
     if not user:
         # Create new user from OAuth data
-        # Determine role from Authentik groups
+        # Determine role from FusionAuth groups
         groups = token_data.get("groups", [])
-        role = "user"  # default
-        if "admins" in groups:
+        role = "viewer"  # default - read-only access
+        if "platform-admins" in groups:
             role = "admin"
         elif "premium" in groups:
             role = "premium"
+        elif "ray-users" in groups:
+            role = "user"
+        elif "ray-viewers" in groups:
+            role = "viewer"
 
         from .models import UserQuota
 
@@ -139,12 +183,16 @@ async def get_user_from_authentik(token: str, db: Session) -> User:
     # Update last login
     user.last_login = datetime.utcnow()
 
-    # Update role if changed in Authentik
+    # Update role if changed in FusionAuth
     groups = token_data.get("groups", [])
-    if "admins" in groups and user.role != "admin":
+    if "platform-admins" in groups and user.role != "admin":
         user.role = "admin"
     elif "premium" in groups and user.role not in ["admin", "premium"]:
         user.role = "premium"
+    elif "ray-users" in groups and user.role not in ["admin", "premium", "user"]:
+        user.role = "user"
+    elif "ray-viewers" in groups and user.role not in ["admin", "premium", "user"]:
+        user.role = "viewer"
 
     db.commit()
 
@@ -158,7 +206,7 @@ async def get_current_user(
     Dependency to get current authenticated user
     """
     try:
-        user = await get_user_from_authentik(token, db)
+        user = await get_user_from_fusionauth(token, db)
 
         if not user.is_active:
             raise HTTPException(

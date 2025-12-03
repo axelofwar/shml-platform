@@ -34,7 +34,19 @@ import sys
 import time
 from typing import Dict, Optional, Tuple
 
-from ray.job_submission import JobSubmissionClient, JobStatus
+# Skip tests if ray is not installed
+try:
+    from ray.job_submission import JobSubmissionClient, JobStatus
+
+    HAS_RAY = True
+except ImportError:
+    HAS_RAY = False
+    JobSubmissionClient = None
+    JobStatus = None
+
+import pytest
+
+pytestmark = pytest.mark.skipif(not HAS_RAY, reason="ray package not installed")
 
 
 # Colors for terminal output
