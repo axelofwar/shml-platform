@@ -5,14 +5,22 @@ Pytest configuration and shared fixtures for ML Platform tests
 import pytest
 import os
 import tempfile
-from typing import Dict, List
+import requests
+from typing import Dict, List, Optional
 
 # Test environment configuration
 TEST_HOSTS = {
     "local": "http://localhost",
     "lan": "http://localhost",
-    "vpn": "http://${TAILSCALE_IP}",
+    "vpn": os.getenv("TAILSCALE_IP", "http://localhost"),  # Resolve from env
 }
+
+# OAuth2/FusionAuth configuration
+FUSIONAUTH_URL = os.getenv("FUSIONAUTH_URL", "http://localhost:9011")
+FUSIONAUTH_CLIENT_ID = os.getenv("FUSIONAUTH_CLIENT_ID", "")
+FUSIONAUTH_CLIENT_SECRET = os.getenv("FUSIONAUTH_CLIENT_SECRET", "")
+TEST_USERNAME = os.getenv("TEST_USERNAME", "")
+TEST_PASSWORD = os.getenv("TEST_PASSWORD", "")
 
 # Inference stack endpoints
 INFERENCE_ENDPOINTS = {
@@ -37,6 +45,53 @@ os.makedirs(os.environ["MLFLOW_ARTIFACT_ROOT"], exist_ok=True)
 def test_hosts() -> Dict[str, str]:
     """Provide test host URLs for local, LAN, and VPN access"""
     return TEST_HOSTS
+
+
+@pytest.fixture(scope="session")
+def auth_token() -> Optional[str]:
+    """
+    Get OAuth2 access token for authenticated tests.
+    Returns None if credentials are not configured.
+    """
+    if not all([FUSIONAUTH_CLIENT_ID, TEST_USERNAME, TEST_PASSWORD]):
+        return None
+
+    try:
+        # Try to get token from FusionAuth
+        response = requests.post(
+            f"{FUSIONAUTH_URL}/oauth2/token",
+            data={
+                "grant_type": "password",
+                "client_id": FUSIONAUTH_CLIENT_ID,
+                "client_secret": FUSIONAUTH_CLIENT_SECRET,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
+                "scope": "openid profile email",
+            },
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return response.json().get("access_token")
+    except requests.exceptions.RequestException:
+        pass
+    return None
+
+
+@pytest.fixture(scope="session")
+def auth_headers(auth_token: Optional[str]) -> Dict[str, str]:
+    """Get authorization headers for authenticated requests"""
+    if auth_token:
+        return {"Authorization": f"Bearer {auth_token}"}
+    return {}
+
+
+@pytest.fixture(scope="session")
+def requires_auth(auth_token: Optional[str]):
+    """Skip test if authentication is not configured"""
+    if not auth_token:
+        pytest.skip(
+            "Authentication not configured (set TEST_USERNAME, TEST_PASSWORD, FUSIONAUTH_CLIENT_ID)"
+        )
 
 
 @pytest.fixture(scope="session")
@@ -226,6 +281,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "vpn: test VPN access")
     config.addinivalue_line("markers", "inference: test inference stack")
     config.addinivalue_line("markers", "gpu: test requires GPU")
+    config.addinivalue_line("markers", "security: security-related test")
+    config.addinivalue_line("markers", "external: test requires external service")
+    config.addinivalue_line("markers", "order: test execution order")
 
 
 def pytest_collection_modifyitems(config, items):

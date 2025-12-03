@@ -34,9 +34,7 @@ echo ""
 echo "3. Checking containers..."
 
 EXPECTED_CONTAINERS=(
-    "authentik-server"
-    "authentik-postgres"
-    "authentik-redis"
+    "fusionauth"
     "ray-compute-api"
     "ray-compute-ui"
     "ray-redis"

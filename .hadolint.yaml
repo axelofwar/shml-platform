@@ -1,0 +1,14 @@
+# Hadolint configuration for SFML Platform
+# https://github.com/hadolint/hadolint
+
+# Ignore common warnings that don't apply to our use case
+ignored:
+  # We use requirements.txt files with pinned versions
+  - DL3013  # Pin versions in pip
+  - DL3008  # Pin versions in apt-get (we want latest security patches)
+  - DL3015  # Avoid additional packages (we intentionally install what we need)
+  - DL3059  # Multiple consecutive RUN (sometimes clearer)
+
+# Treat these as warnings instead of errors
+warning:
+  - DL3042  # Avoid cache directory with pip

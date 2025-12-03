@@ -27,7 +27,7 @@ TAILSCALE_IP=<TAILSCALE_IP>
 | **MLflow API** | `http://<TAILSCALE_IP>/api/2.0/mlflow/` | Standard MLflow REST API |
 | **Ray Dashboard** | `http://<TAILSCALE_IP>/ray/` | Job monitoring & cluster status |
 | **Traefik Dashboard** | `http://<TAILSCALE_IP>:8090/` | Gateway routing & health |
-| **Authentik** | `http://<TAILSCALE_IP>:9000/` | OAuth authentication |
+| **FusionAuth** | `http://<TAILSCALE_IP>:9011/admin/` | OAuth authentication |
 
 ### Via Local Network
 Replace `<TAILSCALE_IP>` with `10.0.0.163` in the URLs above.
@@ -58,12 +58,13 @@ Replace `<TAILSCALE_IP>` with `10.0.0.163` in the URLs above.
 - **User:** admin
 - **Password:** `oVkbwOk7AtELl2xz`
 
-### Authentik OAuth
-- **URL:** http://<TAILSCALE_IP>:9000/
-- **Admin User:** akadmin
-- **Admin Password:** `<your-password-from-.env>`
-- **Client ID:** ray-compute-api
-- **Client Secret:** `5fPlqHZ7xHRmnG7Lf93YhAy5GCLPXX9iaUXp1GpCxIZ9pTk3FwDeGEsXSUUBUJGDBEeWwIVkE1n9DY87pcY2rhJDhnNXVLmBPvyrUm6zZmX7XSIf62IIDHsUJ2YUhfq2`
+### FusionAuth OAuth
+- **URL:** http://<TAILSCALE_IP>:9011/admin/
+- **Public URL:** https://sfml-platform.tail38b60a.ts.net/auth/admin/
+- **Admin Login:** Email-based (configured during setup)
+- **Social Logins:** Google, GitHub, Twitter supported
+- **Client ID:** ray-compute-api (or configured application ID)
+- **OAuth Endpoints:** `/oauth2/authorize`, `/oauth2/token`
 
 ---
 
@@ -437,7 +438,7 @@ sudo systemctl restart nvidia-mps
 - ✅ Traefik unified routing
 - ✅ Tailscale VPN access
 - ✅ All monitoring dashboards (Grafana, Prometheus)
-- ✅ Authentik OAuth (configured, ready to enable)
+- ✅ FusionAuth OAuth with social logins (Google, GitHub, Twitter)
 
 **Platform Version:** 2.0  
 **Last Tested:** 2025-11-24  

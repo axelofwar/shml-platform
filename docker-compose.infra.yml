@@ -26,13 +26,16 @@ services:
       - --providers.docker.network=ml-platform
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
-      - --log.level=INFO
+      - --log.level=WARN
       - --accesslog=true
       - --metrics.prometheus=true
       - --ping=true
     ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
+      # Bind to LAN IP only - leave Tailscale IP (100.80.251.28) free for tailscale serve
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
+      - "10.0.0.163:80:80"
+      - "10.0.0.163:443:443"
       - "0.0.0.0:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -46,7 +49,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
+      - "traefik.http.routers.traefik.entrypoints=web,websecure"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+      # SECURITY: Protect Traefik dashboard with OAuth2 - requires authentication
+      - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth"
 
   # ==========================================================================
   # SHARED DATA LAYER
@@ -110,135 +116,224 @@ services:
       - "6379"
 
   # ==========================================================================
-  # AUTHENTIK - OAuth/SSO (Isolated Infrastructure)
+  # FUSIONAUTH - OAuth/SSO (Primary Auth Provider)
   # ==========================================================================
-  authentik-db:
-    image: postgres:15-alpine
-    container_name: authentik-postgres
+  fusionauth:
+    image: fusionauth/fusionauth-app:1.52.0
+    container_name: fusionauth
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: '0.72'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-    environment:
-      POSTGRES_DB: authentik
-      POSTGRES_USER: authentik
-      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
-    volumes:
-      - authentik-db:/var/lib/postgresql/data
-    networks:
-      - ml-platform
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U authentik"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  authentik-redis:
-    image: redis:7-alpine
-    container_name: authentik-redis
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.67'
-          memory: 192M
-        reservations:
-          cpus: '0.05'
-          memory: 64M
-    command: --save 60 1 --loglevel warning
-    volumes:
-      - authentik-redis:/data
-    networks:
-      - ml-platform
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  authentik-server:
-    image: ghcr.io/goauthentik/server:2024.8
-    container_name: authentik-server
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.87'
-          memory: 384M
+          cpus: '1.0'
+          memory: 512M
         reservations:
           cpus: '0.25'
           memory: 256M
-    command: server
     environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY must be set}
-      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?AUTHENTIK_BOOTSTRAP_PASSWORD must be set}
-      AUTHENTIK_BOOTSTRAP_EMAIL: admin@ml-platform.local
-      AUTHENTIK_POSTGRESQL__HOST: authentik-db
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
-      AUTHENTIK_AVATARS: "gravatar,initials"
+      DATABASE_URL: jdbc:postgresql://shared-postgres:5432/fusionauth
+      DATABASE_ROOT_USERNAME: postgres
+      DATABASE_ROOT_PASSWORD: ${SHARED_DB_PASSWORD}
+      DATABASE_USERNAME: fusionauth
+      DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
+      FUSIONAUTH_APP_MEMORY: 384M
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-development}
+      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/auth
+      SEARCH_TYPE: database
     volumes:
-      - authentik-media:/media
-      - authentik-custom-templates:/templates
+      - fusionauth-config:/usr/local/fusionauth/config
     networks:
       - ml-platform
     ports:
-      - "9000:9000"
-      - "9443:9443"
+      - "9011:9011"
     depends_on:
-      authentik-db:
-        condition: service_healthy
-      authentik-redis:
+      shared-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "ak healthcheck || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:9011/api/status"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 90s
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      # Headers middleware to fix X-Forwarded-Proto for HTTPS
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      # Main router for /auth paths
+      - "traefik.http.routers.fusionauth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.fusionauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth.priority=200"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.regex=^/auth(.*)"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.replacement=$$1"
+      - "traefik.http.routers.fusionauth.middlewares=fusionauth-headers,fusionauth-rewrite"
+      # Additional routers for FusionAuth paths (it generates absolute paths from root)
+      - "traefik.http.routers.fusionauth-admin.rule=PathPrefix(`/admin`)"
+      - "traefik.http.routers.fusionauth-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-admin.priority=150"
+      - "traefik.http.routers.fusionauth-admin.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-admin.service=fusionauth"
+      - "traefik.http.routers.fusionauth-css.rule=PathPrefix(`/css`)"
+      - "traefik.http.routers.fusionauth-css.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-css.priority=150"
+      - "traefik.http.routers.fusionauth-css.service=fusionauth"
+      - "traefik.http.routers.fusionauth-js.rule=PathPrefix(`/js`)"
+      - "traefik.http.routers.fusionauth-js.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-js.priority=150"
+      - "traefik.http.routers.fusionauth-js.service=fusionauth"
+      - "traefik.http.routers.fusionauth-images.rule=PathPrefix(`/images`)"
+      - "traefik.http.routers.fusionauth-images.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-images.priority=150"
+      - "traefik.http.routers.fusionauth-images.service=fusionauth"
+      - "traefik.http.routers.fusionauth-fonts.rule=PathPrefix(`/fonts`)"
+      - "traefik.http.routers.fusionauth-fonts.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-fonts.priority=150"
+      - "traefik.http.routers.fusionauth-fonts.service=fusionauth"
+      # FusionAuth API endpoints
+      - "traefik.http.routers.fusionauth-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.fusionauth-api.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-api.priority=100"
+      - "traefik.http.routers.fusionauth-api.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-api.service=fusionauth"
+      - "traefik.http.routers.fusionauth-oauth.rule=PathPrefix(`/oauth2`)"
+      - "traefik.http.routers.fusionauth-oauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-oauth.priority=150"
+      - "traefik.http.routers.fusionauth-oauth.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-oauth.service=fusionauth"
+      - "traefik.http.routers.fusionauth-well-known.rule=PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.fusionauth-well-known.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-well-known.priority=150"
+      - "traefik.http.routers.fusionauth-well-known.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-well-known.service=fusionauth"
+      # FusionAuth AJAX endpoints (admin UI uses these)
+      - "traefik.http.routers.fusionauth-ajax.rule=PathPrefix(`/ajax`)"
+      - "traefik.http.routers.fusionauth-ajax.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-ajax.priority=150"
+      - "traefik.http.routers.fusionauth-ajax.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-ajax.service=fusionauth"
+      - "traefik.http.services.fusionauth.loadbalancer.server.port=9011"
 
-  authentik-worker:
-    image: ghcr.io/goauthentik/server:2024.8
-    container_name: authentik-worker
+  # ==========================================================================
+  # OAUTH2-PROXY - Forward Authentication for Protected Services
+  # ==========================================================================
+  # OAuth2-Proxy acts as a gatekeeper for all protected services.
+  # It integrates with FusionAuth via OIDC and checks that users have valid roles.
+  #
+  # ROLE-BASED ACCESS CONTROL:
+  # - Users MUST be registered to the OAuth2-Proxy application in FusionAuth
+  # - Users MUST have at least one role: admin, developer, or viewer
+  # - If a user authenticates but has no role, they see an "access denied" message
+  # - Self-registration is disabled - admins must create users and assign roles
+  #
+  # To grant access to a new user:
+  # 1. Create user in FusionAuth (Users -> Add)
+  # 2. Add registration for OAuth2-Proxy application
+  # 3. Assign at least "viewer" role
+  # ==========================================================================
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: oauth2-proxy
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: '0.47'
-          memory: 205M
+          cpus: '0.5'
+          memory: 128M
         reservations:
           cpus: '0.1'
-          memory: 128M
-    command: worker
+          memory: 64M
     environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY must be set}
-      AUTHENTIK_POSTGRESQL__HOST: authentik-db
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?AUTHENTIK_DB_PASSWORD must be set}
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      # Provider configuration - FusionAuth as OIDC provider
+      OAUTH2_PROXY_PROVIDER: oidc
+      # Issuer URL without /auth since we route /.well-known and /oauth2 directly to FusionAuth
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}
+      OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${FUSIONAUTH_PROXY_CLIENT_SECRET}
+
+      # Cookie configuration
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_DOMAINS: ".${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_COOKIE_NAME: "_sfml_oauth2"
+
+      # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
+      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: ".${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      # Proxy prefix - tells oauth2-proxy to use /oauth2-proxy instead of default /oauth2
+      OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
+
+      # Upstream configuration (for auth verification only)
+      OAUTH2_PROXY_UPSTREAMS: "static://200"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+
+      # OIDC scope - request roles from FusionAuth
+      # FusionAuth includes 'roles' claim in id_token by default for registered users
+      OAUTH2_PROXY_SCOPE: "openid email profile"
+
+      # ROLE-BASED ACCESS CONTROL
+      # Use FusionAuth's native 'roles' claim (not groups)
+      # oauth2-proxy treats roles as groups internally
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "roles"
+
+      # NOTE: ALLOWED_GROUPS temporarily disabled for debugging
+      # FusionAuth requires JWT Populate lambda to include roles in id_token
+      # Re-enable after confirming lambda is configured:
+      # OAUTH2_PROXY_ALLOWED_GROUPS: "admin,developer,viewer"
+
+      # Access control - NO public registration, email domain not restricted
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "false"
+
+      # Headers to pass to upstream services
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER: "true"
+
+      # Session configuration
+      OAUTH2_PROXY_SESSION_STORE_TYPE: "cookie"
+      OAUTH2_PROXY_SKIP_AUTH_ROUTES: "^/auth/.*,^/health.*,^/api/status.*"
+
+      # Custom templates for better user experience
+      # Show clear message when user lacks required role
+      OAUTH2_PROXY_CUSTOM_SIGN_IN_LOGO: "-"
+      OAUTH2_PROXY_BANNER: "-"
+      OAUTH2_PROXY_FOOTER: "SFML Platform - Contact your administrator if you need access"
+
+      # Custom templates directory for error pages
+      OAUTH2_PROXY_CUSTOM_TEMPLATES_DIR: "/templates"
     volumes:
-      - authentik-media:/media
-      - authentik-certs:/certs
-      - authentik-custom-templates:/templates
+      - ./oauth2-proxy/templates:/templates:ro
     networks:
       - ml-platform
     depends_on:
-      authentik-db:
+      fusionauth:
         condition: service_healthy
-      authentik-redis:
-        condition: service_healthy
+    # Note: oauth2-proxy is a scratch/distroless image with no shell tools
+    # Using disable healthcheck so Traefik uses container running status instead
+    healthcheck:
+      disable: true
+    labels:
+      - "traefik.enable=true"
+      # OAuth2-Proxy routes - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
+      # OAuth2-Proxy handles the /oauth2-proxy prefix internally via OAUTH2_PROXY_PROXY_PREFIX
+      - "traefik.http.routers.oauth2-proxy.rule=PathPrefix(`/oauth2-proxy`)"
+      - "traefik.http.routers.oauth2-proxy.entrypoints=web,websecure"
+      - "traefik.http.routers.oauth2-proxy.priority=300"
+      - "traefik.http.services.oauth2-proxy.loadbalancer.server.port=4180"
+
+      # Forward auth middleware - other services use this to verify auth
+      # OAuth2-Proxy serves auth endpoint at /oauth2-proxy/auth due to PROXY_PREFIX setting
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.address=http://oauth2-proxy:4180/oauth2-proxy/auth"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,Authorization"
+
+      # Error handling middleware - redirects 401/403 to OAuth2 sign-in page
+      # This is CRITICAL: without this, users see "Unauthorized" instead of being redirected to login
+      # The {url} placeholder is replaced with the original request URL for redirect after login
+      - "traefik.http.middlewares.oauth2-errors.errors.status=401-403"
+      - "traefik.http.middlewares.oauth2-errors.errors.service=oauth2-proxy"
+      - "traefik.http.middlewares.oauth2-errors.errors.query=/oauth2-proxy/sign_in?rd={url}"
 
   # ==========================================================================
   # SYSTEM MONITORING
@@ -335,10 +430,12 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
-      - "traefik.http.routers.prometheus.entrypoints=web"
+      - "traefik.http.routers.prometheus.entrypoints=web,websecure"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
       - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
-      - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
+      # OAuth2 protection - requires authentication for Prometheus
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,prometheus-strip"
       - "traefik.http.routers.prometheus.priority=100"
 
   unified-grafana:
@@ -357,13 +454,39 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: "http://localhost/grafana"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/grafana"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_INSTALL_PLUGINS: "grafana-piechart-panel"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Anonymous access enabled for Ray Dashboard iframe embedding
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_SECURITY_DISABLE_GRAVATAR: "true"
+      # =====================================================================
+      # Ray Dashboard Embedding Configuration
+      # Required for Ray Dashboard to display Grafana visualizations
+      # See: https://docs.ray.io/en/latest/cluster/configure-manage-dashboard.html
+      # =====================================================================
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "none"
+      # X-Frame-Options must be disabled for iframe embedding
+      GF_SECURITY_X_FRAME_OPTIONS: ""
+      # FusionAuth OAuth integration
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: "SFML Platform"
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${FUSIONAUTH_GRAFANA_CLIENT_ID}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${FUSIONAUTH_GRAFANA_CLIENT_SECRET}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
+      # Auth URL uses public domain (browser redirect), token/api use internal docker network
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/oauth2/authorize"
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://fusionauth:9011/oauth2/token"
+      GF_AUTH_GENERIC_OAUTH_API_URL: "http://fusionauth:9011/oauth2/userinfo"
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "false"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(groups[*], 'platform-admins') && 'Admin' || contains(groups[*], 'grafana-users') && 'Editor' || 'Viewer'"
+      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
     volumes:
       - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
@@ -383,15 +506,22 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
-      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.routers.grafana.entrypoints=web,websecure"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
       - "traefik.http.routers.grafana.priority=100"
+      # OAuth2 protection - requires authentication for Grafana
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.grafana.middlewares=oauth2-errors,oauth2-auth"
 
 secrets:
   shared_db_password:
     file: ./secrets/shared_db_password.txt
   grafana_password:
     file: ./secrets/grafana_password.txt
+  fusionauth_db_password:
+    file: ./secrets/fusionauth_db_password.txt
+  oauth2_proxy_cookie_secret:
+    file: ./secrets/oauth2_proxy_cookie_secret.txt
 
 volumes:
   # Shared Data
@@ -406,17 +536,9 @@ volumes:
   unified-grafana-data:
     name: unified-grafana-data
 
-  # Authentik
-  authentik-db:
-    name: authentik-postgres-data
-  authentik-redis:
-    name: authentik-redis-data
-  authentik-media:
-    name: authentik-media
-  authentik-certs:
-    name: authentik-certs
-  authentik-custom-templates:
-    name: authentik-custom-templates
+  # FusionAuth
+  fusionauth-config:
+    name: fusionauth-config
 
 networks:
   ml-platform:

@@ -5,7 +5,7 @@ cd /home/axelofwar/Desktop/Projects/mlflow-server
 
 # Ensure we're in docker group
 if ! groups | grep -q docker; then
-    exec sg docker "$0 $@"
+    exec sg docker "$0" "$@"
 fi
 echo "🔨 Rebuilding MLflow container..."
 docker compose build mlflow

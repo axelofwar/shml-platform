@@ -1,0 +1,30 @@
+# GitGuardian configuration
+# Allows test fixture passwords that are not real secrets
+
+version: 2
+
+secret:
+  # Ignore test fixture passwords - these are fake passwords for test users
+  # They only exist in test files and are never used in production
+  ignored-matches:
+    # Test user passwords in tests/platform_admin/conftest.py
+    - match: "BobTest123!@#"
+      name: "Test fixture password for Bob test user"
+    - match: "AliceTest123!@#"
+      name: "Test fixture password for Alice test user"
+    - match: "JohnTest123!@#"
+      name: "Test fixture password for John test user"
+    - match: "testPassword123"
+      name: "Mock password in unit tests"
+    - match: "test-api-key"
+      name: "Mock API key for unit tests"
+    - match: "test-key"
+      name: "Mock API key for unit tests"
+    - match: "custom-key"
+      name: "Mock API key for unit tests"
+
+  # Paths where test fixtures are expected
+  ignored-paths:
+    - "tests/**/*conftest.py"
+    - "tests/**/test_*.py"
+    - "**/test_fixtures/**"

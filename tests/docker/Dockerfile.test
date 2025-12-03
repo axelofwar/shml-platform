@@ -1,0 +1,70 @@
+# SFML Platform - Unified Test Container
+# Uses actual service requirements for testing parity with production
+#
+# Build: docker build -t sfml-test -f tests/docker/Dockerfile.test .
+# Run:   docker run --rm -v $(pwd):/workspace sfml-test pytest /workspace/tests -v
+
+FROM python:3.11-slim
+
+LABEL maintainer="SFML Platform Team"
+LABEL description="Unified test container for SFML Platform integration testing"
+
+WORKDIR /workspace
+
+# Install system dependencies needed by all services
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    gcc \
+    g++ \
+    make \
+    # Database clients
+    postgresql-client \
+    # Network tools for connectivity tests
+    curl \
+    wget \
+    iputils-ping \
+    netcat-openbsd \
+    telnet \
+    dnsutils \
+    # Git for repo operations
+    git \
+    # Shell script linting
+    shellcheck \
+    # JSON processing
+    jq \
+    # Process management
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for faster package management
+RUN pip install --no-cache-dir uv
+
+# Copy requirements from actual services (ensures parity with production)
+COPY ray_compute/requirements.txt /tmp/ray-requirements.txt
+COPY mlflow-server/docker/mlflow/requirements.txt /tmp/mlflow-requirements.txt
+COPY tests/requirements.txt /tmp/test-requirements.txt
+
+# Install all service requirements (production parity)
+RUN uv pip install --system --no-cache -r /tmp/ray-requirements.txt && \
+    uv pip install --system --no-cache -r /tmp/mlflow-requirements.txt && \
+    uv pip install --system --no-cache -r /tmp/test-requirements.txt
+
+# Install additional testing tools not in service requirements
+RUN uv pip install --system --no-cache \
+    "pytest-mock>=3.12.0" \
+    "black>=23.0.0" \
+    "ruff>=0.1.0" \
+    "mypy>=1.7.0"
+
+# Create test output directories (outside /workspace which will be mounted read-only)
+RUN mkdir -p /test-results /coverage
+
+# Set environment variables for testing
+ENV PYTHONPATH=/workspace
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TESTING=true
+
+# Default command runs pytest
+ENTRYPOINT ["pytest"]
+CMD ["--help"]

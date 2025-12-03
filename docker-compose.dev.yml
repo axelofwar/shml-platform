@@ -1,0 +1,87 @@
+# Development Infrastructure
+# Separate from production - uses different ports
+
+services:
+  # Dev Redis (port 6380)
+  dev-redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - dev-network
+
+  # Dev PostgreSQL (for testing)
+  dev-postgres:
+    image: postgres:15-alpine
+    container_name: dev-postgres
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: dev_db
+    volumes:
+      - dev-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"  # Different port from prod (5432) and mlflow-dev (5433)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d dev_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev-network
+
+  # Dev Test Runner Container
+  # Runs tests with production parity (same requirements as services)
+  dev-test:
+    build:
+      context: .
+      dockerfile: tests/docker/Dockerfile.test
+    container_name: dev-test-runner
+    volumes:
+      # Mount project read-only for testing
+      - .:/workspace:ro
+      # Writable output directories
+      - dev-test-results:/test-results
+      - dev-coverage:/coverage
+    working_dir: /workspace
+    environment:
+      - PYTHONPATH=/workspace
+      - TESTING=true
+      - LOG_LEVEL=DEBUG
+      # Connect to dev services
+      - MLFLOW_TRACKING_URI=http://mlflow-dev-server:5001
+      - POSTGRES_HOST=dev-postgres
+      - REDIS_HOST=dev-redis
+    networks:
+      - dev-network
+      - mlflow-dev-network
+    depends_on:
+      dev-postgres:
+        condition: service_healthy
+      dev-redis:
+        condition: service_healthy
+    profiles:
+      - test  # Only start with --profile test
+
+networks:
+  dev-network:
+    name: dev-network
+    driver: bridge
+  mlflow-dev-network:
+    name: mlflow-dev-network
+    driver: bridge
+
+volumes:
+  dev-postgres-data:
+    name: dev-postgres-data
+  dev-test-results:
+    name: dev-test-results
+  dev-coverage:
+    name: dev-coverage
