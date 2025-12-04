@@ -42,7 +42,7 @@ colors:
 links:
   - name: "GitHub Repo"
     icon: "fab fa-github"
-    url: "https://github.com/axelofwar/sfml-platform"
+    url: "https://github.com/axelofwar/shml-platform"
     target: "_blank"
 
 # Services - Main dashboard content

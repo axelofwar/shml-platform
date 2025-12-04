@@ -35,7 +35,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 
 # Public URL for authentication (what users see)
 PUBLIC_AUTH_URL = os.getenv(
-    "PUBLIC_AUTH_URL", "https://sfml-platform.tail38b60a.ts.net/auth"
+    "PUBLIC_AUTH_URL", "https://shml-platform.tail38b60a.ts.net/auth"
 )
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "platform administrator")
 

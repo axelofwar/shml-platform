@@ -118,7 +118,7 @@
           "oauthConfiguration": {
             "authorizedRedirectURLs": [
               "#{ENV.OAUTH2_PROXY_REDIRECT_URL:-http://localhost/oauth2/callback}",
-              "https://sfml-platform.tail38b60a.ts.net/oauth2/callback"
+              "https://shml-platform.tail38b60a.ts.net/oauth2/callback"
             ],
             "clientId": "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}",
             "clientSecret": "#{ENV.FUSIONAUTH_PROXY_CLIENT_SECRET:-change-me-proxy-secret}",

@@ -47,8 +47,8 @@ services:
       # When using a different Tailscale domain, update these volume paths
       # and the corresponding paths in monitoring/traefik/dynamic.yml
       # Generate new certs: tailscale cert <your-domain>
-      - ./secrets/sfml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt:ro
-      - ./secrets/sfml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key:ro
+      - ./secrets/shml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt:ro
+      - ./secrets/shml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.key:ro
     networks:
       - ml-platform
     healthcheck:
@@ -148,7 +148,7 @@ services:
       DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
       FUSIONAUTH_APP_MEMORY: 384M
       FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-development}
-      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/auth
+      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth
       SEARCH_TYPE: database
     volumes:
       - fusionauth-config:/usr/local/fusionauth/config
@@ -247,7 +247,7 @@ services:
     # Allow container to resolve Tailscale domain to Tailscale IP
     # NOTE: Update TAILSCALE_IP in .env after any Tailscale reset
     extra_hosts:
-      - "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}:${TAILSCALE_IP:-100.66.26.115}"
+      - "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}:${TAILSCALE_IP:-100.66.26.115}"
     deploy:
       resources:
         limits:
@@ -260,19 +260,19 @@ services:
       # Provider configuration - FusionAuth as OIDC provider
       OAUTH2_PROXY_PROVIDER: oidc
       # Issuer URL without /auth since we route /.well-known and /oauth2 directly to FusionAuth
-      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}
       OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
       OAUTH2_PROXY_CLIENT_SECRET: ${FUSIONAUTH_PROXY_CLIENT_SECRET}
 
       # Cookie configuration
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
       OAUTH2_PROXY_COOKIE_SECURE: "true"
-      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
       OAUTH2_PROXY_COOKIE_NAME: "_sfml_oauth2"
 
       # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
-      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
-      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
       # Proxy prefix - tells oauth2-proxy to use /oauth2-proxy instead of default /oauth2
       OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
 
@@ -400,7 +400,7 @@ services:
     build:
       context: ./scripts/role-auth
       dockerfile: Dockerfile
-    image: sfml-platform/role-auth:latest
+    image: shml-platform/role-auth:latest
     container_name: role-auth
     restart: unless-stopped
     deploy:
@@ -538,7 +538,7 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/grafana"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/grafana"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_INSTALL_PLUGINS: "grafana-piechart-panel"
       # Anonymous access enabled for Ray Dashboard iframe embedding
@@ -564,7 +564,7 @@ services:
       GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${FUSIONAUTH_GRAFANA_CLIENT_SECRET}
       GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
       # Auth URL uses public domain (browser redirect), token/api use internal docker network
-      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/oauth2/authorize"
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/oauth2/authorize"
       GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://fusionauth:9011/oauth2/token"
       GF_AUTH_GENERIC_OAUTH_API_URL: "http://fusionauth:9011/oauth2/userinfo"
       GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
@@ -743,7 +743,7 @@ services:
       - ./scripts/webhook:/etc/webhook:ro
       - ./scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
-      - .:/opt/sfml-platform:ro
+      - .:/opt/shml-platform:ro
     networks:
       - ml-platform
     labels:

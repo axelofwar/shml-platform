@@ -31,12 +31,12 @@ This directory contains working examples for submitting GPU jobs to the Ray clus
 
 ```bash
 # Simple GPU test
-sudo docker cp /home/axelofwar/Projects/sfml-platform/ray_compute/examples/test_simple_gpu.py ray-compute-api:/tmp/
+sudo docker cp /home/axelofwar/Projects/shml-platform/ray_compute/examples/test_simple_gpu.py ray-compute-api:/tmp/
 sudo docker exec ray-compute-api python3 /tmp/test_simple_gpu.py
 
 # Full training test
-sudo docker cp /home/axelofwar/Projects/sfml-platform/ray_compute/examples/test_full_training.py ray-compute-api:/tmp/
-sudo docker cp /home/axelofwar/Projects/sfml-platform/ray_compute/examples/training_script.py ray-compute-api:/tmp/
+sudo docker cp /home/axelofwar/Projects/shml-platform/ray_compute/examples/test_full_training.py ray-compute-api:/tmp/
+sudo docker cp /home/axelofwar/Projects/shml-platform/ray_compute/examples/training_script.py ray-compute-api:/tmp/
 sudo docker exec ray-compute-api python3 /tmp/test_full_training.py
 ```
 

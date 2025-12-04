@@ -98,7 +98,7 @@ Orchestrated startup in dependency order:
 
 ### Fresh Installation
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 sudo ./setup.sh
 ```
 
@@ -179,7 +179,7 @@ Grafana Dashboards:
 
 FusionAuth Admin:
   URL: http://100.66.26.115:9011/admin/
-  Public URL: https://sfml-platform.tail38b60a.ts.net/auth/admin/
+  Public URL: https://shml-platform.tail38b60a.ts.net/auth/admin/
   Login: Email-based (configured during setup)
 
 DATABASE CREDENTIALS

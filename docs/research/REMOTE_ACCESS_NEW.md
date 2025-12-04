@@ -60,7 +60,7 @@ Replace `<TAILSCALE_IP>` with `10.0.0.163` in the URLs above.
 
 ### FusionAuth OAuth
 - **URL:** http://<TAILSCALE_IP>:9011/admin/
-- **Public URL:** https://sfml-platform.tail38b60a.ts.net/auth/admin/
+- **Public URL:** https://shml-platform.tail38b60a.ts.net/auth/admin/
 - **Admin Login:** Email-based (configured during setup)
 - **Social Logins:** Google, GitHub, Twitter supported
 - **Client ID:** ray-compute-api (or configured application ID)
@@ -96,7 +96,7 @@ All services are protected by OAuth2 authentication. Access is controlled via ro
 
 ### New User Workflow
 
-1. **Sign in with Google/GitHub** at https://sfml-platform.tail38b60a.ts.net/
+1. **Sign in with Google/GitHub** at https://shml-platform.tail38b60a.ts.net/
 2. **Auto-registered** with `viewer` role → Can see Homer dashboard and Grafana
 3. **Request elevated access** from platform admin
 4. **Admin grants role** via FusionAuth Admin UI → User gets full access
@@ -333,7 +333,7 @@ print(f"GPU Job submitted: {job_id}")
 
 ```bash
 # On the host machine
-cd /home/axelofwar/Projects/sfml-platform
+cd /home/axelofwar/Projects/shml-platform
 
 # View all containers
 sudo docker compose ps
@@ -366,7 +366,7 @@ print(client.get_version())
 
 ```bash
 # Start all services
-cd /home/axelofwar/Projects/sfml-platform
+cd /home/axelofwar/Projects/shml-platform
 sudo bash ./start_all_safe.sh
 
 # Stop all services
@@ -467,10 +467,10 @@ sudo systemctl restart nvidia-mps
 
 ## 📚 Additional Documentation
 
-- **Architecture:** `/home/axelofwar/Projects/sfml-platform/ARCHITECTURE.md`
-- **API Reference:** `/home/axelofwar/Projects/sfml-platform/API_REFERENCE.md`
-- **Troubleshooting:** `/home/axelofwar/Projects/sfml-platform/TROUBLESHOOTING.md`
-- **GPU Setup:** `/home/axelofwar/Projects/sfml-platform/NEW_GPU_SETUP.md`
+- **Architecture:** `/home/axelofwar/Projects/shml-platform/ARCHITECTURE.md`
+- **API Reference:** `/home/axelofwar/Projects/shml-platform/API_REFERENCE.md`
+- **Troubleshooting:** `/home/axelofwar/Projects/shml-platform/TROUBLESHOOTING.md`
+- **GPU Setup:** `/home/axelofwar/Projects/shml-platform/NEW_GPU_SETUP.md`
 
 ---
 

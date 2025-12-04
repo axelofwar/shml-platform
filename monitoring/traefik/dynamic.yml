@@ -12,18 +12,18 @@
 #    mv <your-domain>.key ./secrets/
 #
 # 3. Update the paths below (and in docker-compose.infra.yml volumes)
-#    Replace: sfml-platform.tail38b60a.ts.net
+#    Replace: shml-platform.tail38b60a.ts.net
 #    With:    <your-domain>
 #
 # For automated deployment, consider using envsubst to template this file.
 
 tls:
   certificates:
-    - certFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt
-      keyFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key
+    - certFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt
+      keyFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.key
 
   stores:
     default:
       defaultCertificate:
-        certFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt
-        keyFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key
+        certFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt
+        keyFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.key
