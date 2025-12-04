@@ -16,9 +16,6 @@ For authenticated tests, set environment variables:
 
 import pytest
 import requests
-import time
-from typing import Dict, Optional
-import os
 
 
 # Service endpoints (relative to base URL)
