@@ -76,7 +76,10 @@ backup_database() {
 failed=0
 
 # Backup all databases from shared-postgres
-# Database name and user are the same by convention in init-databases.sh
+# NOTE: Each database is backed up using its owner user (not postgres superuser)
+# This is intentional and secure - init-databases.sh creates each database with OWNER $user
+# Database owners have full permissions to dump their own databases (verified by testing)
+# Using individual users is more secure than using the postgres superuser for backups
 
 # MLflow database
 backup_database "mlflow_db" "mlflow" || ((failed++))
