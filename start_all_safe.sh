@@ -473,20 +473,48 @@ start_all_services() {
         echo "Starting Tailscale Funnel (required for OAuth2 OIDC discovery)..."
         echo -e "${CYAN}Security: All services are protected by FusionAuth OAuth2${NC}"
 
-        # Get the public domain
-        PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "shml-platform.tail38b60a.ts.net")
+        # Expected hostname for the platform
+        local EXPECTED_HOSTNAME="shml-platform"
+
+        # Get current Tailscale hostname
+        local CURRENT_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName' 2>/dev/null || echo "unknown")
+        local MAGIC_DNS_SUFFIX=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix' 2>/dev/null || echo "tail38b60a.ts.net")
+
+        # Check and fix hostname if needed
+        if [ "$CURRENT_HOSTNAME" != "$EXPECTED_HOSTNAME" ]; then
+            log_warn "Tailscale hostname mismatch: '$CURRENT_HOSTNAME' != '$EXPECTED_HOSTNAME'"
+            echo "  Correcting Tailscale hostname to '$EXPECTED_HOSTNAME'..."
+            if sudo tailscale set --hostname="$EXPECTED_HOSTNAME" 2>/dev/null; then
+                log_success "Hostname corrected to '$EXPECTED_HOSTNAME'"
+                # Give Tailscale a moment to propagate the change
+                sleep 3
+            else
+                log_error "Failed to set Tailscale hostname"
+            fi
+        else
+            echo "  Tailscale hostname: $CURRENT_HOSTNAME ✓"
+        fi
+
+        # Get the public domain (re-read after potential hostname change)
+        PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "${EXPECTED_HOSTNAME}.${MAGIC_DNS_SUFFIX}")
         echo "  Public domain: https://${PUBLIC_DOMAIN}"
 
-        # First, reset any existing funnel configuration to avoid conflicts
+        # Reset any existing funnel configuration to avoid conflicts
+        echo "  Resetting funnel configuration..."
         sudo tailscale funnel reset 2>/dev/null || true
+        sleep 2
 
         # Start the funnel - routes HTTPS to local Traefik on port 80
         # Using 'sudo' because funnel requires elevated permissions
+        echo "  Starting Tailscale Funnel..."
         if sudo tailscale funnel --bg 80 2>/dev/null; then
-            log_success "Funnel command executed"
+            log_success "Funnel started on https://${PUBLIC_DOMAIN}"
         else
             log_warn "Funnel command may have failed"
         fi
+
+        # Give funnel time to establish connection
+        sleep 5
 
         # Wait for funnel to be fully accessible (CRITICAL for OAuth2 Proxy)
         # OAuth2 Proxy will fail to start if it can't reach OIDC discovery endpoint
@@ -505,8 +533,32 @@ start_all_services() {
         done
 
         if [ "$oidc_success" = false ]; then
+            echo -e " ${YELLOW}⚠${NC}"
+            log_warn "OIDC not accessible on first attempt - retrying with funnel restart..."
+
+            # Second attempt: full reset and restart
+            sudo tailscale funnel reset 2>/dev/null || true
+            sleep 2
+            sudo tailscale funnel --bg 80 2>/dev/null || true
+            sleep 5
+
+            echo -n "  Retry OIDC verification"
+            oidc_wait=0
+            while [ $oidc_wait -lt 30 ]; do
+                if curl -sf "https://${PUBLIC_DOMAIN}/.well-known/openid-configuration" >/dev/null 2>&1; then
+                    echo -e " ${GREEN}✓${NC}"
+                    oidc_success=true
+                    break
+                fi
+                echo -n "."
+                sleep 2
+                oidc_wait=$((oidc_wait + 2))
+            done
+        fi
+
+        if [ "$oidc_success" = false ]; then
             echo -e " ${RED}✗${NC}"
-            log_error "OIDC discovery endpoint not accessible after 60s!"
+            log_error "OIDC discovery endpoint not accessible!"
             echo ""
             echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
             echo -e "${RED}║  TAILSCALE FUNNEL NOT WORKING                                  ║${NC}"
@@ -516,17 +568,13 @@ start_all_services() {
             echo -e "${RED}║  Check funnel status:                                          ║${NC}"
             echo -e "${RED}║    sudo tailscale funnel status                                ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  Try manually starting:                                        ║${NC}"
-            echo -e "${RED}║    sudo tailscale funnel --bg 80                               ║${NC}"
-            echo -e "${RED}║                                                                ║${NC}"
             echo -e "${RED}║  Verify from external machine:                                 ║${NC}"
             echo -e "${RED}║    curl https://${PUBLIC_DOMAIN}/.well-known/openid-configuration${NC}"
             echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
             echo ""
-            # Don't exit - continue and let oauth2-proxy fail with clear logs
+        else
+            log_success "Tailscale Funnel active"
         fi
-
-        log_success "Tailscale Funnel active"
     else
         log_warn "Tailscale not installed - OAuth2 Proxy may fail OIDC discovery"
     fi
