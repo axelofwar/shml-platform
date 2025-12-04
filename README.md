@@ -35,7 +35,7 @@ A production-ready ML platform with MLflow experiment tracking, Ray distributed 
 
 ```bash
 # Clone and navigate to platform
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 
 # Run unified setup script
 sudo ./setup.sh
@@ -67,22 +67,22 @@ The setup script will:
 
 ```bash
 # Check status
-sudo systemctl status sfml-platform
+sudo systemctl status shml-platform
 
 # Start manually
-sudo systemctl start sfml-platform
+sudo systemctl start shml-platform
 
 # Stop
-sudo systemctl stop sfml-platform
+sudo systemctl stop shml-platform
 
 # Restart
-sudo systemctl restart sfml-platform
+sudo systemctl restart shml-platform
 
 # View logs
-sudo journalctl -u sfml-platform -f
+sudo journalctl -u shml-platform -f
 
 # Disable auto-start
-sudo systemctl disable sfml-platform
+sudo systemctl disable shml-platform
 ```
 
 ## Service Access
@@ -213,7 +213,7 @@ sudo ./setup.sh --full-reset
 ## File Structure
 
 ```
-sfml-platform/
+shml-platform/
 ├── setup.sh                        # 🔥 Main setup script (use this!)
 ├── start_all_safe.sh               # Safe startup with health checks
 ├── stop_all.sh                     # Safe shutdown

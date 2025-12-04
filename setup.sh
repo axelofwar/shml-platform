@@ -1057,7 +1057,7 @@ start_services() {
     sudo docker compose down --remove-orphans 2>&1 | grep -v "WARNING:" | grep -v "Found orphan" || true
 
     # Force stop any remaining containers from this project
-    sudo docker ps -a --filter "label=com.docker.compose.project=sfml-platform" -q | xargs -r sudo docker rm -f 2>/dev/null || true
+    sudo docker ps -a --filter "label=com.docker.compose.project=shml-platform" -q | xargs -r sudo docker rm -f 2>/dev/null || true
 
     # Remove existing ml-platform network if it exists (to avoid label conflicts)
     if sudo docker network inspect ml-platform >/dev/null 2>&1; then

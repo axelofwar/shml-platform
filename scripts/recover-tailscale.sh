@@ -5,7 +5,7 @@
 # Use this script after a Tailscale reset (e.g., TPM lockout, re-authentication)
 #
 # What this script does:
-# 1. Sets the hostname back to 'sfml-platform'
+# 1. Sets the hostname back to 'shml-platform'
 # 2. Re-enables Tailscale Funnel
 # 3. Updates .env with the new Tailscale IP
 # 4. Validates FusionAuth OAuth configuration
@@ -47,10 +47,10 @@ CURRENT_HOSTNAME=$(tailscale status --json | jq -r '.Self.HostName')
 echo "  Current IP: $CURRENT_IP"
 echo "  Current Hostname: $CURRENT_HOSTNAME"
 
-# Step 2: Set hostname to sfml-platform
+# Step 2: Set hostname to shml-platform
 echo ""
-echo -e "${YELLOW}Step 2: Setting hostname to 'sfml-platform'...${NC}"
-tailscale set --hostname=sfml-platform
+echo -e "${YELLOW}Step 2: Setting hostname to 'shml-platform'...${NC}"
+tailscale set --hostname=shml-platform
 sleep 2
 NEW_HOSTNAME=$(tailscale status --json | jq -r '.Self.HostName')
 echo "  Hostname set to: $NEW_HOSTNAME"
@@ -59,7 +59,7 @@ echo "  Hostname set to: $NEW_HOSTNAME"
 echo ""
 echo -e "${YELLOW}Step 3: Enabling Tailscale Funnel...${NC}"
 PUBLIC_DOMAIN=$(grep "^PUBLIC_DOMAIN=" "$PROJECT_DIR/.env" | cut -d'=' -f2)
-PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
 tailscale funnel --set-path=/ --bg 80
 echo "  Funnel enabled: https://$PUBLIC_DOMAIN → port 80"
 
@@ -100,7 +100,7 @@ FUSIONAUTH_API_KEY=$(grep "^FUSIONAUTH_API_KEY=" "$ENV_FILE" | cut -d'=' -f2)
 OAUTH_APP_ID=$(grep "^OAUTH2_PROXY_APP_ID=" "$ENV_FILE" | cut -d'=' -f2)
 OAUTH_APP_ID="${OAUTH_APP_ID:-}"
 PUBLIC_DOMAIN=$(grep "^PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
-PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
 
 if [ -n "$FUSIONAUTH_API_KEY" ] && [ -n "$OAUTH_APP_ID" ]; then
     # Check if FusionAuth is accessible
@@ -175,6 +175,6 @@ echo "3. If login fails, check: docker logs oauth2-proxy"
 echo ""
 echo "Tailscale Configuration:"
 echo "  IP: $CURRENT_IP"
-echo "  Hostname: sfml-platform"
+echo "  Hostname: shml-platform"
 echo "  Domain: $PUBLIC_DOMAIN"
 echo "  Funnel: Enabled (HTTPS → port 80)"
