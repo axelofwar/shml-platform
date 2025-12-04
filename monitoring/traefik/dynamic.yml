@@ -1,5 +1,12 @@
 # Traefik Dynamic Configuration
 # TLS certificates from Tailscale
+#
+# NOTE: Certificate filenames are deployment-specific. If using a different
+# Tailscale domain, update the cert paths below or regenerate using:
+#   tailscale cert <your-domain>
+#   mv <your-domain>.crt ./secrets/
+#   mv <your-domain>.key ./secrets/
+# Then update these paths to match.
 
 tls:
   certificates:

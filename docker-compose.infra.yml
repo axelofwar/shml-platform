@@ -42,6 +42,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      # TLS certs from Tailscale - update paths if using different domain
+      # Generate with: tailscale cert <your-domain>
       - ./secrets/sfml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt:ro
       - ./secrets/sfml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key:ro
     networks:
@@ -671,7 +673,7 @@ services:
     volumes:
       - ./scripts/webhook:/etc/webhook:ro
       - ./scripts:/scripts:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
       - .:/opt/sfml-platform:ro
     networks:
       - ml-platform

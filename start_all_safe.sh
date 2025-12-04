@@ -797,17 +797,21 @@ show_status() {
     fi
     echo ""
     echo -e "${CYAN}Internal Access (LAN - http://10.0.0.163/...):${NC}"
-    echo "  🏠 Landing Page:   http://10.0.0.163/"
-    echo "  • MLflow UI:       http://10.0.0.163/mlflow/"
-    echo "  • Ray Dashboard:   http://10.0.0.163/ray/"
-    echo "  • Grafana:         http://10.0.0.163/grafana/"
-    echo "  • Dozzle (Logs):   http://10.0.0.163/logs/"
+    # Get LAN IP (fallback to common default)
+    local LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1)
+    LAN_IP=${LAN_IP:-10.0.0.163}
+
+    echo "  🏠 Landing Page:   http://${LAN_IP}/"
+    echo "  • MLflow UI:       http://${LAN_IP}/mlflow/"
+    echo "  • Ray Dashboard:   http://${LAN_IP}/ray/"
+    echo "  • Grafana:         http://${LAN_IP}/grafana/"
+    echo "  • Dozzle (Logs):   http://${LAN_IP}/logs/"
     echo ""
     echo "  Admin (direct ports):"
-    echo "  • FusionAuth:      http://10.0.0.163:9011/admin/"
-    echo "  • Traefik API:     http://10.0.0.163:8090/"
+    echo "  • FusionAuth:      http://${LAN_IP}:9011/admin/"
+    echo "  • Traefik API:     http://${LAN_IP}:8090/"
     echo ""
-    echo -e "${GREEN}Note: HTTPS also works on LAN (https://10.0.0.163/...) with Tailscale certs.${NC}"
+    echo -e "${GREEN}Note: HTTPS also works on LAN (https://${LAN_IP}/...) with Tailscale certs.${NC}"
     echo ""
 }
 

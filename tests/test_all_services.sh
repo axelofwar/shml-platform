@@ -255,7 +255,7 @@ else
     echo -e "${YELLOW}⚠${NC}  Grafana internal health check: $grafana_health"
 fi
 
-grafana_ds=$(docker exec unified-grafana wget -qO- -U admin -P "$GRAFANA_ADMIN_PASSWORD" http://localhost:3000/api/datasources 2>&1 | head -1)
+grafana_ds=$(docker exec unified-grafana wget -qO- --user=admin --password="$GRAFANA_ADMIN_PASSWORD" http://localhost:3000/api/datasources 2>&1 | head -1)
 if [[ "$grafana_ds" == "["* ]] || [[ "$grafana_ds" == *"datasources"* ]]; then
     echo -e "${GREEN}✓${NC} Grafana datasources accessible"
 else
