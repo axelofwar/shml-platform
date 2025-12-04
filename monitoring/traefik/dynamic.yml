@@ -1,0 +1,13 @@
+# Traefik Dynamic Configuration
+# TLS certificates from Tailscale
+
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt
+      keyFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key
+
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt
+        keyFile: /etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key

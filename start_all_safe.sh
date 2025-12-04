@@ -642,6 +642,28 @@ start_all_services() {
     fi
     echo ""
 
+    # =========================================================================
+    # Phase 9: Observability Services
+    # =========================================================================
+    log_info "━━━ Phase 9: Observability & Landing Page ━━━"
+    echo "Starting: Homer (landing), Dozzle (logs), Postgres Backup..."
+    docker compose up -d \
+        homer dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+
+    # Wait for services
+    wait_for_health "homer" $DEFAULT_TIMEOUT || log_warn "Homer may still be starting"
+    wait_for_health "postgres-backup" $DEFAULT_TIMEOUT || log_warn "Postgres Backup may still be starting"
+
+    # Dozzle doesn't have healthcheck (minimal image)
+    if docker ps --format '{{.Names}}' | grep -q "^dozzle$"; then
+        log_success "Dozzle running"
+    else
+        log_warn "Dozzle may not have started"
+    fi
+
+    log_success "Observability services ready"
+    echo ""
+
     # Show status
     show_status
 
@@ -690,6 +712,7 @@ verify_auth_protection() {
         "Ray Dashboard:/ray"
         "Grafana:/grafana"
         "Prometheus:/prometheus"
+        "Dozzle (Logs):/logs"
     )
 
     echo ""
@@ -756,30 +779,35 @@ show_status() {
     log_success "Platform startup complete!"
     echo ""
     echo "Service Status:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter" || true
+    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup" || true
     echo ""
     echo -e "${CYAN}Public Access (via Tailscale Funnel):${NC}"
-    echo "  All services require authentication via FusionAuth"
     if [ -n "$PUBLIC_DOMAIN" ]; then
-        echo "  • Auth (FusionAuth): https://${PUBLIC_DOMAIN}/auth/admin/"
+        echo "  🏠 Landing Page:     https://${PUBLIC_DOMAIN}/"
+        echo ""
+        echo "  Auth (all services require login):"
+        echo "  • FusionAuth Admin:  https://${PUBLIC_DOMAIN}/auth/admin/"
         echo "  • OAuth2 Login:      https://${PUBLIC_DOMAIN}/oauth2-proxy/sign_in"
+        echo ""
+        echo "  Core Services (OAuth Protected):"
         echo "  • MLflow UI:         https://${PUBLIC_DOMAIN}/mlflow/"
         echo "  • Ray Dashboard:     https://${PUBLIC_DOMAIN}/ray/"
         echo "  • Grafana:           https://${PUBLIC_DOMAIN}/grafana/"
+        echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
     fi
     echo ""
-    echo -e "${CYAN}Internal Access (LAN/Tailscale VPN):${NC}"
-    echo "  • MLflow UI:       http://${TAILSCALE_IP}/mlflow/"
-    echo "  • Ray Dashboard:   http://${TAILSCALE_IP}/ray/"
-    echo "  • Grafana:         http://${TAILSCALE_IP}/grafana/"
-    echo "  • FusionAuth:      http://${TAILSCALE_IP}:9011/admin/"
-    echo "  • Traefik API:     http://${TAILSCALE_IP}:8090/"
+    echo -e "${CYAN}Internal Access (LAN - http://10.0.0.163/...):${NC}"
+    echo "  🏠 Landing Page:   http://10.0.0.163/"
+    echo "  • MLflow UI:       http://10.0.0.163/mlflow/"
+    echo "  • Ray Dashboard:   http://10.0.0.163/ray/"
+    echo "  • Grafana:         http://10.0.0.163/grafana/"
+    echo "  • Dozzle (Logs):   http://10.0.0.163/logs/"
     echo ""
-    echo -e "${CYAN}Debugging:${NC}"
-    echo "  • Check middleware: curl -s http://localhost:8090/api/http/middlewares | jq '.[].name'"
-    echo "  • Check routers:    curl -s http://localhost:8090/api/http/routers | jq '.[].name'"
-    echo "  • OAuth2 Proxy log: docker logs oauth2-proxy 2>&1 | tail -20"
-    echo "  • Traefik log:      docker logs ml-platform-traefik 2>&1 | tail -20"
+    echo "  Admin (direct ports):"
+    echo "  • FusionAuth:      http://10.0.0.163:9011/admin/"
+    echo "  • Traefik API:     http://10.0.0.163:8090/"
+    echo ""
+    echo -e "${GREEN}Note: HTTPS also works on LAN (https://10.0.0.163/...) with Tailscale certs.${NC}"
     echo ""
 }
 
@@ -877,13 +905,16 @@ diagnose_auth() {
         "/auth/:FusionAuth"
         "/grafana/:Grafana (protected)"
         "/prometheus/:Prometheus (protected)"
+        "/mlflow/:MLflow (protected)"
+        "/ray/:Ray Dashboard (protected)"
+        "/logs/:Dozzle (protected)"
     )
 
     for entry in "${test_endpoints[@]}"; do
         local path="${entry%%:*}"
         local name="${entry##*:}"
         local status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost${path}" 2>/dev/null)
-        printf "  %-25s HTTP %s\n" "$name:" "$status"
+        printf "  %-30s HTTP %s\n" "$name:" "$status"
     done
     echo ""
 

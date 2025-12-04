@@ -284,6 +284,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "security: security-related test")
     config.addinivalue_line("markers", "external: test requires external service")
     config.addinivalue_line("markers", "order: test execution order")
+    config.addinivalue_line(
+        "markers", "observability: test observability stack services"
+    )
+    config.addinivalue_line("markers", "authenticated: test requires authentication")
 
 
 def pytest_collection_modifyitems(config, items):

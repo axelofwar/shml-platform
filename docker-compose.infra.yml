@@ -24,14 +24,16 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=ml-platform
+      - --providers.file.filename=/etc/traefik/dynamic.yml
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
       - --log.level=WARN
       - --accesslog=true
       - --metrics.prometheus=true
       - --ping=true
     ports:
-      # Bind to LAN IP only - leave Tailscale IP (100.66.26.115) free for tailscale serve
+      # LAN IP and localhost - Tailscale Funnel handles external HTTPS
       - "127.0.0.1:80:80"
       - "127.0.0.1:443:443"
       - "10.0.0.163:80:80"
@@ -39,6 +41,9 @@ services:
       - "0.0.0.0:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./secrets/sfml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt:ro
+      - ./secrets/sfml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key:ro
     networks:
       - ml-platform
     healthcheck:
@@ -520,6 +525,164 @@ services:
       # OAuth2 protection - requires authentication for Grafana
       # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
       - "traefik.http.routers.grafana.middlewares=oauth2-errors,oauth2-auth"
+
+  # ==========================================================================
+  # OBSERVABILITY STACK - Quick Wins (Coolify-inspired patterns)
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # DOZZLE - Real-time Docker Log Viewer
+  # Aggregates logs from all containers with OAuth protection
+  # --------------------------------------------------------------------------
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${DOZZLE_CPU_LIMIT:-0.25}'
+          memory: ${DOZZLE_MEM_LIMIT:-128M}
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    environment:
+      DOZZLE_BASE: /logs
+      DOZZLE_LEVEL: info
+      DOZZLE_TAILSIZE: 300
+      DOZZLE_FILTER: "status=running"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ml-platform
+    healthcheck:
+      # Dozzle image is scratch/distroless, use /healthcheck endpoint via curl from traefik
+      disable: true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dozzle.rule=PathPrefix(`/logs`)"
+      - "traefik.http.routers.dozzle.entrypoints=web,websecure"
+      - "traefik.http.services.dozzle.loadbalancer.server.port=8080"
+      - "traefik.http.routers.dozzle.priority=100"
+      # OAuth2 protection - requires authentication for log viewing
+      - "traefik.http.routers.dozzle.middlewares=oauth2-errors,oauth2-auth"
+
+  # --------------------------------------------------------------------------
+  # HOMER - Static Dashboard (Root Landing Page)
+  # Lightweight static homepage with service links
+  # https://github.com/bastienwirtz/homer
+  # --------------------------------------------------------------------------
+  homer:
+    image: b4bz/homer:latest
+    container_name: homer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    user: "1000:1000"
+    environment:
+      INIT_ASSETS: "0"  # Don't overwrite our config
+    volumes:
+      - ./monitoring/homer:/www/assets:ro
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      # Lowest priority - catch-all for root path
+      - "traefik.http.routers.homer.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.homer.entrypoints=web,websecure"
+      - "traefik.http.routers.homer.priority=1"
+      - "traefik.http.services.homer.loadbalancer.server.port=8080"
+      # OAuth protected - requires authentication like other services
+      - "traefik.http.routers.homer.middlewares=oauth2-errors,oauth2-auth"
+
+  # --------------------------------------------------------------------------
+  # POSTGRES BACKUP - Automated Docker-based Database Backups
+  # Runs scheduled backups with retention and notifications
+  # --------------------------------------------------------------------------
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:15-alpine
+    container_name: postgres-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-0.5}'
+          memory: ${BACKUP_MEM_LIMIT:-256M}
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    environment:
+      POSTGRES_HOST: shared-postgres
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
+      SCHEDULE: "${BACKUP_SCHEDULE:-0 2 * * *}"
+      BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
+      BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
+      BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
+      HEALTHCHECK_PORT: 8080
+      # Webhook notification on backup completion (optional)
+      WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
+      WEBHOOK_EXTRA_ARGS: ""
+    volumes:
+      - ./backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    networks:
+      - ml-platform
+    depends_on:
+      shared-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # WEBHOOK DEPLOYER - GitHub Push-to-Deploy
+  # Receives GitHub webhooks and triggers deployments with notifications
+  # --------------------------------------------------------------------------
+  webhook-deployer:
+    image: almir/webhook:latest
+    container_name: webhook-deployer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${WEBHOOK_CPU_LIMIT:-0.25}'
+          memory: ${WEBHOOK_MEM_LIMIT:-128M}
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
+    environment:
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      DEPLOY_EMAIL: "${DEPLOY_NOTIFICATION_EMAIL:-}"
+    volumes:
+      - ./scripts/webhook:/etc/webhook:ro
+      - ./scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/opt/sfml-platform:ro
+    networks:
+      - ml-platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webhook.rule=PathPrefix(`/webhook`)"
+      - "traefik.http.routers.webhook.entrypoints=web,websecure"
+      - "traefik.http.services.webhook.loadbalancer.server.port=9000"
+      - "traefik.http.routers.webhook.priority=100"
+      # Webhooks should be publicly accessible (authenticated via secret)
+      # Do NOT add oauth2-auth middleware here
 
 secrets:
   shared_db_password:
