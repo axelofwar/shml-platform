@@ -45,7 +45,7 @@ services:
       # Grafana endpoint for head node health checks (internal Docker network)
       - RAY_GRAFANA_HOST=http://unified-grafana:3000
       # Grafana endpoint for browser iframes (external URL via reverse proxy)
-      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}/grafana
+      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/grafana
       # Grafana organization ID (default: 1)
       - RAY_GRAFANA_ORG_ID=1
     volumes:

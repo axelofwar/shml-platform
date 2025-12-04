@@ -33,7 +33,7 @@ def get_lan_ip() -> str:
 def get_config() -> Dict[str, str]:
     """Test configuration"""
     lan_ip = get_lan_ip()
-    domain = os.getenv("PUBLIC_DOMAIN", "sfml-platform.tail38b60a.ts.net")
+    domain = os.getenv("PUBLIC_DOMAIN", "shml-platform.tail38b60a.ts.net")
 
     return {
         # LAN endpoints (Traefik on host IP)

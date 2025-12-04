@@ -36,9 +36,9 @@ NC='\033[0m'
 # Configuration
 OLD_NAME="sfml"
 NEW_NAME="shml"
-OLD_HOSTNAME="sfml-platform"
+OLD_HOSTNAME="shml-platform"
 NEW_HOSTNAME="shml-platform"
-OLD_DOMAIN="sfml-platform.tail38b60a.ts.net"
+OLD_DOMAIN="shml-platform.tail38b60a.ts.net"
 NEW_DOMAIN="shml-platform.tail38b60a.ts.net"
 
 # Script directory
@@ -133,7 +133,7 @@ preflight_checks() {
 
     # Check we're in the right directory
     if [ ! -f "$PROJECT_ROOT/docker-compose.infra.yml" ]; then
-        log_error "Must run from sfml-platform project root"
+        log_error "Must run from shml-platform project root"
         exit 1
     fi
 

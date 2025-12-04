@@ -38,7 +38,7 @@ services:
       MLFLOW_STATIC_PREFIX: "/mlflow"
       # MLflow 3.x Security Settings - allow internal Docker network hosts AND Tailscale domain
       # IMPORTANT: PUBLIC_DOMAIN must be included or MLflow returns 403 Forbidden
-      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-nginx,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-nginx,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
       # Schema & Validation
       MLFLOW_SCHEMA_VALIDATION: "true"
       MLFLOW_REQUIRE_METADATA: "true"

@@ -2,7 +2,7 @@
 
 ## Quick Start: Submit Jobs from Remote Machine
 
-This guide shows how to submit GPU training jobs to your sfml-platform from any remote machine with Tailscale access.
+This guide shows how to submit GPU training jobs to your shml-platform from any remote machine with Tailscale access.
 
 ## Prerequisites
 
@@ -15,8 +15,8 @@ This guide shows how to submit GPU training jobs to your sfml-platform from any 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/axelofwar/sfml-platform.git
-cd sfml-platform
+git clone https://github.com/axelofwar/shml-platform.git
+cd shml-platform
 ```
 
 ### 2. Install Ray Python Client
@@ -40,7 +40,7 @@ curl http://<TAILSCALE_IP>/ray/api/version
 ### Simple GPU Test (30 seconds)
 
 ```bash
-cd sfml-platform/ray_compute/examples
+cd shml-platform/ray_compute/examples
 
 # Edit test_simple_gpu.py to use Tailscale IP
 sed -i 's/ray-head:8265/<TAILSCALE_IP>\/ray\/api/g' test_simple_gpu.py
@@ -52,7 +52,7 @@ python3 test_simple_gpu.py
 ### Full GPU Training Test
 
 ```bash
-cd sfml-platform/ray_compute/examples
+cd shml-platform/ray_compute/examples
 
 # Edit test_full_training.py
 sed -i 's/ray-head:8265/<TAILSCALE_IP>\/ray\/api/g' test_full_training.py
@@ -409,7 +409,7 @@ print(f"   Grafana Monitoring: http://<TAILSCALE_IP>/ray-grafana/")
 - **Ray Documentation:** https://docs.ray.io/
 - **Ray Job Submission:** https://docs.ray.io/en/latest/cluster/running-applications/job-submission/index.html
 - **MLflow Documentation:** https://mlflow.org/docs/latest/index.html
-- **Platform Repo:** https://github.com/axelofwar/sfml-platform
+- **Platform Repo:** https://github.com/axelofwar/shml-platform
 
 ## Support
 

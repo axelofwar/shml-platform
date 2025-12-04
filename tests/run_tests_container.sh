@@ -64,7 +64,7 @@ fi
 cd "$PROJECT_ROOT"
 
 # Build the test container if needed
-if [ -n "$BUILD_FLAG" ] || ! docker images | grep -q "sfml-platform-test"; then
+if [ -n "$BUILD_FLAG" ] || ! docker images | grep -q "shml-platform-test"; then
     echo -e "${YELLOW}Building test container...${NC}"
     docker compose -f tests/docker/docker-compose.test.yml build
 fi

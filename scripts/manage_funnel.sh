@@ -43,7 +43,7 @@ start_funnel() {
     echo "Public domain: https://${domain}"
 
     # Enable funnel - routes HTTPS 443 to local Traefik on port 80
-    tailscale funnel --bg --https=443 http://localhost:80
+    sudo tailscale funnel --bg 80
 
     if check_funnel_enabled; then
         echo -e "${GREEN}✓ Funnel started successfully${NC}"

@@ -2,7 +2,7 @@
   {
     "id": "github-deploy",
     "execute-command": "/scripts/webhook/deploy.sh",
-    "command-working-directory": "/opt/sfml-platform",
+    "command-working-directory": "/opt/shml-platform",
     "pass-arguments-to-command": [
       { "source": "payload", "name": "repository.full_name" },
       { "source": "payload", "name": "ref" },

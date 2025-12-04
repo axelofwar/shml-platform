@@ -14,13 +14,13 @@ PUSHER="$4"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Log file path - use /var/log if available, fallback to tmp
-LOG_DIR="${DEPLOY_LOG_DIR:-/var/log/sfml-platform}"
+LOG_DIR="${DEPLOY_LOG_DIR:-/var/log/shml-platform}"
 LOG_FILE="${LOG_DIR}/deploy.log"
 
 # Ensure log directory exists and is writable
 if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
     # Fallback to temp directory if /var/log not writable
-    LOG_DIR="/tmp/sfml-platform"
+    LOG_DIR="/tmp/shml-platform"
     LOG_FILE="${LOG_DIR}/deploy.log"
     mkdir -p "$LOG_DIR"
 fi
@@ -76,9 +76,9 @@ send_telegram "🚀 <b>Deployment Started</b>
 deploy_result=0
 
 case "$REPO" in
-    "axelofwar/sfml-platform"|"*/sfml-platform")
+    "axelofwar/shml-platform"|"*/shml-platform")
         log "Deploying SFML Platform..."
-        cd /opt/sfml-platform
+        cd /opt/shml-platform
 
         # Pull latest changes
         if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then

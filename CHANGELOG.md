@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GitHub OAuth integration  
   - Twitter OAuth integration
 - **Public HTTPS Access**: Configured Tailscale Funnel
-  - Public URL: `https://sfml-platform.tail38b60a.ts.net/`
-  - FusionAuth accessible at `https://sfml-platform.tail38b60a.ts.net/auth/admin/`
+  - Public URL: `https://shml-platform.tail38b60a.ts.net/`
+  - FusionAuth accessible at `https://shml-platform.tail38b60a.ts.net/auth/admin/`
   - Automatic SSL/TLS termination via Tailscale
 
 ### Removed
