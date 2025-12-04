@@ -95,7 +95,10 @@ services:
         url: "/auth/"
         target: "_blank"
 
-  - name: "Admin (Direct Ports)"
+  # Admin section uses direct LAN IP for ports not exposed through Traefik
+  # NOTE: Update IP (10.0.0.163) to match your server's LAN address
+  # These links only work from the local network
+  - name: "Admin (Direct Ports - LAN Only)"
     icon: "fas fa-cog"
     items:
       - name: "Traefik API"
