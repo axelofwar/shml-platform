@@ -3,10 +3,9 @@ Integration tests for Observability Stack services
 
 Tests verify:
 1. Dozzle log aggregation is accessible and OAuth protected
-2. Homepage dashboard is accessible and OAuth protected
-3. Uptime Kuma monitoring is accessible and OAuth protected
-4. Postgres backup service is running and healthy
-5. Webhook deployer endpoint is accessible
+2. Homer dashboard is accessible and OAuth protected
+3. Postgres backup service is running and healthy
+4. Webhook deployer endpoint is accessible
 
 Run with:
     pytest tests/integration/test_observability.py -v
@@ -25,16 +24,14 @@ import os
 # Service endpoints (relative to base URL)
 OBSERVABILITY_ENDPOINTS = {
     "dozzle": "/logs/",
-    "homepage": "/dashboard/",
-    "uptime_kuma": "/status/",
+    "homer": "/",
     "webhook_health": "/webhook/hooks/health",
 }
 
 # Internal service URLs (for direct health checks within Docker network)
 INTERNAL_ENDPOINTS = {
     "dozzle_health": "http://dozzle:8080/logs/healthcheck",
-    "homepage_health": "http://homepage:3000/",
-    "uptime_kuma_health": "http://uptime-kuma:3001/",
+    "homer_health": "http://homer:8080/",
     "backup_health": "http://postgres-backup:8080/",
 }
 
@@ -58,29 +55,14 @@ class TestObservabilityOAuthProtection:
 
     @pytest.mark.integration
     @pytest.mark.observability
-    def test_homepage_requires_auth(self, api_base_url):
-        """Verify Homepage dashboard requires authentication"""
-        response = requests.get(
-            f"{api_base_url}/dashboard/", timeout=10, allow_redirects=False
-        )
+    def test_homer_requires_auth(self, api_base_url):
+        """Verify Homer dashboard requires authentication"""
+        response = requests.get(f"{api_base_url}/", timeout=10, allow_redirects=False)
         assert response.status_code in [
             401,
             302,
             303,
-        ], f"Homepage should require auth, got {response.status_code}"
-
-    @pytest.mark.integration
-    @pytest.mark.observability
-    def test_uptime_kuma_requires_auth(self, api_base_url):
-        """Verify Uptime Kuma requires authentication"""
-        response = requests.get(
-            f"{api_base_url}/status/", timeout=10, allow_redirects=False
-        )
-        assert response.status_code in [
-            401,
-            302,
-            303,
-        ], f"Uptime Kuma should require auth, got {response.status_code}"
+        ], f"Homer should require auth, got {response.status_code}"
 
 
 class TestObservabilityAuthenticated:
@@ -109,42 +91,22 @@ class TestObservabilityAuthenticated:
     @pytest.mark.integration
     @pytest.mark.observability
     @pytest.mark.authenticated
-    def test_homepage_accessible_with_auth(
+    def test_homer_accessible_with_auth(
         self, api_base_url, auth_headers, requires_auth
     ):
-        """Verify Homepage is accessible with valid authentication"""
+        """Verify Homer is accessible with valid authentication"""
         if not auth_headers:
             pytest.skip("Authentication not configured")
 
         response = requests.get(
-            f"{api_base_url}/dashboard/",
+            f"{api_base_url}/",
             headers=auth_headers,
             timeout=10,
             allow_redirects=True,
         )
         assert (
             response.status_code == 200
-        ), f"Homepage should be accessible with auth, got {response.status_code}"
-
-    @pytest.mark.integration
-    @pytest.mark.observability
-    @pytest.mark.authenticated
-    def test_uptime_kuma_accessible_with_auth(
-        self, api_base_url, auth_headers, requires_auth
-    ):
-        """Verify Uptime Kuma is accessible with valid authentication"""
-        if not auth_headers:
-            pytest.skip("Authentication not configured")
-
-        response = requests.get(
-            f"{api_base_url}/status/",
-            headers=auth_headers,
-            timeout=10,
-            allow_redirects=True,
-        )
-        assert (
-            response.status_code == 200
-        ), f"Uptime Kuma should be accessible with auth, got {response.status_code}"
+        ), f"Homer should be accessible with auth, got {response.status_code}"
 
 
 class TestWebhookEndpoint:
@@ -235,7 +197,7 @@ class TestContainerHealth:
         """Verify all observability containers are healthy"""
         import subprocess
 
-        containers = ["dozzle", "homepage", "uptime-kuma", "postgres-backup"]
+        containers = ["dozzle", "homer", "postgres-backup"]
         unhealthy = []
         not_found = []
 

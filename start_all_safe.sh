@@ -796,10 +796,13 @@ show_status() {
         echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
     fi
     echo ""
-    echo -e "${CYAN}Internal Access (LAN - http://10.0.0.163/...):${NC}"
-    # Get LAN IP (fallback to common default)
+    # Get LAN IP (try multiple methods, fallback to common default)
     local LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1)
-    LAN_IP=${LAN_IP:-10.0.0.163}
+    if [ -z "$LAN_IP" ]; then
+        LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    LAN_IP=${LAN_IP:-YOUR_LAN_IP}
+    echo -e "${CYAN}Internal Access (LAN - http://${LAN_IP}/...):${NC}"
 
     echo "  🏠 Landing Page:   http://${LAN_IP}/"
     echo "  • MLflow UI:       http://${LAN_IP}/mlflow/"

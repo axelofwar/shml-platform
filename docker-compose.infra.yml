@@ -34,16 +34,19 @@ services:
       - --ping=true
     ports:
       # LAN IP and localhost - Tailscale Funnel handles external HTTPS
+      # NOTE: Update LAN_IP binding or use 0.0.0.0 for all interfaces
       - "127.0.0.1:80:80"
       - "127.0.0.1:443:443"
-      - "10.0.0.163:80:80"
-      - "10.0.0.163:443:443"
+      - "${LAN_IP:-0.0.0.0}:80:80"
+      - "${LAN_IP:-0.0.0.0}:443:443"
       - "0.0.0.0:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      # TLS certs from Tailscale - update paths if using different domain
-      # Generate with: tailscale cert <your-domain>
+      # TLS certs from Tailscale - DEPLOYMENT-SPECIFIC PATHS
+      # When using a different Tailscale domain, update these volume paths
+      # and the corresponding paths in monitoring/traefik/dynamic.yml
+      # Generate new certs: tailscale cert <your-domain>
       - ./secrets/sfml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.crt:ro
       - ./secrets/sfml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/sfml-platform.tail38b60a.ts.net.key:ro
     networks:
