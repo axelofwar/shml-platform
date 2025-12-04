@@ -363,3 +363,7 @@ container_id_reference.txt
 monitoring/homer/logo.png
 monitoring/homer/logo2.png
 monitoring/homer/logo2_transparent.png
+
+# Large research files (store separately or use Git LFS)
+docs/research/*.pdf
+assets/logo/Gemini_Generated_Image_*.png
