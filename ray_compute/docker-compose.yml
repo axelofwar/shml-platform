@@ -83,9 +83,9 @@ services:
       - "traefik.http.routers.ray-dashboard.entrypoints=web,websecure"
       - "traefik.http.services.ray-dashboard.loadbalancer.server.port=8265"
       - "traefik.http.middlewares.ray-stripprefix.stripprefix.prefixes=/ray"
-      # OAuth2 protection - requires authentication for Ray Dashboard
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.ray-dashboard.middlewares=oauth2-errors,oauth2-auth,ray-stripprefix"
+      # OAuth2 + Developer role required for Ray Dashboard
+      # Requires developer or admin role to access Ray compute resources
+      - "traefik.http.routers.ray-dashboard.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,ray-stripprefix"
       - "traefik.http.routers.ray-dashboard.priority=100"
 
   # ==========================================================================
@@ -163,9 +163,9 @@ services:
       - "traefik.http.routers.ray-api.entrypoints=web,websecure"
       - "traefik.http.services.ray-api.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.ray-api-strip.stripprefix.prefixes=/api/ray,/api/compute"
-      # OAuth2 protection - requires authentication for Ray Compute API
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.ray-api.middlewares=oauth2-errors,oauth2-auth,ray-api-strip"
+      # OAuth2 + Developer role required for Ray Compute API
+      # Requires developer or admin role to submit jobs and access compute resources
+      - "traefik.http.routers.ray-api.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,ray-api-strip"
       - "traefik.http.routers.ray-api.priority=300"
 
   # ==========================================================================

@@ -68,6 +68,50 @@ Replace `<TAILSCALE_IP>` with `10.0.0.163` in the URLs above.
 
 ---
 
+## 🔒 Role-Based Access Control
+
+All services are protected by OAuth2 authentication. Access is controlled via roles.
+
+### Access Tiers
+
+| Role | Default | Can Access |
+|------|---------|------------|
+| `viewer` | ✅ Auto-assigned | Homer dashboard, Grafana |
+| `developer` | ❌ Admin grants | + MLflow, Ray Dashboard/API, Dozzle logs |
+| `admin` | ❌ Admin grants | + Traefik dashboard, Prometheus, System admin |
+
+### Service Access Matrix
+
+| Service | URL | Required Role |
+|---------|-----|---------------|
+| **Homer Dashboard** | `/` | `viewer` ✅ |
+| **Grafana** | `/grafana/` | `viewer` ✅ |
+| **MLflow UI** | `/mlflow/` | `developer` |
+| **MLflow API** | `/api/2.0/mlflow/` | `developer` |
+| **Ray Dashboard** | `/ray/` | `developer` |
+| **Ray API** | `/api/ray/` | `developer` |
+| **Dozzle Logs** | `/logs/` | `developer` |
+| **Traefik Dashboard** | `/traefik/` | `admin` |
+| **Prometheus** | `/prometheus/` | `admin` |
+
+### New User Workflow
+
+1. **Sign in with Google/GitHub** at https://sfml-platform.tail38b60a.ts.net/
+2. **Auto-registered** with `viewer` role → Can see Homer dashboard and Grafana
+3. **Request elevated access** from platform admin
+4. **Admin grants role** via FusionAuth Admin UI → User gets full access
+
+### Requesting Developer/Admin Access
+
+Contact platform admin with:
+- Your email address (used for Google/GitHub login)
+- Requested role (`developer` or `admin`)
+- Reason for access
+
+Admin will update your role in FusionAuth → Users → [Your Account] → Registrations → OAuth2-Proxy
+
+---
+
 ## 🎮 GPU Configuration
 
 **Hardware:**

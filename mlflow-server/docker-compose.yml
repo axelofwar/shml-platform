@@ -116,27 +116,27 @@ services:
       - "traefik.http.routers.mlflow-health.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-health.service=mlflow"
       - "traefik.http.routers.mlflow-health.priority=600"
-      # API Routes (protected by OAuth2)
+      # API Routes (protected by OAuth2 + developer role)
       - "traefik.http.routers.mlflow-api.rule=PathPrefix(`/api/2.0/mlflow`)"
       - "traefik.http.routers.mlflow-api.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api.service=mlflow"
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.mlflow-api.middlewares=oauth2-errors,oauth2-auth"
+      # Requires developer or admin role to access MLflow API
+      - "traefik.http.routers.mlflow-api.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
       - "traefik.http.routers.mlflow-api.priority=400"
-      # AJAX API Routes (protected by OAuth2)
+      # AJAX API Routes (protected by OAuth2 + developer role)
       - "traefik.http.middlewares.mlflow-ajax-strip.stripprefix.prefixes=/ajax"
       - "traefik.http.routers.mlflow-ajax.rule=PathPrefix(`/ajax-api/2.0/mlflow`)"
       - "traefik.http.routers.mlflow-ajax.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-ajax.service=mlflow"
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.mlflow-ajax.middlewares=oauth2-errors,oauth2-auth,mlflow-ajax-strip"
+      # Requires developer or admin role to access MLflow AJAX API
+      - "traefik.http.routers.mlflow-ajax.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,mlflow-ajax-strip"
       - "traefik.http.routers.mlflow-ajax.priority=350"
-      # UI Routes (protected by OAuth2)
+      # UI Routes (protected by OAuth2 + developer role)
       - "traefik.http.routers.mlflow-ui.rule=PathPrefix(`/mlflow`)"
       - "traefik.http.routers.mlflow-ui.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-ui.service=mlflow"
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.mlflow-ui.middlewares=oauth2-errors,oauth2-auth"
+      # Requires developer or admin role to access MLflow UI
+      - "traefik.http.routers.mlflow-ui.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
       - "traefik.http.routers.mlflow-ui.priority=10"
 
   # ==========================================================================
@@ -190,15 +190,15 @@ services:
       - "traefik.http.routers.mlflow-api-v1.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api-v1.service=mlflow-api-service"
       - "traefik.http.routers.mlflow-api-v1.priority=2147483647"
-      # SECURITY: Require authentication for API access
-      - "traefik.http.routers.mlflow-api-v1.middlewares=oauth2-errors,oauth2-auth"
+      # SECURITY: Require developer or admin role for API access
+      - "traefik.http.routers.mlflow-api-v1.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
       # API Documentation
       - "traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`) || PathPrefix(`/api/v1/openapi.json`)"
       - "traefik.http.routers.mlflow-api-docs.entrypoints=web,websecure"
       - "traefik.http.routers.mlflow-api-docs.service=mlflow-api-service"
       - "traefik.http.routers.mlflow-api-docs.priority=450"
-      # SECURITY: Require authentication for API docs (exposes API schema)
-      - "traefik.http.routers.mlflow-api-docs.middlewares=oauth2-errors,oauth2-auth"
+      # SECURITY: Require developer or admin role for API docs (exposes API schema)
+      - "traefik.http.routers.mlflow-api-docs.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
 
   # ==========================================================================
   # MLFLOW PROMETHEUS - Service-Specific Metrics (30d retention)

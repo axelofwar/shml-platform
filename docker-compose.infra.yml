@@ -58,8 +58,8 @@ services:
       - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
       - "traefik.http.routers.traefik.entrypoints=web,websecure"
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
-      # SECURITY: Protect Traefik dashboard with OAuth2 - requires authentication
-      - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth"
+      # SECURITY: Traefik dashboard requires admin role
+      - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
 
   # ==========================================================================
   # SHARED DATA LAYER
@@ -343,12 +343,78 @@ services:
       - "traefik.http.middlewares.oauth2-auth.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.oauth2-auth.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,Authorization"
 
+      # ========================================================================
+      # ROLE-BASED ACCESS MIDDLEWARES
+      # ========================================================================
+      # These middlewares check that authenticated users have the required role.
+      # Roles are passed in X-Auth-Request-Groups header from OAuth2-Proxy.
+      # FusionAuth provides roles via OIDC 'roles' claim.
+      #
+      # ACCESS TIERS:
+      # - viewer: Homer, Grafana (dashboards only)
+      # - developer: MLflow, Ray, Dozzle (requires admin registration)
+      # - admin: All services + admin panels
+      # ========================================================================
+
+      # Developer-level auth: requires developer or admin role
+      # Chain: oauth2-auth (authenticate) -> role-auth-developer (check role)
+      # Used for: MLflow, Ray, Dozzle
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.address=http://role-auth:8080/auth/developer"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
+      # Admin-level auth: requires admin role only
+      # Chain: oauth2-auth (authenticate) -> role-auth-admin (check role)
+      # Used for: Traefik dashboard, system administration
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.address=http://role-auth:8080/auth/admin"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
       # Error handling middleware - redirects 401/403 to OAuth2 sign-in page
       # This is CRITICAL: without this, users see "Unauthorized" instead of being redirected to login
       # The {url} placeholder is replaced with the original request URL for redirect after login
       - "traefik.http.middlewares.oauth2-errors.errors.status=401-403"
       - "traefik.http.middlewares.oauth2-errors.errors.service=oauth2-proxy"
       - "traefik.http.middlewares.oauth2-errors.errors.query=/oauth2-proxy/sign_in?rd={url}"
+
+  # ==========================================================================
+  # ROLE-BASED AUTH CHECKER
+  # ==========================================================================
+  # Lightweight nginx+lua service that validates user roles from X-Auth-Request-Groups header.
+  # Used as a second forwardAuth middleware AFTER oauth2-auth to enforce role requirements.
+  #
+  # Endpoints:
+  # - /auth/viewer: Requires viewer, developer, or admin role
+  # - /auth/developer: Requires developer or admin role (for MLflow, Ray, Dozzle)
+  # - /auth/admin: Requires admin role only (for system administration)
+  #
+  # Usage in Traefik middleware chains:
+  # - Public services: oauth2-errors,oauth2-auth (any authenticated user)
+  # - Developer services: oauth2-errors,oauth2-auth,role-auth-developer
+  # - Admin services: oauth2-errors,oauth2-auth,role-auth-admin
+  # ==========================================================================
+  role-auth:
+    build:
+      context: ./scripts/role-auth
+      dockerfile: Dockerfile
+    image: sfml-platform/role-auth:latest
+    container_name: role-auth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    networks:
+      - ml-platform
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ==========================================================================
   # SYSTEM MONITORING
@@ -448,9 +514,9 @@ services:
       - "traefik.http.routers.prometheus.entrypoints=web,websecure"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
       - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
-      # OAuth2 protection - requires authentication for Prometheus
-      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
-      - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,prometheus-strip"
+      # OAuth2 + Admin role required for Prometheus
+      # Only admins should access raw metrics and query interface
+      - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,prometheus-strip"
       - "traefik.http.routers.prometheus.priority=100"
 
   unified-grafana:
@@ -566,8 +632,8 @@ services:
       - "traefik.http.routers.dozzle.entrypoints=web,websecure"
       - "traefik.http.services.dozzle.loadbalancer.server.port=8080"
       - "traefik.http.routers.dozzle.priority=100"
-      # OAuth2 protection - requires authentication for log viewing
-      - "traefik.http.routers.dozzle.middlewares=oauth2-errors,oauth2-auth"
+      # OAuth2 + Developer role required - log viewing requires elevated access
+      - "traefik.http.routers.dozzle.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
 
   # --------------------------------------------------------------------------
   # HOMER - Static Dashboard (Root Landing Page)
