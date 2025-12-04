@@ -358,3 +358,12 @@ archived/v0.1.0-consolidation/OAUTH_SETUP_COMPLETE.md
 archived/v0.1.0-consolidation/REMOTE_ACCESS_GUIDE.md
 .cache_ggshield
 container_id_reference.txt
+
+# Large image files
+monitoring/homer/logo.png
+monitoring/homer/logo2.png
+monitoring/homer/logo2_transparent.png
+
+# Large research files (store separately or use Git LFS)
+docs/research/*.pdf
+assets/logo/Gemini_Generated_Image_*.png

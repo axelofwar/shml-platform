@@ -1,0 +1,47 @@
+[
+  {
+    "id": "github-deploy",
+    "execute-command": "/scripts/webhook/deploy.sh",
+    "command-working-directory": "/opt/shml-platform",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "repository.full_name" },
+      { "source": "payload", "name": "ref" },
+      { "source": "payload", "name": "head_commit.message" },
+      { "source": "payload", "name": "pusher.name" }
+    ],
+    "trigger-rule": {
+      "and": [
+        {
+          "match": {
+            "type": "payload-hmac-sha256",
+            "secret": "{{ getenv \"GITHUB_WEBHOOK_SECRET\" }}",
+            "parameter": {
+              "source": "header",
+              "name": "X-Hub-Signature-256"
+            }
+          }
+        },
+        {
+          "match": {
+            "type": "value",
+            "value": "refs/heads/main",
+            "parameter": {
+              "source": "payload",
+              "name": "ref"
+            }
+          }
+        }
+      ]
+    },
+    "include-command-output-in-response": true,
+    "response-message": "Deployment triggered"
+  },
+  {
+    "id": "health",
+    "execute-command": "/bin/echo",
+    "pass-arguments-to-command": [
+      { "source": "string", "name": "healthy" }
+    ],
+    "response-message": "Webhook service is healthy"
+  }
+]

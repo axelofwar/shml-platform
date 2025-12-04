@@ -129,13 +129,13 @@ All passwords preserved from original setup:
 
 ### Start Platform
 ```bash
-cd /home/axelofwar/Projects/sfml-platform
+cd /home/axelofwar/Projects/shml-platform
 sudo bash ./start_all_safe.sh
 ```
 
 ### Stop Platform
 ```bash
-cd /home/axelofwar/Projects/sfml-platform
+cd /home/axelofwar/Projects/shml-platform
 sudo docker compose down
 ```
 
@@ -258,7 +258,7 @@ sudo docker exec ray-head ray status
 Run this from the host to verify everything:
 
 ```bash
-cd /home/axelofwar/Projects/sfml-platform
+cd /home/axelofwar/Projects/shml-platform
 echo "=== Platform Status ===" && \
 sudo docker compose ps && \
 echo -e "\n=== GPU Status ===" && \

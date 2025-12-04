@@ -383,12 +383,92 @@ mlflow-server:
 - Minimal port exposure (80, 8090)
 - Database password secrets
 - Tailscale VPN for remote
+- **OAuth2 Authentication (FusionAuth + OAuth2-Proxy)**
+- **Role-Based Access Control (RBAC)**
+- **HTTPS via Tailscale Funnel**
 
 **⚠️ Missing:**
-- HTTPS/TLS
-- API authentication
-- RBAC
 - Encryption at rest
+- Audit logging
+
+---
+
+## Authentication & Authorization
+
+### OAuth2 Authentication Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    AUTHENTICATION FLOW                               │
+│                                                                      │
+│  User Request → Traefik → OAuth2-Proxy ←→ FusionAuth                │
+│                    │                           ↑                     │
+│                    ↓                    Google/GitHub/Twitter        │
+│               Protected Service                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Components:**
+- **FusionAuth:** Identity Provider (OAuth2/OIDC)
+- **OAuth2-Proxy:** Forward authentication for Traefik
+- **role-auth:** Role-based access checker (OpenResty/Lua)
+
+### Role-Based Access Control (RBAC)
+
+**Access Tiers:**
+
+| Role | Default | Services Accessible |
+|------|---------|---------------------|
+| `viewer` | ✅ Yes | Homer dashboard, Grafana |
+| `developer` | No | + MLflow, Ray Dashboard/API, Dozzle logs |
+| `admin` | No | + Traefik dashboard, Prometheus, System admin |
+
+**Service Middleware Chains:**
+
+| Access Level | Middleware Chain | Services |
+|--------------|------------------|----------|
+| **Viewer** | `oauth2-errors,oauth2-auth` | Homer, Grafana |
+| **Developer** | `oauth2-errors,oauth2-auth,role-auth-developer` | MLflow, Ray, Dozzle |
+| **Admin** | `oauth2-errors,oauth2-auth,role-auth-admin` | Traefik, Prometheus |
+
+### Identity Providers
+
+| Provider | Auto-Registration | Default Role |
+|----------|-------------------|--------------|
+| **Google** | ✅ OAuth2-Proxy | `viewer` |
+| **GitHub** | ✅ OAuth2-Proxy | `viewer` |
+| **Twitter** | ❌ Requires admin | - |
+
+### User Management Workflow
+
+**New User (Social Login):**
+1. User visits platform → Redirected to FusionAuth login
+2. User signs in with Google/GitHub
+3. FusionAuth creates user + auto-registers to OAuth2-Proxy with `viewer` role
+4. User can access Homer dashboard and Grafana immediately
+
+**Granting Developer Access:**
+1. Admin logs into FusionAuth Admin UI (http://localhost:9011 or via Tailscale)
+2. Navigate to Users → Find user → Registrations tab
+3. Edit OAuth2-Proxy registration → Change role to `developer`
+4. User can now access MLflow, Ray, and Dozzle
+
+**Granting Admin Access:**
+1. Same as above, but select `admin` role
+2. Admin can access all services including Traefik and Prometheus
+
+### Security Architecture
+
+```yaml
+# Role-auth service (scripts/role-auth/)
+# Validates X-Auth-Request-Groups header from OAuth2-Proxy
+Endpoints:
+  /auth/viewer:     # Requires viewer, developer, or admin
+  /auth/developer:  # Requires developer or admin
+  /auth/admin:      # Requires admin only
+```
+
+---
 
 ### Production Hardening
 

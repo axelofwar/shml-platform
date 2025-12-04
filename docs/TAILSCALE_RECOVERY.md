@@ -28,7 +28,7 @@ sudo ./scripts/recover-tailscale.sh
 | Component | What Changes | What Stays Same |
 |-----------|--------------|-----------------|
 | Tailscale IP | New IP assigned (e.g., 100.x.x.x) | - |
-| Hostname | Resets to machine name | Can force to `sfml-platform` |
+| Hostname | Resets to machine name | Can force to `shml-platform` |
 | Domain | Stays same if hostname matches | `<hostname>.<tailnet>.ts.net` |
 | Funnel | Must be re-enabled | - |
 
@@ -39,7 +39,7 @@ sudo ./scripts/recover-tailscale.sh
 **`.env`** - Main environment file
 ```bash
 TAILSCALE_IP=100.66.26.115
-PUBLIC_DOMAIN=sfml-platform.tail38b60a.ts.net
+PUBLIC_DOMAIN=shml-platform.tail38b60a.ts.net
 ```
 
 ### Files Using Environment Variables (Auto-Updated)
@@ -89,14 +89,14 @@ MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,...,${PUBLIC_DOMAIN}"
 
 **Symptoms:**
 ```
-error performing request: Get "https://sfml-platform.tail38b60a.ts.net/.well-known/openid-configuration": connection refused
+error performing request: Get "https://shml-platform.tail38b60a.ts.net/.well-known/openid-configuration": connection refused
 ```
 
 **Fix:**
 Add `extra_hosts` to oauth2-proxy in docker-compose.infra.yml:
 ```yaml
 extra_hosts:
-  - "sfml-platform.tail38b60a.ts.net:${TAILSCALE_IP}"
+  - "shml-platform.tail38b60a.ts.net:${TAILSCALE_IP}"
 ```
 
 ### 4. Cookies Not Being Set (X-Forwarded-Proto Issue)
@@ -118,9 +118,9 @@ These services ensure Tailscale configuration persists across reboots:
 
 ```
 /etc/systemd/system/tailscaled.service.d/no-tpm.conf  # Disables TPM
-/etc/systemd/system/tailscale-hostname.service         # Sets hostname to sfml-platform
+/etc/systemd/system/tailscale-hostname.service         # Sets hostname to shml-platform
 /etc/systemd/system/tailscale-funnel.service          # Enables Funnel on boot
-/etc/systemd/system/sfml-platform.service             # Starts Docker containers
+/etc/systemd/system/shml-platform.service             # Starts Docker containers
 ```
 
 ## Manual Recovery Steps
@@ -133,7 +133,7 @@ If the automated script fails, follow these steps:
 sudo tailscale up
 
 # Set hostname (persists across restarts)
-sudo tailscale set --hostname=sfml-platform
+sudo tailscale set --hostname=shml-platform
 
 # Enable Funnel
 sudo tailscale funnel --set-path=/ --bg 80
@@ -164,12 +164,12 @@ docker compose up -d
 1. Go to FusionAuth Admin: `http://<tailscale-ip>:9011/admin/`
 2. Navigate to Applications → OAuth2-Proxy
 3. Verify Authorized Redirect URIs include:
-   - `https://sfml-platform.tail38b60a.ts.net/oauth2-proxy/callback`
+   - `https://shml-platform.tail38b60a.ts.net/oauth2-proxy/callback`
 4. Verify Authorized Origin URLs include:
-   - `https://sfml-platform.tail38b60a.ts.net`
+   - `https://shml-platform.tail38b60a.ts.net`
 
 ### Step 5: Clear Browser State
-- Clear cookies for `sfml-platform.tail38b60a.ts.net`
+- Clear cookies for `shml-platform.tail38b60a.ts.net`
 - Try incognito/private window for testing
 
 ## Verification Commands
@@ -179,7 +179,7 @@ docker compose up -d
 tailscale status
 
 # Test OIDC discovery
-curl -sk https://sfml-platform.tail38b60a.ts.net/.well-known/openid-configuration | jq .issuer
+curl -sk https://shml-platform.tail38b60a.ts.net/.well-known/openid-configuration | jq .issuer
 
 # Check OAuth2 Proxy
 docker logs oauth2-proxy 2>&1 | tail -20
@@ -188,7 +188,7 @@ docker logs oauth2-proxy 2>&1 | tail -20
 docker logs mlflow-server 2>&1 | grep "Allowed hosts"
 
 # Test MLflow health
-curl -sk https://sfml-platform.tail38b60a.ts.net/mlflow/health
+curl -sk https://shml-platform.tail38b60a.ts.net/mlflow/health
 ```
 
 ## Prevention: TPM Lockout

@@ -236,7 +236,7 @@ stop_all_services() {
 
     # Phase 5: Stop Auth Services
     log_info "━━━ Stopping Auth Services ━━━"
-    docker compose stop oauth2-proxy fusionauth 2>/dev/null || true
+    docker compose stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
     log_success "Auth services stopped"
     echo ""
 
@@ -261,7 +261,7 @@ cleanup_containers() {
     local containers=(
         "ray-compute-api" "ray-head" "ray-prometheus"
         "mlflow-api" "mlflow-nginx" "mlflow-server" "mlflow-prometheus"
-        "oauth2-proxy" "fusionauth"
+        "oauth2-proxy" "fusionauth" "role-auth"
         "unified-grafana" "global-prometheus"
         "ml-platform-cadvisor" "ml-platform-node-exporter"
         "ml-platform-traefik" "ml-platform-redis" "shared-postgres"
@@ -338,6 +338,15 @@ rebuild_images() {
     # Ray compute API
     echo -n "  Building ray-compute-api..."
     if docker compose build ray-compute-api >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${YELLOW}⚠ (using existing)${NC}"
+        build_failed=$((build_failed + 1))
+    fi
+
+    # Role Auth (RBAC middleware)
+    echo -n "  Building role-auth..."
+    if docker compose build role-auth >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -463,31 +472,109 @@ start_all_services() {
     if command -v tailscale &>/dev/null; then
         echo "Starting Tailscale Funnel (required for OAuth2 OIDC discovery)..."
         echo -e "${CYAN}Security: All services are protected by FusionAuth OAuth2${NC}"
-        if [ -f "$SCRIPT_DIR/scripts/manage_funnel.sh" ]; then
-            "$SCRIPT_DIR/scripts/manage_funnel.sh" start 2>/dev/null || log_warn "Funnel may need manual start"
+
+        # Expected hostname for the platform
+        local EXPECTED_HOSTNAME="shml-platform"
+
+        # Get current Tailscale hostname
+        local CURRENT_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName' 2>/dev/null || echo "unknown")
+        local MAGIC_DNS_SUFFIX=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix' 2>/dev/null || echo "tail38b60a.ts.net")
+
+        # Check and fix hostname if needed
+        if [ "$CURRENT_HOSTNAME" != "$EXPECTED_HOSTNAME" ]; then
+            log_warn "Tailscale hostname mismatch: '$CURRENT_HOSTNAME' != '$EXPECTED_HOSTNAME'"
+            echo "  Correcting Tailscale hostname to '$EXPECTED_HOSTNAME'..."
+            if sudo tailscale set --hostname="$EXPECTED_HOSTNAME" 2>/dev/null; then
+                log_success "Hostname corrected to '$EXPECTED_HOSTNAME'"
+                # Give Tailscale a moment to propagate the change
+                sleep 3
+            else
+                log_error "Failed to set Tailscale hostname"
+            fi
         else
-            sudo tailscale funnel --bg --https=443 http://localhost:80 2>/dev/null || log_warn "Funnel may need manual start"
+            echo "  Tailscale hostname: $CURRENT_HOSTNAME ✓"
         fi
 
-        # Wait for funnel to be accessible
-        sleep 3
-        PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "sfml-platform.tail38b60a.ts.net")
+        # Get the public domain (re-read after potential hostname change)
+        PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "${EXPECTED_HOSTNAME}.${MAGIC_DNS_SUFFIX}")
+        echo "  Public domain: https://${PUBLIC_DOMAIN}"
 
-        # Verify OIDC discovery endpoint is accessible (required for OAuth2 Proxy)
+        # Reset any existing funnel configuration to avoid conflicts
+        echo "  Resetting funnel configuration..."
+        sudo tailscale funnel reset 2>/dev/null || true
+        sleep 2
+
+        # Start the funnel - routes HTTPS to local Traefik on port 80
+        # Using 'sudo' because funnel requires elevated permissions
+        echo "  Starting Tailscale Funnel..."
+        if sudo tailscale funnel --bg 80 2>/dev/null; then
+            log_success "Funnel started on https://${PUBLIC_DOMAIN}"
+        else
+            log_warn "Funnel command may have failed"
+        fi
+
+        # Give funnel time to establish connection
+        sleep 5
+
+        # Wait for funnel to be fully accessible (CRITICAL for OAuth2 Proxy)
+        # OAuth2 Proxy will fail to start if it can't reach OIDC discovery endpoint
         echo -n "  Verifying OIDC discovery endpoint"
         local oidc_wait=0
-        while [ $oidc_wait -lt 30 ]; do
+        local oidc_success=false
+        while [ $oidc_wait -lt 60 ]; do
             if curl -sf "https://${PUBLIC_DOMAIN}/.well-known/openid-configuration" >/dev/null 2>&1; then
                 echo -e " ${GREEN}✓${NC}"
+                oidc_success=true
                 break
             fi
             echo -n "."
             sleep 2
             oidc_wait=$((oidc_wait + 2))
         done
-        [ $oidc_wait -ge 30 ] && echo -e " ${YELLOW}⚠${NC} (OIDC not yet accessible)"
 
-        log_success "Tailscale Funnel active"
+        if [ "$oidc_success" = false ]; then
+            echo -e " ${YELLOW}⚠${NC}"
+            log_warn "OIDC not accessible on first attempt - retrying with funnel restart..."
+
+            # Second attempt: full reset and restart
+            sudo tailscale funnel reset 2>/dev/null || true
+            sleep 2
+            sudo tailscale funnel --bg 80 2>/dev/null || true
+            sleep 5
+
+            echo -n "  Retry OIDC verification"
+            oidc_wait=0
+            while [ $oidc_wait -lt 30 ]; do
+                if curl -sf "https://${PUBLIC_DOMAIN}/.well-known/openid-configuration" >/dev/null 2>&1; then
+                    echo -e " ${GREEN}✓${NC}"
+                    oidc_success=true
+                    break
+                fi
+                echo -n "."
+                sleep 2
+                oidc_wait=$((oidc_wait + 2))
+            done
+        fi
+
+        if [ "$oidc_success" = false ]; then
+            echo -e " ${RED}✗${NC}"
+            log_error "OIDC discovery endpoint not accessible!"
+            echo ""
+            echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  TAILSCALE FUNNEL NOT WORKING                                  ║${NC}"
+            echo -e "${RED}╠════════════════════════════════════════════════════════════════╣${NC}"
+            echo -e "${RED}║  OAuth2 Proxy requires the funnel to reach OIDC discovery.     ║${NC}"
+            echo -e "${RED}║                                                                ║${NC}"
+            echo -e "${RED}║  Check funnel status:                                          ║${NC}"
+            echo -e "${RED}║    sudo tailscale funnel status                                ║${NC}"
+            echo -e "${RED}║                                                                ║${NC}"
+            echo -e "${RED}║  Verify from external machine:                                 ║${NC}"
+            echo -e "${RED}║    curl https://${PUBLIC_DOMAIN}/.well-known/openid-configuration${NC}"
+            echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+        else
+            log_success "Tailscale Funnel active"
+        fi
     else
         log_warn "Tailscale not installed - OAuth2 Proxy may fail OIDC discovery"
     fi
@@ -543,43 +630,117 @@ start_all_services() {
     # Note: /oauth2-proxy/ping returns 403 without auth - that's correct, we just need any response
     echo -n "  Verifying OAuth2 Proxy endpoint"
     local proxy_wait=0
+    local oauth2_proxy_ok=false
     while [ $proxy_wait -lt 30 ]; do
         # Check if OAuth2 Proxy is responding (any HTTP status except 000 means it's up)
         local proxy_check=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/oauth2-proxy/ping" 2>/dev/null)
         if [ "$proxy_check" != "000" ] && [ -n "$proxy_check" ]; then
             echo -e " ${GREEN}✓${NC} (HTTP $proxy_check)"
+            oauth2_proxy_ok=true
             break
         fi
         echo -n "."
         sleep 2
         proxy_wait=$((proxy_wait + 2))
     done
-    [ $proxy_wait -ge 30 ] && echo -e " ${YELLOW}⚠${NC} (endpoint not responding)"
+
+    # If OAuth2 Proxy didn't respond, check if it's OIDC discovery failure and retry
+    if [ "$oauth2_proxy_ok" = false ]; then
+        echo -e " ${YELLOW}⚠${NC} (endpoint not responding)"
+
+        # Check container logs for OIDC error
+        if docker logs oauth2-proxy 2>&1 | tail -20 | grep -qi "oidc\|issuer\|discovery"; then
+            log_warn "OAuth2 Proxy OIDC discovery failed - retrying with funnel restart"
+            echo ""
+
+            # Stop oauth2-proxy
+            docker stop oauth2-proxy 2>/dev/null || true
+            sleep 2
+
+            # Ensure funnel is running
+            echo "  Ensuring Tailscale Funnel is accessible..."
+            sudo tailscale funnel reset 2>/dev/null || true
+            sleep 2
+            sudo tailscale funnel --bg 80
+            sleep 5
+
+            # Wait for OIDC endpoint
+            local oidc_retry=0
+            while [ $oidc_retry -lt 30 ]; do
+                local oidc_status=$(curl -skI "https://shml-platform.tail38b60a.ts.net/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
+                if [ "$oidc_status" = "200" ]; then
+                    log_success "OIDC endpoint accessible"
+                    break
+                fi
+                echo -n "."
+                sleep 2
+                oidc_retry=$((oidc_retry + 2))
+            done
+
+            # Restart oauth2-proxy
+            echo "  Restarting OAuth2 Proxy..."
+            docker compose up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+            sleep 10
+        fi
+    fi
 
     # CRITICAL: Wait for Traefik to register the oauth2-auth middleware
     # Protected services will fail if this middleware doesn't exist
     # Traefik filters out unhealthy/starting containers - that's why healthcheck must be disabled
-    wait_for_middleware "oauth2-auth" 60 || {
-        log_error "oauth2-auth middleware not registered in Traefik!"
-        echo ""
-        echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${RED}║  MIDDLEWARE NOT REGISTERED                                     ║${NC}"
-        echo -e "${RED}╠════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${RED}║  Traefik filters containers that are 'unhealthy' or 'starting' ║${NC}"
-        echo -e "${RED}║  Check container health: docker inspect oauth2-proxy \\         ║${NC}"
-        echo -e "${RED}║                          --format='{{.State.Health.Status}}'   ║${NC}"
-        echo -e "${RED}║                                                                ║${NC}"
-        echo -e "${RED}║  If status is 'starting' or 'unhealthy':                       ║${NC}"
-        echo -e "${RED}║  1. The healthcheck is using wget/curl (not in scratch image)  ║${NC}"
-        echo -e "${RED}║  2. Set 'healthcheck: disable: true' in docker-compose.infra.yml${NC}"
-        echo -e "${RED}║  3. Restart: docker compose up -d --force-recreate oauth2-proxy${NC}"
-        echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        log_warn "Protected services will be inaccessible without oauth2-auth middleware."
-        docker logs oauth2-proxy 2>&1 | tail -10
-    }
+    local middleware_ok=false
+    wait_for_middleware "oauth2-auth" 60 && middleware_ok=true
+
+    if [ "$middleware_ok" = false ]; then
+        log_warn "oauth2-auth middleware not registered - attempting recovery..."
+
+        # Check if it's a health check issue (common problem)
+        local health_status=$(docker inspect oauth2-proxy --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null || echo "not-found")
+
+        if [ "$health_status" = "starting" ] || [ "$health_status" = "unhealthy" ]; then
+            echo -e "${YELLOW}  Health check failing - Traefik ignores unhealthy containers${NC}"
+            echo -e "${YELLOW}  Ensure docker-compose.infra.yml has 'healthcheck: disable: true'${NC}"
+        fi
+
+        # Final recovery attempt: restart oauth2-proxy
+        echo "  Final recovery attempt..."
+        docker compose up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+        sleep 15
+
+        wait_for_middleware "oauth2-auth" 30 || {
+            log_error "oauth2-auth middleware still not registered!"
+            echo ""
+            echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  MIDDLEWARE NOT REGISTERED                                     ║${NC}"
+            echo -e "${RED}╠════════════════════════════════════════════════════════════════╣${NC}"
+            echo -e "${RED}║  Traefik filters containers that are 'unhealthy' or 'starting' ║${NC}"
+            echo -e "${RED}║  Check: docker logs oauth2-proxy                               ║${NC}"
+            echo -e "${RED}║  Check: docker inspect oauth2-proxy --format='{{.State.Health.Status}}'${NC}"
+            echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            log_warn "Protected services will be inaccessible without oauth2-auth middleware."
+            docker logs oauth2-proxy 2>&1 | tail -10
+        }
+    fi
 
     log_success "OAuth2 Proxy ready (middleware registered)"
+    echo ""
+
+    # =========================================================================
+    # Phase 4b: Role Auth Service (Role-based access control middleware)
+    # This provides role-auth-developer and role-auth-admin middlewares
+    # =========================================================================
+    log_info "━━━ Phase 4b: Role Auth Service (RBAC Middleware) ━━━"
+    echo "Starting: Role Auth checker (provides role-based access control)..."
+    echo "  Note: Validates X-Auth-Request-Groups header for developer/admin roles"
+    docker compose up -d --build role-auth 2>&1 | grep -v "orphan" || true
+
+    wait_for_health "role-auth" $DEFAULT_TIMEOUT || log_warn "Role Auth may still be starting"
+
+    # Wait for role-auth middlewares to be registered
+    wait_for_middleware "role-auth-developer" 30 || log_warn "role-auth-developer middleware not registered"
+    wait_for_middleware "role-auth-admin" 30 || log_warn "role-auth-admin middleware not registered"
+
+    log_success "Role Auth ready (RBAC middlewares registered)"
     echo ""
 
     # =========================================================================
@@ -642,6 +803,28 @@ start_all_services() {
     fi
     echo ""
 
+    # =========================================================================
+    # Phase 9: Observability Services
+    # =========================================================================
+    log_info "━━━ Phase 9: Observability & Landing Page ━━━"
+    echo "Starting: Homer (landing), Dozzle (logs), Postgres Backup..."
+    docker compose up -d \
+        homer dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+
+    # Wait for services
+    wait_for_health "homer" $DEFAULT_TIMEOUT || log_warn "Homer may still be starting"
+    wait_for_health "postgres-backup" $DEFAULT_TIMEOUT || log_warn "Postgres Backup may still be starting"
+
+    # Dozzle doesn't have healthcheck (minimal image)
+    if docker ps --format '{{.Names}}' | grep -q "^dozzle$"; then
+        log_success "Dozzle running"
+    else
+        log_warn "Dozzle may not have started"
+    fi
+
+    log_success "Observability services ready"
+    echo ""
+
     # Show status
     show_status
 
@@ -690,6 +873,7 @@ verify_auth_protection() {
         "Ray Dashboard:/ray"
         "Grafana:/grafana"
         "Prometheus:/prometheus"
+        "Dozzle (Logs):/logs"
     )
 
     echo ""
@@ -750,36 +934,48 @@ verify_auth_protection() {
 show_status() {
     # Get Tailscale IP and public domain
     local TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.66.26.115")
-    local PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "sfml-platform.tail38b60a.ts.net")
+    local PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "shml-platform.tail38b60a.ts.net")
 
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     log_success "Platform startup complete!"
     echo ""
     echo "Service Status:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter" || true
+    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup" || true
     echo ""
     echo -e "${CYAN}Public Access (via Tailscale Funnel):${NC}"
-    echo "  All services require authentication via FusionAuth"
     if [ -n "$PUBLIC_DOMAIN" ]; then
-        echo "  • Auth (FusionAuth): https://${PUBLIC_DOMAIN}/auth/admin/"
+        echo "  🏠 Landing Page:     https://${PUBLIC_DOMAIN}/"
+        echo ""
+        echo "  Auth (all services require login):"
+        echo "  • FusionAuth Admin:  https://${PUBLIC_DOMAIN}/auth/admin/"
         echo "  • OAuth2 Login:      https://${PUBLIC_DOMAIN}/oauth2-proxy/sign_in"
+        echo ""
+        echo "  Core Services (OAuth Protected):"
         echo "  • MLflow UI:         https://${PUBLIC_DOMAIN}/mlflow/"
         echo "  • Ray Dashboard:     https://${PUBLIC_DOMAIN}/ray/"
         echo "  • Grafana:           https://${PUBLIC_DOMAIN}/grafana/"
+        echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
     fi
     echo ""
-    echo -e "${CYAN}Internal Access (LAN/Tailscale VPN):${NC}"
-    echo "  • MLflow UI:       http://${TAILSCALE_IP}/mlflow/"
-    echo "  • Ray Dashboard:   http://${TAILSCALE_IP}/ray/"
-    echo "  • Grafana:         http://${TAILSCALE_IP}/grafana/"
-    echo "  • FusionAuth:      http://${TAILSCALE_IP}:9011/admin/"
-    echo "  • Traefik API:     http://${TAILSCALE_IP}:8090/"
+    # Get LAN IP (try multiple methods, fallback to common default)
+    local LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1)
+    if [ -z "$LAN_IP" ]; then
+        LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    LAN_IP=${LAN_IP:-YOUR_LAN_IP}
+    echo -e "${CYAN}Internal Access (LAN - http://${LAN_IP}/...):${NC}"
+
+    echo "  🏠 Landing Page:   http://${LAN_IP}/"
+    echo "  • MLflow UI:       http://${LAN_IP}/mlflow/"
+    echo "  • Ray Dashboard:   http://${LAN_IP}/ray/"
+    echo "  • Grafana:         http://${LAN_IP}/grafana/"
+    echo "  • Dozzle (Logs):   http://${LAN_IP}/logs/"
     echo ""
-    echo -e "${CYAN}Debugging:${NC}"
-    echo "  • Check middleware: curl -s http://localhost:8090/api/http/middlewares | jq '.[].name'"
-    echo "  • Check routers:    curl -s http://localhost:8090/api/http/routers | jq '.[].name'"
-    echo "  • OAuth2 Proxy log: docker logs oauth2-proxy 2>&1 | tail -20"
-    echo "  • Traefik log:      docker logs ml-platform-traefik 2>&1 | tail -20"
+    echo "  Admin (direct ports):"
+    echo "  • FusionAuth:      http://${LAN_IP}:9011/admin/"
+    echo "  • Traefik API:     http://${LAN_IP}:8090/"
+    echo ""
+    echo -e "${GREEN}Note: HTTPS also works on LAN (https://${LAN_IP}/...) with Tailscale certs.${NC}"
     echo ""
 }
 
@@ -877,13 +1073,16 @@ diagnose_auth() {
         "/auth/:FusionAuth"
         "/grafana/:Grafana (protected)"
         "/prometheus/:Prometheus (protected)"
+        "/mlflow/:MLflow (protected)"
+        "/ray/:Ray Dashboard (protected)"
+        "/logs/:Dozzle (protected)"
     )
 
     for entry in "${test_endpoints[@]}"; do
         local path="${entry%%:*}"
         local name="${entry##*:}"
         local status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost${path}" 2>/dev/null)
-        printf "  %-25s HTTP %s\n" "$name:" "$status"
+        printf "  %-30s HTTP %s\n" "$name:" "$status"
     done
     echo ""
 
@@ -916,7 +1115,7 @@ fix_fusionauth_oauth() {
     # Configuration - these should match your environment
     local FUSIONAUTH_API_KEY="${FUSIONAUTH_API_KEY:-pYxEbVSHPxJTSTksYEGAA3LLSfh2fvrBZ91dA945Km7yk0JJu2uDDt_t}"
     local OAUTH_CLIENT_ID="${OAUTH2_PROXY_CLIENT_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}"
-    local PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-sfml-platform.tail38b60a.ts.net}"
+    local PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
 
     echo -e "${YELLOW}Configuration:${NC}"
     echo "  OAuth Client ID: $OAUTH_CLIENT_ID"

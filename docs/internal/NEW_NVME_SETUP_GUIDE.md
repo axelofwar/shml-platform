@@ -40,10 +40,10 @@ This guide walks you through setting up the SFML ML Platform on your new NVMe dr
 ## 🎯 Setup Strategy
 
 Your setup has two versions:
-1. **sfml-platform-original/** - Old configuration from previous drive
-2. **sfml-platform/sfml-platform/** - New version to set up (recommended)
+1. **shml-platform-original/** - Old configuration from previous drive
+2. **shml-platform/shml-platform/** - New version to set up (recommended)
 
-**We'll use:** The new version at `/home/axelofwar/Projects/sfml-platform/sfml-platform/`
+**We'll use:** The new version at `/home/axelofwar/Projects/shml-platform/shml-platform/`
 
 ---
 
@@ -61,7 +61,7 @@ sudo apt install -y curl wget git vim nano htop build-essential \
 
 ### Step 1.2: Install Docker Engine
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform/ray_compute/scripts
+cd /home/axelofwar/Projects/shml-platform/shml-platform/ray_compute/scripts
 
 # Run the Docker + NVIDIA Container Toolkit installer
 chmod +x install_docker_nvidia.sh
@@ -123,7 +123,7 @@ nvidia-smi --query-gpu=index,name,pci.bus_id,memory.total,compute_cap --format=c
 MPS allows multiple processes to share GPUs efficiently:
 
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform/scripts
+cd /home/axelofwar/Projects/shml-platform/shml-platform/scripts
 
 # Setup GPU sharing
 chmod +x setup-gpu-sharing.sh
@@ -153,7 +153,7 @@ nvidia-smi -q | grep -i "persistence mode"
 
 ### Step 3.1: Navigate to Platform Directory
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 ```
 
 ### Step 3.2: Review Configuration Files
@@ -233,7 +233,7 @@ docker logs -f mlflow-server
 
 ### Step 4.1: Check All Containers
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 
 # Run comprehensive test
 chmod +x test_all_services.sh
@@ -341,7 +341,7 @@ watch -n 1 nvidia-smi
 ### Option A: Tailscale VPN (Recommended)
 
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform/mlflow-server/scripts
+cd /home/axelofwar/Projects/shml-platform/shml-platform/mlflow-server/scripts
 
 # Install and configure Tailscale
 chmod +x setup_tailscale_vpn.sh
@@ -375,7 +375,7 @@ ssh -L 8080:localhost:80 \
 ### Enable Automatic Startup
 
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform/ray_compute/scripts
+cd /home/axelofwar/Projects/shml-platform/shml-platform/ray_compute/scripts
 
 # Install systemd service
 chmod +x install_systemd_services.sh
@@ -390,7 +390,7 @@ This creates a service that:
 ### Daily Backups
 
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform/scripts
+cd /home/axelofwar/Projects/shml-platform/shml-platform/scripts
 
 # Setup automated backups
 chmod +x setup_daily_backup.sh
@@ -444,7 +444,7 @@ All data persists in Docker volumes:
 docker volume ls | grep ml-platform
 
 # Backup location
-/home/axelofwar/Projects/sfml-platform/sfml-platform/backups/
+/home/axelofwar/Projects/shml-platform/shml-platform/backups/
 ```
 
 ---
@@ -453,13 +453,13 @@ docker volume ls | grep ml-platform
 
 ### Starting the Platform
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 sudo ./start_all_safe.sh
 ```
 
 ### Stopping the Platform
 ```bash
-cd /home/axelofwar/Projects/sfml-platform/sfml-platform
+cd /home/axelofwar/Projects/shml-platform/shml-platform
 sudo ./stop_all.sh
 
 # Or manually
@@ -584,7 +584,7 @@ docker inspect <container-name> | jq '.[0].HostConfig.Resources'
 
 ### Key Scripts
 ```
-sfml-platform/sfml-platform/
+shml-platform/shml-platform/
 ├── start_all_safe.sh              # Safe startup
 ├── stop_all.sh                    # Shutdown all services
 ├── test_all_services.sh           # Verification tests

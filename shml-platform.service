@@ -1,6 +1,6 @@
 [Unit]
 Description=SFML Platform (MLflow + Ray + Auth Services)
-Documentation=https://github.com/axelofwar/sfml-platform
+Documentation=https://github.com/axelofwar/shml-platform
 After=docker.service network-online.target tailscaled.service
 Requires=docker.service
 Wants=network-online.target tailscaled.service
@@ -17,7 +17,7 @@ User=axelofwar
 Group=docker
 
 # Working directory for docker-compose
-WorkingDirectory=/home/axelofwar/Projects/sfml-platform
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
 
 # Wait for dependencies before starting
 ExecStartPre=/bin/sleep 10
@@ -26,10 +26,10 @@ ExecStartPre=/bin/bash -c 'until tailscale status >/dev/null 2>&1; do sleep 2; d
 
 # Start all services using the safe startup script
 # The script handles all internal dependencies (Postgres -> FusionAuth -> OAuth2 Proxy -> Services)
-ExecStart=/home/axelofwar/Projects/sfml-platform/start_all_safe.sh start
+ExecStart=/home/axelofwar/Projects/shml-platform/start_all_safe.sh start
 
 # Stop all services gracefully
-ExecStop=/home/axelofwar/Projects/sfml-platform/stop_all.sh
+ExecStop=/home/axelofwar/Projects/shml-platform/stop_all.sh
 
 # Restart policy
 Restart=on-failure
@@ -46,7 +46,7 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=sfml-platform
+SyslogIdentifier=shml-platform
 
 [Install]
 WantedBy=multi-user.target

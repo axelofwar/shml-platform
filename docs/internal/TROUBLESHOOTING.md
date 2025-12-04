@@ -216,7 +216,7 @@ sudo systemctl restart docker
 docker logs fusionauth --tail 50
 
 # Verify OAuth application in FusionAuth admin
-# URL: http://localhost:9011/admin/ or https://sfml-platform.tail38b60a.ts.net/auth/admin/
+# URL: http://localhost:9011/admin/ or https://shml-platform.tail38b60a.ts.net/auth/admin/
 # Navigate to Applications > Ray Compute > OAuth tab
 
 # Check environment (.env):
