@@ -111,6 +111,65 @@
     },
     {
       "method": "POST",
+      "url": "/api/application/acda34f0-7cf2-40eb-9cba-7cb0048857d3",
+      "body": {
+        "application": {
+          "name": "OAuth2-Proxy",
+          "oauthConfiguration": {
+            "authorizedRedirectURLs": [
+              "#{ENV.OAUTH2_PROXY_REDIRECT_URL:-http://localhost/oauth2/callback}",
+              "https://sfml-platform.tail38b60a.ts.net/oauth2/callback"
+            ],
+            "clientId": "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}",
+            "clientSecret": "#{ENV.FUSIONAUTH_PROXY_CLIENT_SECRET:-change-me-proxy-secret}",
+            "enabledGrants": ["authorization_code", "refresh_token"],
+            "generateRefreshTokens": true,
+            "requireClientAuthentication": true
+          },
+          "loginConfiguration": {
+            "allowTokenRefresh": true,
+            "generateRefreshTokens": true,
+            "requireAuthentication": true
+          },
+          "roles": [
+            {"name": "admin", "isDefault": false, "isSuperRole": true},
+            {"name": "user", "isDefault": true, "isSuperRole": false}
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/identity-provider/82339786-3dff-42a6-aac6-1f1ceecb6c46",
+      "body": {
+        "identityProvider": {
+          "type": "Google",
+          "name": "Google",
+          "enabled": true,
+          "client_id": "#{ENV.GOOGLE_CLIENT_ID}",
+          "client_secret": "#{ENV.GOOGLE_CLIENT_SECRET}",
+          "buttonText": "Sign in with Google",
+          "scope": "openid email profile",
+          "linkingStrategy": "LinkByEmail",
+          "applicationConfiguration": {
+            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+              "enabled": true,
+              "createRegistration": true
+            },
+            "e9fdb985-9173-4e01-9d73-ac2d60d1dc8e": {
+              "enabled": true,
+              "createRegistration": false
+            },
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+              "enabled": true,
+              "createRegistration": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
       "url": "/api/user/registration",
       "body": {
         "user": {

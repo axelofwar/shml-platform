@@ -3,7 +3,7 @@
 
 title: "SFML Platform"
 subtitle: "ML Infrastructure Dashboard"
-logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/machine-learning.png"
+logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/ollama.png"
 
 header: true
 footer: false
@@ -53,7 +53,7 @@ services:
     items:
       - name: "MLflow"
         subtitle: "Experiment Tracking & Model Registry"
-        logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/mlflow.png"
+        logo: "https://avatars.githubusercontent.com/u/39938107"
         url: "/mlflow/"
         target: "_blank"
       - name: "Ray Dashboard"
