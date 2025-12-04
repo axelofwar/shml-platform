@@ -12,10 +12,23 @@ COMMIT_MSG="$3"
 PUSHER="$4"
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-LOG_FILE="/opt/sfml-platform/logs/deploy.log"
 
-# Ensure log directory exists
-mkdir -p "$(dirname "$LOG_FILE")"
+# Log file path - use /var/log if available, fallback to tmp
+LOG_DIR="${DEPLOY_LOG_DIR:-/var/log/sfml-platform}"
+LOG_FILE="${LOG_DIR}/deploy.log"
+
+# Ensure log directory exists and is writable
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+    # Fallback to temp directory if /var/log not writable
+    LOG_DIR="/tmp/sfml-platform"
+    LOG_FILE="${LOG_DIR}/deploy.log"
+    mkdir -p "$LOG_DIR"
+fi
+
+if [ ! -w "$LOG_DIR" ]; then
+    echo "ERROR: Log directory $LOG_DIR is not writable. Using stderr only." >&2
+    LOG_FILE="/dev/stderr"
+fi
 
 log() {
     echo "[${TIMESTAMP}] $1" | tee -a "$LOG_FILE"

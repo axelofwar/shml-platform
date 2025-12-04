@@ -15,9 +15,10 @@ load_env() {
     local env_file="${PROJECT_ROOT}/.env"
     if [ -f "$env_file" ]; then
         echo "Loading credentials from .env..."
-        # Export all non-comment, non-empty lines
+        # Export all non-comment, non-empty lines using set -a (auto-export)
+        # This is safer than process substitution with source
         set -a
-        source <(grep -v '^#' "$env_file" | grep -v '^$' | sed 's/\r$//')
+        . "$env_file"
         set +a
         return 0
     else
@@ -294,18 +295,12 @@ else
     fi
 fi
 
-# Dozzle internal
-dozzle_health=$(docker exec dozzle wget -qO- http://localhost:8080 2>&1 | head -c 50 || echo "no wget")
-if [[ "$dozzle_health" == *"html"* ]] || [[ "$dozzle_health" == *"Dozzle"* ]]; then
-    echo -e "${GREEN}✓${NC} Dozzle internal health"
-elif [[ "$dozzle_health" == *"no wget"* ]] || [[ "$dozzle_health" == *"not found"* ]]; then
-    # Dozzle uses scratch image, check via Traefik router instead
-    dozzle_router=$(curl -s http://localhost:8090/api/http/routers | grep -c "dozzle@docker")
-    if [[ "$dozzle_router" -gt 0 ]]; then
-        echo -e "${GREEN}✓${NC} Dozzle registered in Traefik"
-    else
-        echo -e "${YELLOW}⚠${NC}  Dozzle health unknown (minimal image)"
-    fi
+# Dozzle health - uses minimal/distroless image, use Traefik router check as primary
+dozzle_router=$(curl -s http://localhost:8090/api/http/routers 2>/dev/null | grep -c "dozzle@docker")
+if [[ "$dozzle_router" -gt 0 ]]; then
+    echo -e "${GREEN}✓${NC} Dozzle registered in Traefik"
+else
+    echo -e "${YELLOW}⚠${NC}  Dozzle health unknown (not registered in Traefik)"
 fi
 echo ""
 

@@ -1,12 +1,21 @@
 # Traefik Dynamic Configuration
 # TLS certificates from Tailscale
 #
-# NOTE: Certificate filenames are deployment-specific. If using a different
-# Tailscale domain, update the cert paths below or regenerate using:
-#   tailscale cert <your-domain>
-#   mv <your-domain>.crt ./secrets/
-#   mv <your-domain>.key ./secrets/
-# Then update these paths to match.
+# DEPLOYMENT NOTE: This file uses deployment-specific certificate paths.
+# When deploying to a different Tailscale domain:
+#
+# 1. Generate Tailscale certificates:
+#    tailscale cert <your-domain>
+#
+# 2. Move certs to secrets directory:
+#    mv <your-domain>.crt ./secrets/
+#    mv <your-domain>.key ./secrets/
+#
+# 3. Update the paths below (and in docker-compose.infra.yml volumes)
+#    Replace: sfml-platform.tail38b60a.ts.net
+#    With:    <your-domain>
+#
+# For automated deployment, consider using envsubst to template this file.
 
 tls:
   certificates:

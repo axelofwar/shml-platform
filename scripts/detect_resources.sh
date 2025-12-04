@@ -117,13 +117,9 @@ PROMETHEUS_MEM=$(echo "$LIGHT_MEM * 0.25" | bc | cut -d. -f1)
 DOZZLE_CPU=$(echo "$LIGHT_CPU * 0.10" | bc)
 DOZZLE_MEM=$(echo "$LIGHT_MEM * 0.10" | bc | cut -d. -f1)
 
-# Homepage: 10% of light
-HOMEPAGE_CPU=$(echo "$LIGHT_CPU * 0.10" | bc)
-HOMEPAGE_MEM=$(echo "$LIGHT_MEM * 0.10" | bc | cut -d. -f1)
-
-# Uptime Kuma: 15% of light
-UPTIME_KUMA_CPU=$(echo "$LIGHT_CPU * 0.15" | bc)
-UPTIME_KUMA_MEM=$(echo "$LIGHT_MEM * 0.15" | bc | cut -d. -f1)
+# Homer: 10% of light
+HOMER_CPU=$(echo "$LIGHT_CPU * 0.10" | bc)
+HOMER_MEM=$(echo "$LIGHT_MEM * 0.10" | bc | cut -d. -f1)
 
 # Backup: 10% of light (only active during backups)
 BACKUP_CPU=$(echo "$LIGHT_CPU * 0.10" | bc)
@@ -167,10 +163,8 @@ PROMETHEUS_CPU=$(min_cpu "$PROMETHEUS_CPU" 0.2)
 PROMETHEUS_MEM=$(min_mem "$PROMETHEUS_MEM" 256)
 DOZZLE_CPU=$(min_cpu "$DOZZLE_CPU" 0.1)
 DOZZLE_MEM=$(min_mem "$DOZZLE_MEM" 64)
-HOMEPAGE_CPU=$(min_cpu "$HOMEPAGE_CPU" 0.1)
-HOMEPAGE_MEM=$(min_mem "$HOMEPAGE_MEM" 64)
-UPTIME_KUMA_CPU=$(min_cpu "$UPTIME_KUMA_CPU" 0.1)
-UPTIME_KUMA_MEM=$(min_mem "$UPTIME_KUMA_MEM" 128)
+HOMER_CPU=$(min_cpu "$HOMER_CPU" 0.1)
+HOMER_MEM=$(min_mem "$HOMER_MEM" 64)
 BACKUP_CPU=$(min_cpu "$BACKUP_CPU" 0.1)
 BACKUP_MEM=$(min_mem "$BACKUP_MEM" 64)
 WEBHOOK_CPU=$(min_cpu "$WEBHOOK_CPU" 0.05)
@@ -210,10 +204,8 @@ PROMETHEUS_CPU_LIMIT=${PROMETHEUS_CPU}
 PROMETHEUS_MEM_LIMIT=${PROMETHEUS_MEM}M
 DOZZLE_CPU_LIMIT=${DOZZLE_CPU}
 DOZZLE_MEM_LIMIT=${DOZZLE_MEM}M
-HOMEPAGE_CPU_LIMIT=${HOMEPAGE_CPU}
-HOMEPAGE_MEM_LIMIT=${HOMEPAGE_MEM}M
-UPTIME_KUMA_CPU_LIMIT=${UPTIME_KUMA_CPU}
-UPTIME_KUMA_MEM_LIMIT=${UPTIME_KUMA_MEM}M
+HOMER_CPU_LIMIT=${HOMER_CPU}
+HOMER_MEM_LIMIT=${HOMER_MEM}M
 BACKUP_CPU_LIMIT=${BACKUP_CPU}
 BACKUP_MEM_LIMIT=${BACKUP_MEM}M
 WEBHOOK_CPU_LIMIT=${WEBHOOK_CPU}
@@ -252,8 +244,7 @@ print_summary() {
     echo -e "    Grafana:     ${GRAFANA_CPU} CPUs, ${GRAFANA_MEM}M RAM"
     echo -e "    Prometheus:  ${PROMETHEUS_CPU} CPUs, ${PROMETHEUS_MEM}M RAM"
     echo -e "    Dozzle:      ${DOZZLE_CPU} CPUs, ${DOZZLE_MEM}M RAM"
-    echo -e "    Homepage:    ${HOMEPAGE_CPU} CPUs, ${HOMEPAGE_MEM}M RAM"
-    echo -e "    Uptime Kuma: ${UPTIME_KUMA_CPU} CPUs, ${UPTIME_KUMA_MEM}M RAM"
+    echo -e "    Homer:       ${HOMER_CPU} CPUs, ${HOMER_MEM}M RAM"
     echo ""
 }
 
