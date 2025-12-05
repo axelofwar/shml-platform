@@ -177,10 +177,11 @@ jobs:
         id: check_chat_api
         env:
           CHAT_API_URL: ${{ secrets.CHAT_API_URL }}
-          CHAT_API_DEVELOPER_KEY: ${{ secrets.CHAT_API_DEVELOPER_KEY }}
+          # Reuse existing FusionAuth secrets for Chat API auth
+          CHAT_API_DEVELOPER_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
         run: |
           if [ -z "$CHAT_API_DEVELOPER_KEY" ]; then
-            echo "CHAT_API_DEVELOPER_KEY not set - skipping live tests"
+            echo "FUSIONAUTH_DEVELOPER_KEY not set - skipping live tests"
             echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -200,9 +201,10 @@ jobs:
         if: steps.check_chat_api.outputs.skip != 'true'
         env:
           CHAT_API_DIRECT_URL: ${{ secrets.CHAT_API_URL }}
-          CHAT_API_TEST_KEY: ${{ secrets.CHAT_API_DEVELOPER_KEY }}
-          CHAT_API_ADMIN_KEY: ${{ secrets.CHAT_API_ADMIN_KEY }}
-          CHAT_API_VIEWER_KEY: ${{ secrets.CHAT_API_VIEWER_KEY }}
+          # Reuse existing FusionAuth CI/CD keys
+          CHAT_API_TEST_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
+          CHAT_API_ADMIN_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+          CHAT_API_VIEWER_KEY: ${{ secrets.FUSIONAUTH_VIEWER_KEY }}
         run: |
           pytest tests/integration/test_chat_api_live.py \
             -v \
@@ -215,11 +217,11 @@ jobs:
         run: |
           echo "⚠️ Live Chat API tests skipped - API not accessible from CI"
           echo ""
-          echo "To enable live tests, add these GitHub secrets:"
-          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://shml-platform.tail38b60a.ts.net/chat-api)"
-          echo "  - CHAT_API_DEVELOPER_KEY: API key with developer role"
-          echo "  - CHAT_API_ADMIN_KEY: API key with admin role (optional)"
-          echo "  - CHAT_API_VIEWER_KEY: API key with viewer role (optional)"
+          echo "To enable live tests, ensure these GitHub secrets are set:"
+          echo "  - CHAT_API_URL: Your Chat API endpoint"
+          echo "  - FUSIONAUTH_DEVELOPER_KEY: CI/CD Developer key from FusionAuth"
+          echo "  - FUSIONAUTH_API_KEY: CI/CD Superkey from FusionAuth (admin)"
+          echo "  - FUSIONAUTH_VIEWER_KEY: CI/CD Viewer key from FusionAuth"
           echo ""
           echo "For now, run live tests locally with:"
           echo "  pytest tests/integration/test_chat_api_live.py -v -m integration"
