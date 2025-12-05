@@ -21,7 +21,7 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile.test
-    container_name: sfml-test-runner
+    container_name: shml-test-runner
     volumes:
       # Mount entire project for testing (read-only for safety)
       - ../..:/workspace:ro
@@ -50,7 +50,7 @@ services:
   # Isolated PostgreSQL for testing
   test-postgres:
     image: postgres:15-alpine
-    container_name: sfml-test-postgres
+    container_name: shml-test-postgres
     environment:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
@@ -68,7 +68,7 @@ services:
   # Isolated Redis for testing
   test-redis:
     image: redis:7-alpine
-    container_name: sfml-test-redis
+    container_name: shml-test-redis
     networks:
       - test-network
     healthcheck:

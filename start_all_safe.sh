@@ -998,8 +998,9 @@ start_all_services() {
 
             # Wait for OIDC endpoint
             local oidc_retry=0
+            local check_domain="${PUBLIC_DOMAIN:-$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo 'localhost')}"
             while [ $oidc_retry -lt 30 ]; do
-                local oidc_status=$(curl -skI "https://shml-platform.tail38b60a.ts.net/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
+                local oidc_status=$(curl -skI "https://${check_domain}/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
                 if [ "$oidc_status" = "200" ]; then
                     log_success "OIDC endpoint accessible"
                     break

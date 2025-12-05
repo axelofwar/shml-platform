@@ -34,7 +34,7 @@ All test scripts and files for the ML Platform.
 
 ### All Services Health Check
 ```bash
-cd /home/axelofwar/Projects/shml-platform/shml-platform
+cd $PROJECT_ROOT  # Your shml-platform directory
 ./tests/test_all_services.sh
 ```
 
