@@ -9,7 +9,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import QWEN3_VL_URL, Z_IMAGE_URL, HOST, PORT
+from .config import QWEN3_VL_URL, Z_IMAGE_URL, CODING_MODEL_URL, HOST, PORT
 from .schemas import (
     GatewayHealth,
     ServiceHealth,
@@ -74,7 +74,11 @@ async def health():
 
     # Check backend services
     async with httpx.AsyncClient(timeout=5.0) as client:
-        for name, url in [("qwen3-vl", QWEN3_VL_URL), ("z-image", Z_IMAGE_URL)]:
+        for name, url in [
+            ("qwen3-vl", QWEN3_VL_URL),
+            ("z-image", Z_IMAGE_URL),
+            ("coding-model", CODING_MODEL_URL),
+        ]:
             try:
                 start = time.time()
                 resp = await client.get(f"{url}/health")
@@ -276,6 +280,56 @@ async def proxy_image(
                 url=f"{Z_IMAGE_URL}/{path}",
                 headers={"X-User-ID": user_id},
             )
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
+# ===== Coding Model Endpoints (OpenAI-compatible) =====
+
+
+@app.api_route("/coding/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_coding(
+    path: str,
+    x_user_id: Optional[str] = Header(default=None),
+):
+    """Proxy requests to Coding Model service (OpenAI-compatible).
+
+    Routes to the best available GPU:
+    - RTX 3090 Ti (FP8) when training is idle
+    - RTX 2070 (AWQ) when training is active
+    """
+    from fastapi import Request
+
+    user_id = get_user_id(x_user_id)
+
+    # Check rate limit
+    if not await rate_limiter.record(user_id):
+        status = await rate_limiter.check(user_id)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limited. Resets at {status.reset_at.isoformat()}",
+        )
+
+    # Forward to coding model backend
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        try:
+            resp = await client.request(
+                method="POST",
+                url=f"{CODING_MODEL_URL}/{path}",
+                headers={"X-User-ID": user_id},
+            )
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/coding/status")
+async def coding_model_status():
+    """Get coding model GPU allocation status."""
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            resp = await client.get(f"{CODING_MODEL_URL}/status")
             return resp.json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))

@@ -288,6 +288,66 @@ def pytest_configure(config):
         "markers", "observability: test observability stack services"
     )
     config.addinivalue_line("markers", "authenticated: test requires authentication")
+    config.addinivalue_line("markers", "chat_api: test Chat API service")
+
+
+# =============================================================================
+# Chat API Integration Fixtures
+# =============================================================================
+
+CHAT_API_URL = os.getenv("CHAT_API_URL", "http://localhost:8000")
+CHAT_API_TEST_KEY = os.getenv("CHAT_API_TEST_KEY", "")
+CHAT_API_ADMIN_KEY = os.getenv("CHAT_API_ADMIN_KEY", "")
+CHAT_API_VIEWER_KEY = os.getenv("CHAT_API_VIEWER_KEY", "")
+
+
+@pytest.fixture(scope="session")
+def chat_api_url() -> str:
+    """Get Chat API base URL."""
+    return CHAT_API_URL
+
+
+@pytest.fixture
+def valid_chat_request() -> Dict:
+    """Sample valid chat completion request."""
+    return {
+        "messages": [{"role": "user", "content": "Say 'test' and nothing else."}],
+        "model": "auto",
+        "max_tokens": 50,
+    }
+
+
+@pytest.fixture
+def web_chat_request() -> Dict:
+    """Chat request from web interface (triggers ask-only mode)."""
+    return {
+        "messages": [{"role": "user", "content": "What is 2+2?"}],
+        "model": "auto",
+        "max_tokens": 50,
+        "source": "web",
+    }
+
+
+@pytest.fixture
+def api_chat_request() -> Dict:
+    """Chat request from API/Cursor (full capabilities)."""
+    return {
+        "messages": [{"role": "user", "content": "What is 2+2?"}],
+        "model": "auto",
+        "max_tokens": 50,
+        "source": "api",
+    }
+
+
+@pytest.fixture(scope="session")
+def authenticated_client():
+    """Get HTTP client with developer API key auth if available."""
+    import requests
+
+    session = requests.Session()
+    if CHAT_API_TEST_KEY:
+        session.headers["Authorization"] = f"Bearer {CHAT_API_TEST_KEY}"
+    return session
 
 
 def pytest_collection_modifyitems(config, items):

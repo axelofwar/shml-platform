@@ -1,0 +1,60 @@
+# Chat UI - Web-based chat interface for SHML Platform
+#
+# Features:
+# - Ask-only mode - answers questions, cannot edit/execute
+# - Full-featured chat with markdown rendering
+# - Code syntax highlighting
+# - Conversation history
+# - Model selection (Auto/Quality/Fast)
+# - Embeddable in Homer dashboard
+
+services:
+  chat-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-chat-ui:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-chat-ui
+    restart: unless-stopped
+    networks:
+      - platform
+    expose:
+      - "80"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # Chat UI static assets - no auth required
+      - "traefik.http.routers.chat-ui-assets.rule=PathPrefix(`/chat-ui/assets`)"
+      - "traefik.http.routers.chat-ui-assets.priority=280"
+      - "traefik.http.routers.chat-ui-assets.entrypoints=web,websecure"
+      - "traefik.http.middlewares.chat-ui-assets-strip.stripprefix.prefixes=/chat-ui"
+      - "traefik.http.routers.chat-ui-assets.middlewares=chat-ui-assets-strip"
+      - "traefik.http.routers.chat-ui-assets.service=chat-ui"
+      # Chat UI route - requires OAuth + developer/admin role
+      - "traefik.http.routers.chat-ui.rule=PathPrefix(`/chat-ui`)"
+      - "traefik.http.routers.chat-ui.priority=270"
+      - "traefik.http.routers.chat-ui.entrypoints=web,websecure"
+      - "traefik.http.services.chat-ui.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.chat-ui-strip.stripprefix.prefixes=/chat-ui"
+      - "traefik.http.routers.chat-ui.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,chat-ui-strip"
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

@@ -3,7 +3,10 @@
 
 services:
   dcgm-exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ml-platform-dcgm-exporter:3.3.5-3.4.0
     container_name: dcgm-exporter
     restart: unless-stopped
     runtime: nvidia
@@ -24,7 +27,7 @@ services:
     cap_add:
       - SYS_ADMIN
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9400/metrics"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9400/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3

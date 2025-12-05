@@ -45,12 +45,24 @@ links:
     url: "https://github.com/axelofwar/shml-platform"
     target: "_blank"
 
+# Message with embedded AI Chat iframe
+message:
+  style: "is-dark"
+  title: "AI Assistant"
+  icon: "fas fa-robot"
+  content: '<div style="width:100%;height:500px;border-radius:8px;overflow:hidden;border:1px solid #444;"><iframe src="/chat-ui/" style="width:100%;height:100%;border:none;" allow="clipboard-write"></iframe></div>'
+
 # Services - Main dashboard content
 # Using RELATIVE URLs so they work from any access point (LAN, Tailscale, Funnel)
 services:
   - name: "ML Platform"
     icon: "fas fa-brain"
     items:
+      - name: "AI Chat"
+        subtitle: "Ask questions about SHML Platform (Ask Mode)"
+        logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/openai.png"
+        url: "/chat-ui/"
+        target: "_blank"
       - name: "MLflow"
         subtitle: "Experiment Tracking & Model Registry"
         logo: "https://avatars.githubusercontent.com/u/39938107"

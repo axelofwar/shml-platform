@@ -1,5 +1,5 @@
 # Ray Compute - Distributed GPU Computing
-# Depends on: shared infrastructure (shared-postgres, ml-platform-redis, traefik)
+# Depends on: shared infrastructure (postgres, redis, traefik)
 # Can be started standalone: docker compose -f ray_compute/docker-compose.yml up
 # Or via main: docker compose up (includes this file)
 
@@ -11,7 +11,7 @@ services:
     build:
       context: ./docker
       dockerfile: Dockerfile.ray-head
-    image: ml-platform-ray-head:2.35.0-gpu-mlflow3
+    image: ${PLATFORM_PREFIX:-shml}-ray-head:2.35.0-gpu-mlflow3
     container_name: ray-head
     restart: unless-stopped
     shm_size: 2gb
@@ -53,7 +53,7 @@ services:
       - ./data/job_workspaces:/opt/ray/job_workspaces
       - nvidia-mps:/tmp/nvidia-mps
     networks:
-      - ml-platform
+      - platform
     expose:
       - "6379"    # Ray internal
       - "8265"    # Dashboard
@@ -106,14 +106,14 @@ services:
           cpus: '0.25'
           memory: 512M
     environment:
-      # Database (uses shared-postgres from infra)
-      - POSTGRES_HOST=shared-postgres
+      # Database (uses postgres from infra)
+      - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=ray_compute
       - POSTGRES_USER=ray_compute
       - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
-      # Cache (uses ml-platform-redis from infra)
-      - REDIS_HOST=ml-platform-redis
+      # Cache (uses redis from infra)
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=1
       # Ray Connection
@@ -147,7 +147,7 @@ services:
     expose:
       - "8000"
     networks:
-      - ml-platform
+      - platform
     depends_on:
       ray-head:
         condition: service_healthy
@@ -194,7 +194,7 @@ services:
     expose:
       - "9090"
     networks:
-      - ml-platform
+      - platform
     depends_on:
       - ray-head
     healthcheck:
@@ -209,6 +209,6 @@ secrets:
 
 volumes:
   nvidia-mps:
-    name: nvidia-mps
+    name: ${PLATFORM_PREFIX:-shml}-nvidia-mps
   ray-prometheus-data:
-    name: ray-prometheus-data
+    name: ${PLATFORM_PREFIX:-shml}-ray-prometheus-data

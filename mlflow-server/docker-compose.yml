@@ -1,5 +1,5 @@
 # MLflow Server - Experiment Tracking & Model Registry
-# Depends on: shared infrastructure (shared-postgres, ml-platform-redis, traefik)
+# Depends on: shared infrastructure (postgres, redis, traefik)
 # Can be started standalone: docker compose -f mlflow-server/docker-compose.yml up
 # Or via main: docker compose up (includes this file)
 
@@ -24,8 +24,8 @@ services:
     expose:
       - "5000"
     environment:
-      # Database (uses shared-postgres from infra)
-      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@shared-postgres:5432/mlflow_db"
+      # Database (uses postgres from infra)
+      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@postgres:5432/mlflow_db"
       MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
       MLFLOW_ARTIFACTS_DESTINATION: "/mlflow/artifacts"
       # Server Configuration
@@ -47,8 +47,8 @@ services:
       MLFLOW_COMPRESSION_FORMAT: "zstd"
       MLFLOW_ALLOW_REFERENCE_PATHS: "true"
       MLFLOW_SCAN_SENSITIVE_DATA: "true"
-      # Cache (uses ml-platform-redis from infra)
-      REDIS_HOST: "ml-platform-redis"
+      # Cache (uses redis from infra)
+      REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_DB: "0"
     volumes:
@@ -67,7 +67,7 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - ml-platform
+      - platform
 
   # ==========================================================================
   # MLFLOW NGINX REVERSE PROXY
@@ -101,7 +101,7 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.mlflow.loadbalancer.server.port=80"
@@ -181,7 +181,7 @@ services:
       retries: 3
       start_period: 15s
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
@@ -226,7 +226,7 @@ services:
     expose:
       - "9090"
     networks:
-      - ml-platform
+      - platform
     depends_on:
       - mlflow-server
     healthcheck:
@@ -241,6 +241,6 @@ secrets:
 
 volumes:
   mlflow-mlruns:
-    name: mlflow-mlruns
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-mlruns
   mlflow-prometheus-data:
-    name: mlflow-prometheus-data
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-prometheus-data

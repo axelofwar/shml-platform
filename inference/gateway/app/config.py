@@ -10,6 +10,7 @@ PORT = int(os.getenv("PORT", "8000"))
 # Backend services
 QWEN3_VL_URL = os.getenv("QWEN3_VL_URL", "http://qwen3-vl-api:8000")
 Z_IMAGE_URL = os.getenv("Z_IMAGE_URL", "http://z-image-api:8000")
+CODING_MODEL_URL = os.getenv("CODING_MODEL_URL", "http://coding-model:8000")
 
 # Redis settings (queue)
 REDIS_HOST = os.getenv("REDIS_HOST", "ml-platform-redis")

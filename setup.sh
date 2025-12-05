@@ -370,8 +370,8 @@ check_existing_data() {
     print_section "Checking for existing platform data..."
 
     # Check for Docker volumes with data
-    if sudo docker volume ls | grep -q "shared-postgres-data"; then
-        data_sources+=("PostgreSQL database (shared-postgres-data)")
+    if sudo docker volume ls | grep -q "shml-postgres-data"; then
+        data_sources+=("PostgreSQL database (shml-postgres-data)")
         has_data=true
     fi
 
@@ -442,7 +442,7 @@ check_existing_data() {
                         sudo docker compose down 2>&1 | grep -v "WARNING:" || true
 
                         # Remove volumes
-                        sudo docker volume rm shared-postgres-data mlflow-mlruns mlflow-prometheus-data \
+                        sudo docker volume rm shml-postgres-data mlflow-mlruns mlflow-prometheus-data \
                             unified-grafana-data ray-prometheus-data global-prometheus-data 2>/dev/null || true
 
                         # Remove artifact storage
@@ -463,9 +463,9 @@ check_existing_data() {
                     mkdir -p "$backup_dir"
 
                     # Backup PostgreSQL if running
-                    if sudo docker ps | grep -q "shared-postgres"; then
+                    if sudo docker ps | grep -q "shml-postgres"; then
                         echo "Backing up PostgreSQL databases..."
-                        sudo docker exec shared-postgres pg_dumpall -U postgres > "$backup_dir/postgres_full_backup.sql" 2>/dev/null || \
+                        sudo docker exec shml-postgres pg_dumpall -U postgres > "$backup_dir/postgres_full_backup.sql" 2>/dev/null || \
                             check_warn "Could not backup running PostgreSQL (container may not be running)"
                     fi
 
@@ -1070,7 +1070,7 @@ start_services() {
     # Start infrastructure (shared services) using unified compose
     print_section "Phase 1: Shared Infrastructure"
     echo "Starting: Traefik, Postgres, Redis, FusionAuth, System Monitoring..."
-    sudo docker compose up -d --remove-orphans traefik shared-postgres ml-platform-redis \
+    sudo docker compose up -d --remove-orphans traefik shml-postgres ml-platform-redis \
         fusionauth \
         global-prometheus unified-grafana node-exporter cadvisor 2>&1 | tail -15
 
@@ -1084,18 +1084,18 @@ start_services() {
     SHARED_DB_PASS=$(cat secrets/shared_db_password.txt)
     FUSIONAUTH_DB_PASS=$(cat secrets/fusionauth_db_password.txt 2>/dev/null || echo "$SHARED_DB_PASS")
 
-    # Update shared-postgres users
-    sudo docker exec shared-postgres psql -U postgres -c "ALTER USER mlflow WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
+    # Update shml-postgres users
+    sudo docker exec shml-postgres psql -U postgres -c "ALTER USER mlflow WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "MLflow user password synchronized" || check_warn "MLflow user password sync skipped"
 
-    sudo docker exec shared-postgres psql -U postgres -c "ALTER USER ray_compute WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
+    sudo docker exec shml-postgres psql -U postgres -c "ALTER USER ray_compute WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Ray user password synchronized" || check_warn "Ray user password sync skipped"
 
-    sudo docker exec shared-postgres psql -U postgres -c "ALTER USER inference WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
+    sudo docker exec shml-postgres psql -U postgres -c "ALTER USER inference WITH PASSWORD '$SHARED_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "Inference user password synchronized" || check_warn "Inference user password sync skipped"
 
     # Update FusionAuth user if it exists
-    sudo docker exec shared-postgres psql -U postgres -c "ALTER USER fusionauth WITH PASSWORD '$FUSIONAUTH_DB_PASS';" >/dev/null 2>&1 && \
+    sudo docker exec shml-postgres psql -U postgres -c "ALTER USER fusionauth WITH PASSWORD '$FUSIONAUTH_DB_PASS';" >/dev/null 2>&1 && \
         check_pass "FusionAuth user password synchronized" || check_warn "FusionAuth DB password sync skipped (may need first run)"
 
     check_pass "Shared infrastructure started"
@@ -1242,19 +1242,19 @@ monitor_health() {
     fi
 
     # Verify database passwords (check if connections work)
-    if sudo docker exec shared-postgres psql -U mlflow -d mlflow_db -c "SELECT 1" >/dev/null 2>&1; then
+    if sudo docker exec shml-postgres psql -U mlflow -d mlflow_db -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "MLflow database password working"
     else
         check_warn "MLflow database password may need verification"
     fi
 
-    if sudo docker exec shared-postgres psql -U ray_compute -d ray_compute -c "SELECT 1" >/dev/null 2>&1; then
+    if sudo docker exec shml-postgres psql -U ray_compute -d ray_compute -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "Ray database password working"
     else
         check_warn "Ray database password may need verification"
     fi
 
-    if sudo docker exec shared-postgres psql -U fusionauth -d fusionauth -c "SELECT 1" >/dev/null 2>&1; then
+    if sudo docker exec shml-postgres psql -U fusionauth -d fusionauth -c "SELECT 1" >/dev/null 2>&1; then
         check_pass "FusionAuth database password working"
     else
         check_warn "FusionAuth database password may need verification"
@@ -1301,7 +1301,7 @@ print_summary() {
     echo "🚀 Service Status:"
     local healthy=0
     local total=0
-    for service in ml-platform-traefik shared-postgres mlflow-server mlflow-nginx ray-head fusionauth; do
+    for service in ml-platform-traefik shml-postgres mlflow-server mlflow-nginx ray-head fusionauth; do
         ((total++))
         if sudo docker inspect "$service" 2>/dev/null | grep -q '"Status": "running"'; then
             if sudo docker inspect "$service" 2>/dev/null | grep -q '"Health"'; then
@@ -1375,7 +1375,7 @@ print_summary() {
         echo "  • Fresh installation - standard experiments created"
     fi
     echo "  • All data persists across restarts in Docker volumes:"
-    echo "    - shared-postgres-data: PostgreSQL database (experiments, runs, models)"
+    echo "    - shml-postgres-data: PostgreSQL database (experiments, runs, models)"
     echo "    - mlflow-mlruns: MLflow metadata"
     echo "    - /mlflow/artifacts: Model artifacts and files"
     echo "    - unified-grafana-data: Grafana dashboards"

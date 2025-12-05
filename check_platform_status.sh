@@ -42,11 +42,11 @@ check_service() {
 
 # Infrastructure Services
 echo -e "${CYAN}━━━ Infrastructure Services ━━━${NC}"
-check_service "ml-platform-traefik"
-check_service "shared-postgres"
-check_service "ml-platform-redis"
-check_service "ml-platform-node-exporter"
-check_service "ml-platform-cadvisor"
+check_service "${PLATFORM_PREFIX:-shml}-traefik"
+check_service "${PLATFORM_PREFIX:-shml}-postgres"
+check_service "${PLATFORM_PREFIX:-shml}-redis"
+check_service "${PLATFORM_PREFIX:-shml}-node-exporter"
+check_service "${PLATFORM_PREFIX:-shml}-cadvisor"
 echo ""
 
 # Monitoring Services

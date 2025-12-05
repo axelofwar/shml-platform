@@ -137,7 +137,7 @@
           },
           "roles": [
             {"name": "admin", "isDefault": false, "isSuperRole": true},
-            {"name": "user", "isDefault": false, "isSuperRole": false},
+            {"name": "developer", "isDefault": false, "isSuperRole": false},
             {"name": "viewer", "isDefault": true, "isSuperRole": false}
           ]
         }

@@ -1,0 +1,169 @@
+# Agentic Coding Model Service - Dual GPU Architecture
+# Primary (RTX 3090 Ti): Qwen2.5-Coder-32B - ~90% of Claude Sonnet quality
+# Fallback (RTX 2070): Qwen2.5-Coder-7B - ~75% of Claude quality
+#
+# Traefik load balances between them, with primary preferred when healthy.
+# When training starts, primary container stops, fallback takes over.
+
+services:
+  # ===========================================================================
+  # Primary Model: RTX 3090 Ti (GPU 0)
+  # Best quality, but yields to Ray training jobs
+  # ===========================================================================
+  coding-model-primary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-coding-model:latest
+    container_name: coding-model-primary
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      # Mode: primary-only (simpler architecture)
+      - MODEL_MODE=primary
+      # Qwen2.5-Coder-32B - closest to Claude Sonnet quality (~90%)
+      # AWQ 4-bit quantization fits in 24GB VRAM
+      - MODEL_ID=Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+      # CRITICAL: Force vLLM to use GPU 0 (3090 Ti) - docker device_ids remaps to 0
+      - CUDA_VISIBLE_DEVICES=0
+      # Ray integration for training detection
+      - RAY_ADDRESS=http://ray-head:8265
+      - RAY_CHECK_INTERVAL_SECONDS=10
+      - YIELD_ON_TRAINING=true
+      # Model settings - 4K context is the practical max for 32B on 24GB
+      # Model weights: ~18GB, KV cache for 4K: ~1GB, leaves some overhead
+      - MAX_MODEL_LEN=4096
+      - GPU_MEMORY_UTILIZATION=0.92
+      # Model cache
+      - HF_HOME=/models
+      - HF_TOKEN=${HF_TOKEN:-}
+      - TRANSFORMERS_OFFLINE=0
+      # Database for memory system
+      - DATABASE_URL=postgresql://inference:${SHARED_DB_PASSWORD}@postgres:5432/inference
+      # API settings
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - hf-model-cache:/models
+      - ./logs:/app/logs
+    networks:
+      - platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "8.0"
+          memory: 32G
+        reservations:
+          cpus: "4.0"
+          memory: 16G
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      # Primary router - higher priority, only routes when healthy
+      - "traefik.http.routers.coding-model-primary.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.coding-model-primary.priority=210"
+      - "traefik.http.routers.coding-model-primary.entrypoints=web,websecure"
+      - "traefik.http.services.coding-model-primary.loadbalancer.server.port=8000"
+      - "traefik.http.services.coding-model-primary.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.coding-model-primary.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.middlewares.coding-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.coding-model-primary.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,coding-strip"
+
+  # ===========================================================================
+  # Fallback Model: RTX 2070 (GPU 1)
+  # Always available, handles requests when primary is yielded to training
+  # ===========================================================================
+  coding-model-fallback:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-coding-model:latest
+    container_name: coding-model-fallback
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      # Mode: fallback-only
+      - MODEL_MODE=fallback
+      # Qwen2.5-Coder-3B AWQ - fits in 8GB VRAM (7B is too large)
+      # AWQ 4-bit: ~2GB VRAM, leaves plenty for KV cache
+      - MODEL_ID=Qwen/Qwen2.5-Coder-3B-Instruct-AWQ
+      # CRITICAL: Force vLLM to use GPU 1 (2070) - docker device_ids remaps to 0
+      - CUDA_VISIBLE_DEVICES=0
+      # No Ray monitoring needed - always available
+      - RAY_ADDRESS=http://ray-head:8265
+      - YIELD_ON_TRAINING=false
+      # Model settings (optimized for 8GB VRAM)
+      # 3B AWQ ~2GB weights + KV cache for 8K context
+      - MAX_MODEL_LEN=8192
+      - GPU_MEMORY_UTILIZATION=0.70
+      - QUANTIZATION=awq
+      # Model cache
+      - HF_HOME=/models
+      - HF_TOKEN=${HF_TOKEN:-}
+      - TRANSFORMERS_OFFLINE=0
+      # Database for memory system (shared with primary)
+      - DATABASE_URL=postgresql://inference:${SHARED_DB_PASSWORD}@postgres:5432/inference
+      # API settings
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - hf-model-cache:/models
+      - ./logs:/app/logs
+    networks:
+      - platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 16G
+        reservations:
+          cpus: "2.0"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 180s  # Faster startup for smaller model
+    labels:
+      - "traefik.enable=true"
+      # Fallback router - lower priority, catches requests when primary unhealthy
+      - "traefik.http.routers.coding-model-fallback.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.coding-model-fallback.priority=200"
+      - "traefik.http.routers.coding-model-fallback.entrypoints=web,websecure"
+      - "traefik.http.services.coding-model-fallback.loadbalancer.server.port=8000"
+      - "traefik.http.services.coding-model-fallback.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.coding-model-fallback.loadbalancer.healthcheck.interval=10s"
+      # Re-use the same strip middleware
+      - "traefik.http.routers.coding-model-fallback.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,coding-strip"
+
+volumes:
+  hf-model-cache:
+    external: true
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

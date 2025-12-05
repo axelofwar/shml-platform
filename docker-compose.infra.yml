@@ -8,7 +8,7 @@ services:
   # ==========================================================================
   traefik:
     image: traefik:v2.11
-    container_name: ml-platform-traefik
+    container_name: ${PLATFORM_PREFIX:-shml}-traefik
     restart: unless-stopped
     deploy:
       resources:
@@ -23,7 +23,7 @@ services:
       - --api.dashboard=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=ml-platform
+      - --providers.docker.network=platform
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
@@ -50,7 +50,7 @@ services:
       - ./secrets/shml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt:ro
       - ./secrets/shml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.key:ro
     networks:
-      - ml-platform
+      - platform
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
@@ -67,9 +67,12 @@ services:
   # ==========================================================================
   # SHARED DATA LAYER
   # ==========================================================================
-  shared-postgres:
-    image: postgres:15-alpine
-    container_name: shared-postgres
+  postgres:
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-postgres:15-pgvector
+    container_name: ${PLATFORM_PREFIX:-shml}-postgres
     restart: unless-stopped
     deploy:
       resources:
@@ -85,7 +88,7 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - shared-postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
       - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
       - ./backups/postgres:/backups
     secrets:
@@ -96,13 +99,13 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - ml-platform
+      - platform
     expose:
       - "5432"
 
-  ml-platform-redis:
+  redis:
     image: redis:7-alpine
-    container_name: ml-platform-redis
+    container_name: ${PLATFORM_PREFIX:-shml}-redis
     restart: unless-stopped
     deploy:
       resources:
@@ -121,7 +124,7 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - ml-platform
+      - platform
     expose:
       - "6379"
 
@@ -141,7 +144,7 @@ services:
           cpus: '0.25'
           memory: 256M
     environment:
-      DATABASE_URL: jdbc:postgresql://shared-postgres:5432/fusionauth
+      DATABASE_URL: jdbc:postgresql://postgres:5432/fusionauth
       DATABASE_ROOT_USERNAME: postgres
       DATABASE_ROOT_PASSWORD: ${SHARED_DB_PASSWORD}
       DATABASE_USERNAME: fusionauth
@@ -153,11 +156,11 @@ services:
     volumes:
       - fusionauth-config:/usr/local/fusionauth/config
     networks:
-      - ml-platform
+      - platform
     ports:
       - "9011:9011"
     depends_on:
-      shared-postgres:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9011/api/status"]
@@ -319,7 +322,7 @@ services:
     volumes:
       - ./oauth2-proxy/templates:/templates:ro
     networks:
-      - ml-platform
+      - platform
     depends_on:
       fusionauth:
         condition: service_healthy
@@ -400,8 +403,8 @@ services:
     build:
       context: ./scripts/role-auth
       dockerfile: Dockerfile
-    image: shml-platform/role-auth:latest
-    container_name: role-auth
+    image: ${PLATFORM_PREFIX:-shml}-platform/role-auth:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-role-auth
     restart: unless-stopped
     deploy:
       resources:
@@ -412,7 +415,7 @@ services:
           cpus: '0.01'
           memory: 16M
     networks:
-      - ml-platform
+      - platform
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 30s
@@ -424,7 +427,7 @@ services:
   # ==========================================================================
   node-exporter:
     image: prom/node-exporter:latest
-    container_name: ml-platform-node-exporter
+    container_name: ${PLATFORM_PREFIX:-shml}-node-exporter
     restart: unless-stopped
     deploy:
       resources:
@@ -444,14 +447,14 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     networks:
-      - ml-platform
+      - platform
     expose:
       - "9100"
     pid: host
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
-    container_name: ml-platform-cadvisor
+    container_name: ${PLATFORM_PREFIX:-shml}-cadvisor
     restart: unless-stopped
     deploy:
       resources:
@@ -468,7 +471,7 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     networks:
-      - ml-platform
+      - platform
     expose:
       - "8080"
     privileged: true
@@ -505,7 +508,7 @@ services:
     expose:
       - "9090"
     networks:
-      - ml-platform
+      - platform
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -581,7 +584,7 @@ services:
     expose:
       - "3000"
     networks:
-      - ml-platform
+      - platform
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
@@ -625,7 +628,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - ml-platform
+      - platform
     healthcheck:
       # Dozzle image is scratch/distroless, use /healthcheck endpoint via curl from traefik
       disable: true
@@ -661,7 +664,7 @@ services:
     volumes:
       - ./monitoring/homer:/www/assets:ro
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       # Lowest priority - catch-all for root path
@@ -689,12 +692,13 @@ services:
           cpus: '0.1'
           memory: 64M
     environment:
-      POSTGRES_HOST: shared-postgres
-      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
       POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
-      SCHEDULE: "${BACKUP_SCHEDULE:-0 2 * * *}"
+      # Run every 6 hours (at 00:00, 06:00, 12:00, 18:00)
+      SCHEDULE: "${BACKUP_SCHEDULE:-0 */6 * * *}"
       BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
       BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
       BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
@@ -707,9 +711,9 @@ services:
     secrets:
       - shared_db_password
     networks:
-      - ml-platform
+      - platform
     depends_on:
-      shared-postgres:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
@@ -743,9 +747,9 @@ services:
       - ./scripts/webhook:/etc/webhook:ro
       - ./scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
-      - .:/opt/shml-platform:ro
+      - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.webhook.rule=PathPrefix(`/webhook`)"
@@ -768,23 +772,23 @@ secrets:
 volumes:
   # Shared Data
   redis-data:
-    name: ml-platform-redis-data
-  shared-postgres-data:
-    name: shared-postgres-data
+    name: ${PLATFORM_PREFIX:-shml}-redis-data
+  postgres-data:
+    name: ${PLATFORM_PREFIX:-shml}-postgres-data
 
   # Monitoring
   global-prometheus-data:
-    name: global-prometheus-data
+    name: ${PLATFORM_PREFIX:-shml}-global-prometheus-data
   unified-grafana-data:
-    name: unified-grafana-data
+    name: ${PLATFORM_PREFIX:-shml}-unified-grafana-data
 
   # FusionAuth
   fusionauth-config:
-    name: fusionauth-config
+    name: ${PLATFORM_PREFIX:-shml}-fusionauth-config
 
 networks:
-  ml-platform:
-    name: ml-platform
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
     driver: bridge
     ipam:
       config:

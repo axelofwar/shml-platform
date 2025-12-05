@@ -90,6 +90,9 @@ backup_database "inference" "inference" || ((failed++))
 # FusionAuth database
 backup_database "fusionauth" "fusionauth" || ((failed++))
 
+# Chat API database (conversation history, API keys, user instructions)
+backup_database "chat_api" "chat_api" || ((failed++))
+
 echo -e "${BLUE}========================================${NC}"
 if [ $failed -eq 0 ]; then
     echo -e "${GREEN}✓ All backups completed successfully${NC}"

@@ -115,7 +115,7 @@ test_container_health() {
     # Production containers (verify not affected)
     echo -e "${BLUE}  Production Containers (should be unaffected):${NC}"
 
-    for container in mlflow-server shared-postgres ml-platform-redis ray-head ml-platform-traefik; do
+    for container in mlflow-server shml-postgres ml-platform-redis ray-head ml-platform-traefik; do
         status=$(sg docker -c "docker inspect --format='{{.State.Health.Status}}' $container" 2>/dev/null || echo "not_found")
         case $status in
             healthy)
@@ -287,7 +287,7 @@ test_production_isolation() {
 
     # Check databases are separate
     local dev_db=$(sg docker -c "docker exec mlflow-dev-postgres psql -U mlflow_dev -d mlflow_dev_db -t -c 'SELECT COUNT(*) FROM experiments;'" 2>/dev/null | tr -d ' ' || echo "error")
-    local prod_db=$(sg docker -c "docker exec shared-postgres psql -U mlflow -d mlflow_db -t -c 'SELECT COUNT(*) FROM experiments;'" 2>/dev/null | tr -d ' ' || echo "error")
+    local prod_db=$(sg docker -c "docker exec shml-postgres psql -U mlflow -d mlflow_db -t -c 'SELECT COUNT(*) FROM experiments;'" 2>/dev/null | tr -d ' ' || echo "error")
 
     if [ "$dev_db" != "error" ] && [ "$prod_db" != "error" ]; then
         log_test PASS "Separate PostgreSQL instances (dev: $dev_db exp, prod: $prod_db exp)"

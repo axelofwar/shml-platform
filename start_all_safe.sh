@@ -197,6 +197,273 @@ stop_container() {
 }
 
 # =============================================================================
+# Database Backup Restoration
+# Automatically restores databases from backups if they appear empty
+# Uses the largest backup from the last 25 hours for data integrity
+# =============================================================================
+
+BACKUP_DIR="${SCRIPT_DIR}/backups/postgres"
+BACKUP_MAX_AGE_HOURS=${BACKUP_MAX_AGE_HOURS:-25}
+
+# Find the best backup file for a database (largest from last N hours)
+find_best_backup() {
+    local db_name=$1
+    local max_age_hours=${2:-$BACKUP_MAX_AGE_HOURS}
+    local best_backup=""
+    local best_size=0
+
+    # Search in all backup locations
+    local backup_dirs=(
+        "${BACKUP_DIR}/daily"
+        "${BACKUP_DIR}/last"
+        "${BACKUP_DIR}/weekly"
+        "${BACKUP_DIR}"
+    )
+
+    local cutoff_time=$(date -d "${max_age_hours} hours ago" +%s 2>/dev/null || date -v-${max_age_hours}H +%s 2>/dev/null)
+
+    for dir in "${backup_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            # Find backup files for this database
+            for backup_file in "$dir"/${db_name}*.sql.gz "$dir"/${db_name}*.sql; do
+                if [ -f "$backup_file" ] && [ ! -L "$backup_file" ]; then
+                    local file_time=$(stat -c %Y "$backup_file" 2>/dev/null || stat -f %m "$backup_file" 2>/dev/null)
+                    local file_size=$(stat -c %s "$backup_file" 2>/dev/null || stat -f %z "$backup_file" 2>/dev/null)
+
+                    # Check if within time window and larger than current best
+                    if [ -n "$file_time" ] && [ "$file_time" -ge "$cutoff_time" ] && [ "$file_size" -gt "$best_size" ]; then
+                        best_backup="$backup_file"
+                        best_size="$file_size"
+                    fi
+                fi
+            done
+        fi
+    done
+
+    echo "$best_backup"
+}
+
+# Check if a database appears to be empty/fresh
+is_database_empty() {
+    local db_name=$1
+    local db_user=$2
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    # For FusionAuth, check user count (should be > 0 if configured)
+    if [ "$db_name" = "fusionauth" ]; then
+        local user_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM users;" 2>/dev/null | tr -d ' ')
+        [ "${user_count:-0}" -eq 0 ]
+        return $?
+    fi
+
+    # For MLflow, check if any experiments exist beyond default
+    if [ "$db_name" = "mlflow_db" ]; then
+        local exp_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM experiments WHERE experiment_id > 0;" 2>/dev/null | tr -d ' ')
+        [ "${exp_count:-0}" -eq 0 ]
+        return $?
+    fi
+
+    # For Ray, check if any jobs exist
+    if [ "$db_name" = "ray_compute" ]; then
+        local table_exists=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'jobs');" 2>/dev/null | tr -d ' ')
+        if [ "$table_exists" = "t" ]; then
+            local job_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM jobs;" 2>/dev/null | tr -d ' ')
+            [ "${job_count:-0}" -eq 0 ]
+            return $?
+        fi
+        return 0  # No jobs table means empty
+    fi
+
+    # Default: assume not empty
+    return 1
+}
+
+# Restore a database from backup
+restore_database_from_backup() {
+    local db_name=$1
+    local db_user=$2
+    local backup_file=$3
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    if [ ! -f "$backup_file" ]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+
+    local file_type=$(file -b "$backup_file" 2>/dev/null)
+    local backup_size=$(du -h "$backup_file" | cut -f1)
+
+    echo "    Restoring $db_name from backup ($backup_size)..."
+
+    # Drop and recreate database
+    docker exec "$postgres_container" psql -U postgres -c "DROP DATABASE IF EXISTS ${db_name};" >/dev/null 2>&1
+    docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1
+
+    # Restore based on file type
+    if [[ "$file_type" == *"PostgreSQL custom database dump"* ]]; then
+        # pg_dump custom format - use pg_restore
+        cat "$backup_file" | docker exec -i "$postgres_container" pg_restore -U "$db_user" -d "$db_name" --no-owner --no-privileges 2>/dev/null
+    elif [[ "$backup_file" == *.gz ]]; then
+        # Gzipped SQL
+        gunzip -c "$backup_file" | docker exec -i "$postgres_container" psql -U "$db_user" -d "$db_name" >/dev/null 2>&1
+    else
+        # Plain SQL
+        cat "$backup_file" | docker exec -i "$postgres_container" psql -U "$db_user" -d "$db_name" >/dev/null 2>&1
+    fi
+
+    if [ $? -eq 0 ]; then
+        log_success "  Restored $db_name successfully"
+
+        # Post-restore migrations for FusionAuth (sfml → shml platform name change)
+        if [ "$db_name" = "fusionauth" ]; then
+            echo "    Applying FusionAuth migrations (sfml → shml)..."
+            docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -c \
+                "UPDATE tenants SET data = REPLACE(data::text, 'sfml-platform', 'shml-platform')::text WHERE data LIKE '%sfml-platform%';" >/dev/null 2>&1
+            docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -c \
+                "UPDATE applications SET data = REPLACE(data::text, 'sfml-platform', 'shml-platform')::text WHERE data LIKE '%sfml-platform%';" >/dev/null 2>&1
+            log_success "  FusionAuth issuer URLs updated"
+        fi
+
+        return 0
+    else
+        log_warn "  Restore may have had warnings (check data)"
+        return 0  # Non-fatal - some warnings are OK
+    fi
+}
+
+# Main function to check and restore all databases
+check_and_restore_databases() {
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    log_info "━━━ Checking Database Integrity ━━━"
+    echo "Looking for backups from the last ${BACKUP_MAX_AGE_HOURS} hours..."
+
+    # Database configurations: name, user, critical (requires restore)
+    local databases=(
+        "fusionauth:fusionauth:true"
+        "mlflow_db:mlflow:false"
+        "ray_compute:ray_compute:false"
+        "inference:inference:false"
+        "chat_api:chat_api:false"
+    )
+
+    local restored_count=0
+
+    for db_config in "${databases[@]}"; do
+        local db_name=$(echo "$db_config" | cut -d: -f1)
+        local db_user=$(echo "$db_config" | cut -d: -f2)
+        local is_critical=$(echo "$db_config" | cut -d: -f3)
+
+        # Check if database exists
+        local db_exists=$(docker exec "$postgres_container" psql -U postgres -t -c "SELECT 1 FROM pg_database WHERE datname='${db_name}';" 2>/dev/null | tr -d ' ')
+
+        if [ "$db_exists" != "1" ]; then
+            echo "  Database $db_name does not exist, will create from backup..."
+            local backup_file=$(find_best_backup "$db_name")
+            if [ -n "$backup_file" ]; then
+                # Create database first
+                docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1 || true
+                restore_database_from_backup "$db_name" "$db_user" "$backup_file"
+                restored_count=$((restored_count + 1))
+            elif [ "$is_critical" = "true" ]; then
+                log_warn "  No backup found for critical database $db_name!"
+            fi
+            continue
+        fi
+
+        # Check if database appears empty
+        if is_database_empty "$db_name" "$db_user"; then
+            echo "  Database $db_name appears empty, looking for backup..."
+            local backup_file=$(find_best_backup "$db_name")
+
+            if [ -n "$backup_file" ]; then
+                local backup_age=$(( ($(date +%s) - $(stat -c %Y "$backup_file" 2>/dev/null || stat -f %m "$backup_file")) / 3600 ))
+                echo "    Found backup: $(basename "$backup_file") (${backup_age}h old)"
+                restore_database_from_backup "$db_name" "$db_user" "$backup_file"
+                restored_count=$((restored_count + 1))
+            else
+                if [ "$is_critical" = "true" ]; then
+                    log_warn "  No recent backup found for critical database $db_name"
+                else
+                    echo "    No recent backup found for $db_name (non-critical)"
+                fi
+            fi
+        else
+            log_success "$db_name has existing data"
+        fi
+    done
+
+    if [ $restored_count -gt 0 ]; then
+        log_success "Restored $restored_count database(s) from backup"
+    else
+        log_success "All databases have existing data"
+    fi
+    echo ""
+}
+
+# =============================================================================
+# Pre-Restart Backup
+# Creates a backup before stopping services to ensure data safety
+# =============================================================================
+
+create_pre_restart_backup() {
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+    local backup_dir="${SCRIPT_DIR}/backups/postgres/pre-restart"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+
+    # Check if postgres is running
+    if ! docker ps -q -f "name=$postgres_container" | grep -q .; then
+        log_warn "PostgreSQL not running, skipping pre-restart backup"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║         Creating Pre-Restart Backup                    ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Create backup directory
+    mkdir -p "$backup_dir"
+
+    # List of databases to backup
+    local databases=("fusionauth" "mlflow_db" "ray_compute" "inference" "chat_api")
+    local backed_up=0
+
+    for db in "${databases[@]}"; do
+        # Check if database exists
+        if docker exec "$postgres_container" psql -U postgres -lqt | cut -d \| -f 1 | grep -qw "$db"; then
+            local backup_file="${backup_dir}/${db}_${timestamp}.sql.gz"
+            echo -n "  Backing up $db..."
+
+            if docker exec "$postgres_container" pg_dump -U postgres -Fc "$db" 2>/dev/null | gzip > "$backup_file"; then
+                local size=$(du -h "$backup_file" | cut -f1)
+                echo -e " ${GREEN}✓${NC} ($size)"
+                backed_up=$((backed_up + 1))
+            else
+                echo -e " ${YELLOW}⚠${NC} (failed)"
+                rm -f "$backup_file" 2>/dev/null
+            fi
+        fi
+    done
+
+    # Cleanup old pre-restart backups (keep last 5)
+    if [ -d "$backup_dir" ]; then
+        for db in "${databases[@]}"; do
+            ls -t "$backup_dir"/${db}_*.sql.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+        done
+    fi
+
+    echo ""
+    if [ $backed_up -gt 0 ]; then
+        log_success "Created $backed_up pre-restart backup(s) in $backup_dir"
+    else
+        log_warn "No databases backed up"
+    fi
+    echo ""
+}
+
+# =============================================================================
 # Stop All Services
 # =============================================================================
 
@@ -215,34 +482,45 @@ stop_all_services() {
     fi
     echo ""
 
-    # Phase 2: Stop Ray Services
+    # Phase 2: Stop Inference Services
+    log_info "━━━ Stopping Inference Services ━━━"
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml stop 2>/dev/null || true
+    fi
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml stop 2>/dev/null || true
+    fi
+    log_success "Inference services stopped"
+    echo ""
+
+    # Phase 3: Stop Ray Services
     log_info "━━━ Stopping Ray Services ━━━"
     docker compose stop ray-compute-api ray-head ray-prometheus 2>/dev/null || true
     log_success "Ray services stopped"
     echo ""
 
-    # Phase 3: Stop MLflow Services
+    # Phase 4: Stop MLflow Services
     log_info "━━━ Stopping MLflow Services ━━━"
     docker compose stop mlflow-api mlflow-nginx mlflow-server mlflow-prometheus 2>/dev/null || true
     log_success "MLflow services stopped"
     echo ""
 
-    # Phase 4: Stop Monitoring (Grafana/Prometheus)
+    # Phase 5: Stop Monitoring (Grafana/Prometheus)
     log_info "━━━ Stopping Monitoring ━━━"
     docker compose stop unified-grafana global-prometheus 2>/dev/null || true
     docker compose stop cadvisor node-exporter 2>/dev/null || true
     log_success "Monitoring stopped"
     echo ""
 
-    # Phase 5: Stop Auth Services
+    # Phase 6: Stop Auth Services
     log_info "━━━ Stopping Auth Services ━━━"
     docker compose stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
     log_success "Auth services stopped"
     echo ""
 
-    # Phase 6: Stop Infrastructure
+    # Phase 7: Stop Infrastructure
     log_info "━━━ Stopping Infrastructure ━━━"
-    docker compose stop traefik ml-platform-redis shared-postgres 2>/dev/null || true
+    docker compose stop traefik redis postgres 2>/dev/null || true
     log_success "Infrastructure stopped"
     echo ""
 
@@ -250,23 +528,49 @@ stop_all_services() {
 }
 
 # =============================================================================
-# Cleanup Orphaned/Dangling Containers
+# Cleanup Orphaned/Dangling Containers AND Networks
 # =============================================================================
 
 cleanup_containers() {
     echo ""
-    log_info "━━━ Cleaning up containers ━━━"
+    log_info "━━━ Cleaning up ALL platform containers and networks ━━━"
 
-    # List of all known containers that might be orphaned
+    # Stop all containers from compose files first
+    log_info "Stopping all compose services..."
+    docker compose --env-file .env down --remove-orphans 2>/dev/null || true
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+
+    # List of all known containers (both old and new naming schemes)
     local containers=(
+        # Ray
         "ray-compute-api" "ray-head" "ray-prometheus"
+        # MLflow
         "mlflow-api" "mlflow-nginx" "mlflow-server" "mlflow-prometheus"
-        "oauth2-proxy" "fusionauth" "role-auth"
-        "unified-grafana" "global-prometheus"
+        # Auth
+        "oauth2-proxy" "fusionauth" "role-auth" "${PLATFORM_PREFIX:-shml}-role-auth"
+        # Monitoring
+        "unified-grafana" "global-prometheus" "dcgm-exporter"
+        # Infrastructure - old naming
         "ml-platform-cadvisor" "ml-platform-node-exporter"
-        "ml-platform-traefik" "ml-platform-redis" "shared-postgres"
+        "ml-platform-traefik" "ml-platform-redis" "shml-postgres"
+        # Infrastructure - new naming with prefix
+        "${PLATFORM_PREFIX:-shml}-cadvisor" "${PLATFORM_PREFIX:-shml}-node-exporter"
+        "${PLATFORM_PREFIX:-shml}-traefik" "${PLATFORM_PREFIX:-shml}-redis" "${PLATFORM_PREFIX:-shml}-postgres"
+        # UI
+        "homer" "dozzle" "postgres-backup" "webhook-deployer"
+        # Inference
+        "coding-model-primary" "coding-model-fallback"
+        "${PLATFORM_PREFIX:-shml}-chat-api"
+        # Dev
         "dev-postgres" "dev-redis" "dev-test"
-        "dcgm-exporter"
     )
 
     local cleaned=0
@@ -278,19 +582,40 @@ cleanup_containers() {
         fi
     done
 
-    # Clean any containers with ml-platform or sfml prefix
-    local orphans=$(docker ps -aq --filter "name=ml-platform" --filter "name=sfml" --filter "name=mlflow" --filter "name=ray" 2>/dev/null)
+    # Clean any remaining containers with platform-related names
+    local orphans=$(docker ps -aq --filter "name=ml-platform" --filter "name=sfml" --filter "name=shml" --filter "name=mlflow" --filter "name=ray" --filter "name=coding-model" 2>/dev/null)
     if [ -n "$orphans" ]; then
-        echo "  Removing orphaned containers..."
+        echo "  Removing additional orphaned containers..."
         echo "$orphans" | xargs docker rm -f >/dev/null 2>&1 || true
         cleaned=$((cleaned + 1))
     fi
 
+    # =========================================================================
+    # Network Cleanup - CRITICAL for preventing "Pool overlaps" errors
+    # Both old (ml-platform) and new (shml-platform) network names must be removed
+    # to allow recreation with potentially different subnet configurations
+    # =========================================================================
+    log_info "Cleaning up platform networks..."
+    local networks=(
+        "ml-platform"
+        "shml-platform"
+        "${PLATFORM_PREFIX:-shml}-platform"
+        "sfml-platform"
+    )
+
+    for network in "${networks[@]}"; do
+        if docker network ls --format '{{.Name}}' | grep -q "^${network}$"; then
+            echo -n "  Removing network $network..."
+            docker network rm "$network" >/dev/null 2>&1 && echo -e " ${GREEN}✓${NC}" || echo -e " ${YELLOW}⚠${NC}"
+        fi
+    done
+
     if [ $cleaned -eq 0 ]; then
-        log_success "No cleanup needed"
+        log_success "No container cleanup needed"
     else
-        log_success "Cleanup complete"
+        log_success "Cleanup complete ($cleaned containers removed)"
     fi
+    log_success "Network cleanup complete"
     echo ""
 }
 
@@ -421,13 +746,13 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 1: Core Infrastructure ━━━"
     echo "Starting: Traefik, PostgreSQL, Redis..."
-    docker compose up -d \
-        traefik shared-postgres ml-platform-redis \
+    docker compose up -d --force-recreate \
+        traefik postgres redis \
         node-exporter cadvisor 2>&1 | grep -v "orphan" || true
 
-    wait_for_health "shared-postgres" $POSTGRES_TIMEOUT || { log_error "PostgreSQL failed to start"; exit 1; }
-    wait_for_health "ml-platform-traefik" $TRAEFIK_TIMEOUT || { log_error "Traefik failed to start"; exit 1; }
-    wait_for_health "ml-platform-redis" $DEFAULT_TIMEOUT || log_warn "Redis may still be initializing"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-postgres" $POSTGRES_TIMEOUT || { log_error "PostgreSQL failed to start"; exit 1; }
+    wait_for_health "${PLATFORM_PREFIX:-shml}-traefik" $TRAEFIK_TIMEOUT || { log_error "Traefik failed to start"; exit 1; }
+    wait_for_health "${PLATFORM_PREFIX:-shml}-redis" $DEFAULT_TIMEOUT || log_warn "Redis may still be initializing"
 
     # Verify Traefik API is accessible
     wait_for_http "http://localhost:8090/api/overview" 30 || log_warn "Traefik API not yet accessible"
@@ -435,11 +760,18 @@ start_all_services() {
     echo ""
 
     # =========================================================================
+    # Phase 1.5: Database Integrity Check & Auto-Restore
+    # Checks if databases appear empty (e.g., after volume reset) and restores
+    # from the largest backup within the last 25 hours for data continuity
+    # =========================================================================
+    check_and_restore_databases
+
+    # =========================================================================
     # Phase 2: FusionAuth (Needs PostgreSQL)
     # =========================================================================
     log_info "━━━ Phase 2: FusionAuth (OAuth Provider) ━━━"
     echo "Starting: FusionAuth OAuth/SSO server..."
-    docker compose up -d fusionauth 2>&1 | grep -v "orphan" || true
+    docker compose up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT || log_warn "FusionAuth may need initial setup wizard"
     log_success "FusionAuth ready"
@@ -596,7 +928,7 @@ start_all_services() {
     log_info "━━━ Phase 4: OAuth2 Proxy (Auth Middleware) ━━━"
     echo "Starting: OAuth2 Proxy (provides forwardAuth middleware)..."
     echo "  Note: Using /oauth2-proxy/* prefix (FusionAuth uses /oauth2/*)"
-    docker compose up -d oauth2-proxy 2>&1 | grep -v "orphan" || true
+    docker compose up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
 
     # OAuth2 Proxy healthcheck is DISABLED (scratch image has no wget/curl)
     # So we wait for container to be running, then verify it's working
@@ -732,7 +1064,7 @@ start_all_services() {
     log_info "━━━ Phase 4b: Role Auth Service (RBAC Middleware) ━━━"
     echo "Starting: Role Auth checker (provides role-based access control)..."
     echo "  Note: Validates X-Auth-Request-Groups header for developer/admin roles"
-    docker compose up -d --build role-auth 2>&1 | grep -v "orphan" || true
+    docker compose up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "role-auth" $DEFAULT_TIMEOUT || log_warn "Role Auth may still be starting"
 
@@ -748,7 +1080,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 5: Monitoring (Protected by OAuth2) ━━━"
     echo "Starting: Global Prometheus, Unified Grafana..."
-    docker compose up -d \
+    docker compose up -d --force-recreate \
         global-prometheus unified-grafana 2>&1 | grep -v "orphan" || true
 
     wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT || log_warn "Prometheus may still be loading data"
@@ -761,12 +1093,12 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 6: MLflow Services (Protected by OAuth2) ━━━"
     echo "Starting: MLflow server, Nginx, API, Prometheus..."
-    docker compose up -d \
+    docker compose up -d --force-recreate \
         mlflow-server mlflow-prometheus 2>&1 | grep -v "orphan" || true
 
     wait_for_health "mlflow-server" $MLFLOW_TIMEOUT || log_warn "MLflow server may still be initializing"
 
-    docker compose up -d \
+    docker compose up -d --force-recreate \
         mlflow-nginx mlflow-api 2>&1 | grep -v "orphan" || true
 
     wait_for_health "mlflow-nginx" $DEFAULT_TIMEOUT || log_warn "MLflow nginx may still be starting"
@@ -778,12 +1110,12 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 7: Ray Compute (Protected by OAuth2) ━━━"
     echo "Starting: Ray head, API, Prometheus..."
-    docker compose up -d \
+    docker compose up -d --force-recreate \
         ray-head ray-prometheus 2>&1 | grep -v "orphan" || true
 
     wait_for_health "ray-head" $RAY_TIMEOUT || log_warn "Ray head may still be initializing"
 
-    docker compose up -d \
+    docker compose up -d --force-recreate \
         ray-compute-api 2>&1 | grep -v "orphan" || true
 
     wait_for_health "ray-compute-api" $DEFAULT_TIMEOUT || log_warn "Ray API may still be starting"
@@ -796,7 +1128,7 @@ start_all_services() {
     log_info "━━━ Phase 8: GPU Monitoring ━━━"
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter..."
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d 2>&1 | grep -v "orphan" || true
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         log_success "GPU monitoring started"
     else
         log_warn "DCGM configuration not found - skipping GPU monitoring"
@@ -804,12 +1136,51 @@ start_all_services() {
     echo ""
 
     # =========================================================================
-    # Phase 9: Observability Services
+    # Phase 9: Inference Services (Protected by OAuth2 - Developer role)
     # =========================================================================
-    log_info "━━━ Phase 9: Observability & Landing Page ━━━"
+    log_info "━━━ Phase 9: Inference Services (Protected by OAuth2) ━━━"
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        echo "Starting: Coding Models (Primary: 30B on 3090Ti, Fallback: 3B on 2070)..."
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Model loading takes time, use extended timeout
+        # Wait for fallback first (faster to load)
+        CODING_MODEL_TIMEOUT=${CODING_MODEL_TIMEOUT:-300}
+        echo "  Waiting for fallback model (3B)..."
+        wait_for_health "coding-model-fallback" 180 || log_warn "Fallback model may still be loading"
+        echo "  Waiting for primary model (30B)..."
+        wait_for_health "coding-model-primary" $CODING_MODEL_TIMEOUT || log_warn "Primary model may still be loading (this can take 2-5 minutes)"
+        log_success "Coding model services started"
+    else
+        log_warn "Coding model configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 9b: Chat API Service (Needs coding models + Redis + Postgres)
+    # Provides OpenAI-compatible API for Cursor/VS Code integration
+    # =========================================================================
+    log_info "━━━ Phase 9b: Chat API Service ━━━"
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        echo "Starting: Chat API (OpenAI-compatible endpoint for Cursor/editors)..."
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Wait for Chat API to be healthy
+        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-api" $DEFAULT_TIMEOUT || log_warn "Chat API may still be starting"
+        log_success "Chat API service started"
+    else
+        log_warn "Chat API configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 10: Observability Services
+    # =========================================================================
+    log_info "━━━ Phase 10: Observability & Landing Page ━━━"
     echo "Starting: Homer (landing), Dozzle (logs), Postgres Backup..."
-    docker compose up -d \
-        homer dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+    # Force recreate Homer to ensure config mounts are fresh
+    docker compose up -d --force-recreate homer 2>&1 | grep -v "orphan" || true
+    docker compose up -d --force-recreate dozzle postgres-backup 2>&1 | grep -v "orphan" || true
 
     # Wait for services
     wait_for_health "homer" $DEFAULT_TIMEOUT || log_warn "Homer may still be starting"
@@ -940,7 +1311,7 @@ show_status() {
     log_success "Platform startup complete!"
     echo ""
     echo "Service Status:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup" || true
+    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup|coding-model|chat-api" || true
     echo ""
     echo -e "${CYAN}Public Access (via Tailscale Funnel):${NC}"
     if [ -n "$PUBLIC_DOMAIN" ]; then
@@ -955,6 +1326,9 @@ show_status() {
         echo "  • Ray Dashboard:     https://${PUBLIC_DOMAIN}/ray/"
         echo "  • Grafana:           https://${PUBLIC_DOMAIN}/grafana/"
         echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
+        echo ""
+        echo "  Inference APIs (OAuth Protected - Developer role):"
+        echo "  • Coding Model API:  https://${PUBLIC_DOMAIN}/api/coding/v1/ (OpenAI-compatible)"
     fi
     echo ""
     # Get LAN IP (try multiple methods, fallback to common default)
@@ -970,6 +1344,9 @@ show_status() {
     echo "  • Ray Dashboard:   http://${LAN_IP}/ray/"
     echo "  • Grafana:         http://${LAN_IP}/grafana/"
     echo "  • Dozzle (Logs):   http://${LAN_IP}/logs/"
+    echo ""
+    echo "  Inference APIs (Developer role required):"
+    echo "  • Coding Model:    http://${LAN_IP}/api/coding/v1/chat/completions"
     echo ""
     echo "  Admin (direct ports):"
     echo "  • FusionAuth:      http://${LAN_IP}:9011/admin/"
@@ -1233,6 +1610,7 @@ case "${1:-restart}" in
         stop_all_services
         ;;
     restart|"")
+        create_pre_restart_backup
         stop_all_services
         cleanup_containers
         rebuild_images
@@ -1243,6 +1621,7 @@ case "${1:-restart}" in
         verify_auth_protection
         ;;
     cleanup)
+        create_pre_restart_backup
         stop_all_services
         cleanup_containers
         ;;
