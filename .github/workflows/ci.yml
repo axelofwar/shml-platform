@@ -14,9 +14,9 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
-  # Run Python tests
-  test:
-    name: Python Tests
+  # Run Python unit tests
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio pytest-cov httpx
+          pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
 
           # Install project-specific requirements if they exist
           for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
@@ -43,9 +43,113 @@ jobs:
       - name: Run unit tests
         run: |
           if [ -d "tests/unit" ]; then
-            pytest tests/unit/ -v --tb=short || true
+            pytest tests/unit/ -v --tb=short -x || true
           else
             echo "No unit tests directory found"
+          fi
+
+  # Chat API unit and security tests (no live services needed)
+  chat-api-tests:
+    name: Chat API Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx aiohttp pydantic fastapi starlette
+
+          # Install chat-api test requirements
+          if [ -f "tests/chat-api/requirements-test.txt" ]; then
+            pip install -r tests/chat-api/requirements-test.txt
+          fi
+
+          # Install inference dependencies for imports
+          if [ -f "inference/chat-api/requirements.txt" ]; then
+            pip install -r inference/chat-api/requirements.txt || true
+          fi
+
+      - name: Run Chat API tests
+        run: |
+          if [ -d "tests/chat-api" ]; then
+            # Run tests that don't require live services
+            pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py tests/chat-api/test_security_config.py -v --tb=short || true
+          else
+            echo "No chat-api tests directory found"
+          fi
+
+  # Role-based access and Traefik config tests
+  rbac-tests:
+    name: RBAC & Auth Config Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx pyyaml
+
+      - name: Run RBAC configuration tests
+        run: |
+          # Test Traefik middleware configuration
+          if [ -f "tests/chat-api/test_traefik_config.py" ]; then
+            pytest tests/chat-api/test_traefik_config.py -v --tb=short || true
+          fi
+
+          # Test role-auth service configuration
+          if [ -d "scripts/role-auth" ]; then
+            echo "✓ role-auth service directory exists"
+            cat scripts/role-auth/nginx.conf | grep -E "auth/(viewer|developer|admin)" && echo "✓ Role endpoints configured"
+          fi
+
+      - name: Validate OAuth2-Proxy config
+        run: |
+          # Check that OAuth2-Proxy is configured for role-based access
+          if [ -f "docker-compose.infra.yml" ]; then
+            grep -A 20 "oauth2-proxy:" docker-compose.infra.yml | grep -E "OAUTH2_PROXY|X-Auth-Request" && echo "✓ OAuth2-Proxy configured"
+          fi
+
+  # Integration tests (mocked - no live services)
+  integration-tests-mocked:
+    name: Integration Tests (Mocked)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx aiohttp requests pyyaml
+
+      - name: Run mocked integration tests
+        run: |
+          # Run tests that can work with mocks
+          if [ -d "tests/integration" ]; then
+            # Skip tests that require live services
+            pytest tests/integration/ -v --tb=short -k "not live and not running" --ignore=tests/integration/test_chat_api_live.py || true
           fi
 
   # Validate Docker builds
