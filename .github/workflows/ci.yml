@@ -152,6 +152,78 @@ jobs:
             pytest tests/integration/ -v --tb=short -k "not live and not running" --ignore=tests/integration/test_chat_api_live.py || true
           fi
 
+  # Live Chat API Integration Tests (requires secrets)
+  chat-api-live-tests:
+    name: Chat API Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx requests
+
+      - name: Check if Chat API is accessible
+        id: check_chat_api
+        env:
+          CHAT_API_URL: ${{ secrets.CHAT_API_URL }}
+          CHAT_API_DEVELOPER_KEY: ${{ secrets.CHAT_API_DEVELOPER_KEY }}
+        run: |
+          if [ -z "$CHAT_API_DEVELOPER_KEY" ]; then
+            echo "CHAT_API_DEVELOPER_KEY not set - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          URL="${CHAT_API_URL:-https://shml-platform.tail38b60a.ts.net/chat-api}"
+
+          echo "Testing Chat API at: $URL"
+          if curl -sf -H "Authorization: Bearer $CHAT_API_DEVELOPER_KEY" "$URL/health" > /dev/null 2>&1; then
+            echo "Chat API is accessible!"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "Chat API not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Chat API live integration tests
+        if: steps.check_chat_api.outputs.skip != 'true'
+        env:
+          CHAT_API_DIRECT_URL: ${{ secrets.CHAT_API_URL }}
+          CHAT_API_TEST_KEY: ${{ secrets.CHAT_API_DEVELOPER_KEY }}
+          CHAT_API_ADMIN_KEY: ${{ secrets.CHAT_API_ADMIN_KEY }}
+          CHAT_API_VIEWER_KEY: ${{ secrets.CHAT_API_VIEWER_KEY }}
+        run: |
+          pytest tests/integration/test_chat_api_live.py \
+            -v \
+            --tb=short \
+            -m integration \
+            -x  # Stop on first failure
+
+      - name: Live tests skipped
+        if: steps.check_chat_api.outputs.skip == 'true'
+        run: |
+          echo "⚠️ Live Chat API tests skipped - API not accessible from CI"
+          echo ""
+          echo "To enable live tests, add these GitHub secrets:"
+          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://shml-platform.tail38b60a.ts.net/chat-api)"
+          echo "  - CHAT_API_DEVELOPER_KEY: API key with developer role"
+          echo "  - CHAT_API_ADMIN_KEY: API key with admin role (optional)"
+          echo "  - CHAT_API_VIEWER_KEY: API key with viewer role (optional)"
+          echo ""
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/integration/test_chat_api_live.py -v -m integration"
+
   # Validate Docker builds
   docker-build:
     name: Docker Build Validation
