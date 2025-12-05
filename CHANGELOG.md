@@ -35,7 +35,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added - 2025-12-05
+
+**Repository Consolidation - Comprehensive Documentation Phase**
+
+New documentation files (85KB, 2900+ lines):
+
+- `docs/internal/SYSTEM_INTEGRATION.md` (40KB) - Complete integration analysis
+- `docs/internal/SERVICE_DEPENDENCY_MAP.md` (19KB) - Visual dependency graphs  
+- `docs/internal/CONSOLIDATION_PLAN.md` (24KB) - Phased consolidation strategy
+- `docs/internal/AUTHENTICATION_FLOW.md` (21KB) - Auth/authz complete flow
+- `docs/CONSOLIDATION_SUMMARY.md` (15KB) - Executive summary
+
+Key documentation coverage:
+- Service topology (23 containers across 5 stacks)
+- Network architecture and DNS resolution
+- Authentication flow (FusionAuth OAuth2 + RBAC)
+- Routing patterns with Traefik priorities
+- Database architecture (4 databases, 1 PostgreSQL)
+- Integration patterns (MLflow ↔ Ray, Inference)
+- SDK & API structure
+- Testing infrastructure
+- Deployment patterns and critical lessons
+
+### Changed - 2025-12-05
+
+- Updated `docs/internal/ARCHITECTURE.md` with cross-references
+- Updated `README.md` Documentation section with improved categorization
+
+### Added - 2025-11-XX
 
 - **Inference Stack**: Local LLM and Image Generation services
   - **Qwen3-VL-8B-INT4**: Planning, architecture, code scaffolding (RTX 2070)
