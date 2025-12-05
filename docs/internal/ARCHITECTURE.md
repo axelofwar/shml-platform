@@ -1,15 +1,31 @@
 # ML Platform Architecture
 ## Unified MLflow + Ray Compute
 
-**Version:** 2.0 | **Updated:** 2025-11-22 | **Status:** Production
+**Version:** 2.1 | **Updated:** 2025-12-05 | **Status:** Production
+
+---
+
+## Related Documentation
+
+**Core Architecture:**
+- **[SYSTEM_INTEGRATION.md](SYSTEM_INTEGRATION.md)** - Complete integration analysis (1000+ lines)
+- **[SERVICE_DEPENDENCY_MAP.md](SERVICE_DEPENDENCY_MAP.md)** - Visual dependency graphs and startup order
+- **[CONSOLIDATION_PLAN.md](CONSOLIDATION_PLAN.md)** - Repository consolidation strategy
+
+**Integration Guides:**
+- **[INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)** - Service integration patterns
+- **[API_REFERENCE.md](API_REFERENCE.md)** - API documentation
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 
 ---
 
 ## Executive Summary
 
-**Architecture:** Unified Docker bridge network with Traefik gateway, 16 microservices  
+**Architecture:** Unified Docker bridge network with Traefik gateway, 23 microservices  
 **Key Principle:** Single network, DNS-based discovery, shared infrastructure  
 **Access:** Port 80 (HTTP), Port 8090 (Traefik dashboard)
+
+**For complete integration details, see [SYSTEM_INTEGRATION.md](SYSTEM_INTEGRATION.md)**
 
 ### Component Matrix
 
