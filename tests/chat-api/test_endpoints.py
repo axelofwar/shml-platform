@@ -222,7 +222,9 @@ class TestAPIKeyAuthentication:
                         "messages": [{"role": "user", "content": "Hello"}],
                         "model": "auto",
                     },
-                    headers={"Authorization": "Bearer test-valid-key"},
+                    headers={
+                        "Authorization": "Bearer test-valid-key"
+                    },  # nosec - test fixture
                 )
 
                 # With valid key, should succeed (200) or model error
@@ -244,7 +246,9 @@ class TestAPIKeyAuthentication:
                         "messages": [{"role": "user", "content": "Hello"}],
                         "model": "auto",
                     },
-                    headers={"Authorization": "Bearer test-invalid-key"},
+                    headers={
+                        "Authorization": "Bearer test-invalid-key"
+                    },  # nosec - test fixture
                 )
 
                 assert response.status_code == 401
