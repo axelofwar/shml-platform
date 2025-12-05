@@ -329,14 +329,34 @@ tailscale ip -4  # Get new IP
 
 ## Documentation
 
-- `ARCHITECTURE.md` - Detailed architecture overview
-- `INTEGRATION_GUIDE.md` - Integration examples
-- `TROUBLESHOOTING.md` - Common issues and solutions
-- `API_REFERENCE.md` - API documentation
-- `REMOTE_ACCESS_NEW.md` - Remote access guide
-- `REMOTE_JOB_SUBMISSION.md` - Ray job submission
-- `RAY_GPU_TESTING_SUMMARY.md` - GPU testing results
-- `docs/TAILSCALE_RECOVERY.md` - Tailscale reset/TPM recovery guide
+### Core Documentation
+
+**Architecture & Integration:**
+- **[ARCHITECTURE.md](docs/internal/ARCHITECTURE.md)** - System design and infrastructure
+- **[SYSTEM_INTEGRATION.md](docs/internal/SYSTEM_INTEGRATION.md)** - Complete integration analysis (1000+ lines)
+- **[SERVICE_DEPENDENCY_MAP.md](docs/internal/SERVICE_DEPENDENCY_MAP.md)** - Visual dependency graphs
+- **[INTEGRATION_GUIDE.md](docs/internal/INTEGRATION_GUIDE.md)** - Integration patterns and examples
+- **[API_REFERENCE.md](docs/internal/API_REFERENCE.md)** - All API documentation
+
+**Operations:**
+- **[TROUBLESHOOTING.md](docs/internal/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[docs/TAILSCALE_RECOVERY.md](docs/TAILSCALE_RECOVERY.md)** - Tailscale reset/TPM recovery guide
+
+**Remote Access:**
+- **[docs/research/REMOTE_ACCESS_NEW.md](docs/research/REMOTE_ACCESS_NEW.md)** - Remote access setup
+- **[docs/research/REMOTE_JOB_SUBMISSION.md](docs/research/REMOTE_JOB_SUBMISSION.md)** - Ray job submission guide
+- **[docs/research/REMOTE_QUICK_REFERENCE.md](docs/research/REMOTE_QUICK_REFERENCE.md)** - Quick reference
+
+**Hardware:**
+- **[docs/internal/NEW_GPU_SETUP.md](docs/internal/NEW_GPU_SETUP.md)** - GPU configuration
+- **[docs/internal/NEW_NVME_SETUP_GUIDE.md](docs/internal/NEW_NVME_SETUP_GUIDE.md)** - NVMe storage setup
+
+### Repository Management
+
+- **[docs/CONSOLIDATION_SUMMARY.md](docs/CONSOLIDATION_SUMMARY.md)** - Repository consolidation analysis
+- **[docs/internal/CONSOLIDATION_PLAN.md](docs/internal/CONSOLIDATION_PLAN.md)** - Phased consolidation strategy
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 
 ## Security
 
