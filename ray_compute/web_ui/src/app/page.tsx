@@ -1,7 +1,6 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +17,10 @@ import {
   LogOut,
   AlertCircle
 } from "lucide-react";
-import { jobsApi, userApi, setAccessToken } from "@/lib/api";
+import { jobsApi, userApi, waitForAuth } from "@/lib/api";
+import { JobActions } from "@/components/JobActions";
+import { JobDownloadModal } from "@/components/JobDownloadModal";
+import { Toaster } from "@/components/ui/toaster";
 
 interface DashboardData {
   user: any;
@@ -35,12 +37,6 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { data: session, status } = useSession({
-    required: true,
-    onUnauthenticated() {
-      router.push('/login');
-    },
-  });
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,37 +46,36 @@ export default function DashboardPage() {
     setMounted(true);
   }, []);
 
-  // Set access token when session is available
   useEffect(() => {
-    console.log('Session data:', session);
-    console.log('Access token:', session?.accessToken);
-    if (session?.accessToken) {
-      setAccessToken(session.accessToken as string);
-      console.log('Access token set successfully');
-    } else {
-      console.warn('No access token found in session - user needs to re-login');
-      // Show error prompting user to log out and back in
-      setError('Session is missing authentication token. Please log out and log back in.');
-    }
-  }, [session]);
-
-  useEffect(() => {
-    if (session && mounted) {
+    if (mounted) {
       fetchDashboardData();
     }
-  }, [session, mounted]);
+  }, [mounted]);
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch user, quota, and jobs in parallel
-      const [userResponse, quotaResponse, jobsResponse] = await Promise.all([
-        userApi.getMe(),
-        userApi.getQuota(),
-        jobsApi.listJobs(1, 10) // Get first 10 jobs
-      ]);
+      // Wait for authentication to be ready (handles Redis session race condition)
+      // This is critical after OAuth callback when the session may not be immediately available
+      const isAuthenticated = await waitForAuth(5, 500);
+      if (!isAuthenticated) {
+        // Redirect to login if auth check fails after retries
+        window.location.href = '/oauth2-proxy/start?rd=/ray/ui';
+        return;
+      }
+
+      // CRITICAL: Fetch user FIRST (sequentially, not parallel)
+      // After OAuth callback, the browser's cookie jar may have timing issues with parallel requests
+      // Making requests sequential ensures each one has the cookie properly set
+      // See: https://github.com/oauth2-proxy/oauth2-proxy/issues/1517
+      console.log('[Dashboard] Auth ready, fetching user data sequentially...');
+      const userResponse = await userApi.getMe();
+      console.log('[Dashboard] User fetched, fetching quota...');
+      const quotaResponse = await userApi.getQuota();
+      console.log('[Dashboard] Quota fetched, fetching jobs...');
+      const jobsResponse = await jobsApi.listJobs(1, 10);
 
       // Calculate stats from jobs
       const jobs = jobsResponse.jobs || [];
@@ -106,11 +101,7 @@ export default function DashboardPage() {
     }
   };
 
-  if (!mounted || status === "loading") {
-    return null;
-  }
-
-  if (!session) {
+  if (!mounted) {
     return null;
   }
 
@@ -139,7 +130,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {isAuthError ? (
-              <Button onClick={() => signOut({ callbackUrl: '/login' })} className="w-full" variant="default">
+              <Button onClick={() => window.location.href = '/oauth2-proxy/sign_out?rd=/ray/ui'} className="w-full" variant="default">
                 Log Out and Sign In Again
               </Button>
             ) : (
@@ -161,20 +152,21 @@ export default function DashboardPage() {
 
   return (
     <div className="flex min-h-screen w-full flex-col">
-      <header className="sticky top-0 flex h-16 items-center gap-4 border-b bg-background px-4 md:px-6">
+      <Toaster />
+      <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-background px-4 md:px-6">
         <nav className="flex-1 flex items-center gap-6 text-lg font-medium md:text-sm">
           <span className="text-xl font-bold">Ray Compute</span>
-          <a href="#" className="text-muted-foreground transition-colors hover:text-foreground">
+          <a href="/ray/ui" className="text-foreground font-semibold">
             Dashboard
           </a>
-          <a href="#" className="text-muted-foreground transition-colors hover:text-foreground">
+          <a href="/ray/ui/jobs" className="text-muted-foreground transition-colors hover:text-foreground">
             Jobs
           </a>
-          <a href="#" className="text-muted-foreground transition-colors hover:text-foreground">
+          <a href="/ray/ui/cluster" className="text-muted-foreground transition-colors hover:text-foreground">
             Cluster
           </a>
         </nav>
-        <Button variant="outline" size="sm" onClick={() => signOut()}>
+        <Button variant="outline" size="sm" onClick={() => window.location.href = '/oauth2-proxy/sign_out?rd=/ray/ui'}>
           <LogOut className="mr-2 h-4 w-4" />
           Sign Out
         </Button>
@@ -184,7 +176,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-muted-foreground">
-              Welcome back, {session.user?.name || session.user?.email}
+              Welcome to Ray Compute Platform
             </p>
           </div>
         </div>
@@ -299,7 +291,7 @@ export default function DashboardPage() {
                     const badge = getStatusBadge(job.status);
 
                     return (
-                      <div key={job.job_id} className="flex items-center">
+                      <div key={job.job_id} className="flex items-center gap-4 p-2 rounded-lg hover:bg-muted/50">
                         <div className="ml-4 space-y-1 flex-1">
                           <p className="text-sm font-medium leading-none">
                             {job.name}
@@ -309,6 +301,14 @@ export default function DashboardPage() {
                           </p>
                         </div>
                         <Badge variant={badge.variant}>{badge.label}</Badge>
+                        <div className="flex gap-2">
+                          <JobDownloadModal jobId={job.job_id} jobName={job.name} />
+                          <JobActions
+                            job={job}
+                            onJobUpdated={fetchDashboardData}
+                            userRole={dashboardData?.user?.role || 'user'}
+                          />
+                        </div>
                       </div>
                     );
                   })}

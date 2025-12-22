@@ -1,0 +1,202 @@
+# OpenCode Enhanced Configuration - Mobile + Desktop Optimized
+# Auto-detects terminal size for optimal UX
+# Supports: Nemotron-3-Nano-30B (coding) + Qwen3-VL (vision) + MCP tools
+
+# =============================================================================
+# Coding Models (Local)
+# =============================================================================
+
+[providers.local-coding]
+# Nemotron-3-Nano-30B-A3B via llama-server
+type = "openai"
+baseURL = "http://localhost:8010/v1"
+
+[[providers.local-coding.models]]
+id = "nemotron-coding"
+name = "Nemotron-3-Nano-30B-A3B (Primary)"
+maxTokens = 32768
+contextWindow = 131072  # 128K effective, 1M total capable
+supportsAttachments = false
+description = "95% Claude Sonnet quality, SWE-Bench 38.8%"
+
+[providers.local-fallback]
+# Qwen2.5-Coder-3B fallback (RTX 2070)
+type = "openai"
+baseURL = "http://localhost:8000/api/coding-fallback/v1"  # Via inference gateway
+
+[[providers.local-fallback.models]]
+id = "qwen-coder-3b"
+name = "Qwen2.5-Coder-3B (Fallback)"
+maxTokens = 8192
+contextWindow = 131072
+supportsAttachments = false
+description = "Fast fallback model, always available"
+
+# =============================================================================
+# Vision Model (Local)
+# =============================================================================
+
+[providers.local-vision]
+# Qwen3-VL-8B via inference gateway
+type = "openai"
+baseURL = "http://localhost:8000/api/llm/v1"
+
+[[providers.local-vision.models]]
+id = "qwen3-vl"
+name = "Qwen3-VL-8B (Vision)"
+supportsAttachments = true
+maxTokens = 4096
+contextWindow = 32768
+description = "Multi-modal vision + text analysis"
+
+# =============================================================================
+# Agent Configuration
+# =============================================================================
+
+[agent]
+# Default models
+model = "local-coding:nemotron-coding"          # Primary coding
+visionModel = "local-vision:qwen3-vl"           # Vision analysis
+fallbackModel = "local-fallback:qwen-coder-3b"  # Fallback if primary busy
+
+# Context management
+maxContextTokens = 32768   # Conservative for mobile
+autoCompact = true         # Auto-summarize at 50% capacity
+compactThreshold = 16384   # Trigger compaction at 16K tokens
+
+# Session settings
+autoSave = true            # Persist on disconnect (mobile-friendly)
+sessionTimeout = 3600      # 1 hour timeout
+
+# =============================================================================
+# MCP Servers (Custom Platform Tools)
+# =============================================================================
+
+[mcp.shml-platform]
+# Agent-service MCP tools
+type = "http"
+url = "http://localhost:8000/mcp"
+timeout = 120000  # 120s for long operations
+
+[mcp.shml-platform.env]
+# Pass through auth if needed
+AUTH_TOKEN = "${SHML_AUTH_TOKEN}"
+
+# Available tools (read-only safe during training):
+# - training_status: Ray job status, metrics, ETA
+# - gpu_status: VRAM usage, processes, temperature
+# - mlflow_query: Experiment search, best runs
+# - vision_analyze: Image analysis (RTX 2070, always safe)
+# - vision_then_code: Vision + code (RTX 3090, blocked during training)
+
+# =============================================================================
+# UI/UX Configuration (Responsive)
+# =============================================================================
+
+[ui]
+# Auto-detect terminal size
+# Mobile (≤100 cols): Compact mode, less whitespace
+# Desktop (>100 cols): Full mode, rich formatting
+
+# Mobile optimizations (auto-detected)
+mobileThreshold = 100  # columns
+compactModeOnMobile = true
+reducedWhitespaceOnMobile = true
+
+# Keybindings (vim-style defaults)
+# Tab: Switch agents
+# Ctrl+x h: Help
+# Ctrl+x n: New session
+# Ctrl+x u: Undo
+# Ctrl+x r: Redo
+# Ctrl+x e: External editor
+
+# =============================================================================
+# Performance & Quality
+# =============================================================================
+
+[quality]
+# Auto-route based on query complexity
+autoSelectModel = true
+
+# Routing rules:
+# - Simple queries (< 200 tokens): fallback model
+# - Complex tasks (> 200 tokens): primary model
+# - Vision required: vision model
+# - Code generation: primary model (if not training)
+
+# MCP vs Shell routing:
+# - Structured data needed: MCP (JSON response)
+# - Speed critical: Direct shell
+# - Real-time streaming: Direct shell
+# - Complex queries: MCP
+
+[performance]
+# Streaming settings
+streamChunkSize = 512      # Bytes per chunk
+streamBufferSize = 4096    # Buffer size
+
+# Timeout settings
+defaultTimeout = 30000     # 30s default
+visionTimeout = 60000      # 60s for vision
+trainingTimeout = 120000   # 120s for training status
+
+# =============================================================================
+# Session Persistence (Project-Specific)
+# =============================================================================
+
+[sessions]
+# Storage location
+storageDir = "~/.config/opencode/sessions"
+
+# Compression & search
+compressionEnabled = true      # gzip compress old sessions
+vectorSearchEnabled = false    # Requires external vector DB (future)
+fullTextSearchEnabled = true   # SQLite FTS for session search
+
+# Retention
+maxSessionAge = 2592000        # 30 days
+maxSessionSize = 10485760      # 10MB per session
+
+# Sync (for multi-device)
+syncEnabled = false            # Requires external sync service
+syncProvider = "none"          # Options: "none", "syncthing", "custom"
+
+# =============================================================================
+# Logging & Debugging
+# =============================================================================
+
+[logging]
+level = "info"                 # debug, info, warn, error
+logFile = "~/.config/opencode/logs/opencode.log"
+maxLogSize = 10485760          # 10MB
+maxLogFiles = 5                # Rotate after 5 files
+
+# =============================================================================
+# Tmux Integration
+# =============================================================================
+
+[tmux]
+# Tmux session scripts available:
+# - ./scripts/tmux-opencode-dev.sh       (Dev workflow)
+# - ./scripts/tmux-opencode-training.sh  (Training monitor)
+# - ./scripts/tmux-opencode-agents.sh    (Multi-agent)
+
+# Auto-detect if running in tmux
+tmuxAware = true
+optimizeForTmux = true
+
+# =============================================================================
+# Mobile Access via Tailscale SSH
+# =============================================================================
+
+[remote]
+# Tailscale configuration
+tailscaleIP = "100.66.26.115"
+sshPort = 22
+
+# Mobile terminal recommendations:
+# - iPhone/iPad: Blink Shell, Termius
+# - Android: Termux, JuiceSSH
+# - Recommended font size: 12-14pt
+# - Recommended dimensions: 80x24 or 100x30

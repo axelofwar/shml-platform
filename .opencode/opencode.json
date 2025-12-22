@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "nemotron/nemotron-coding",
+  "provider": {
+    "nemotron": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Nemotron (local)",
+      "options": {
+        "baseURL": "http://localhost:8010/v1"
+      },
+      "models": {
+        "nemotron-coding": {
+          "name": "Nemotron-3-Nano-30B-A3B (Local)",
+          "tool_call": true,
+          "reasoning": false,
+          "attachment": false,
+          "limit": {
+            "context": 65536,
+            "output": 32768
+          }
+        }
+      }
+    }
+  },
+  "tools": {
+    "read": true,
+    "write": true,
+    "edit": true,
+    "bash": true,
+    "grep": true,
+    "glob": true,
+    "list": true,
+    "webfetch": true,
+    "todowrite": true,
+    "todoread": true,
+    "patch": true
+  }
+}

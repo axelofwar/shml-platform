@@ -1,0 +1,118 @@
+services:
+  nemotron-coding:
+    build:
+      context: ../../
+      dockerfile: inference/nemotron/Dockerfile
+    container_name: nemotron-coding
+    restart: unless-stopped
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0  # RTX 3090 Ti only
+      - CUDA_VISIBLE_DEVICES=0
+
+    volumes:
+      - ../../data/models/nemotron-3:/models:ro
+
+    command:
+      - --model
+      - /models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf
+      - --alias
+      - nemotron-coding
+      - --threads
+      - "-1"
+      - --n-gpu-layers
+      - "999"
+      - --ctx-size
+      - "65536"
+      - --port
+      - "8000"
+      - --host
+      - 0.0.0.0
+      - --jinja
+      - --temp
+      - "0.6"
+      - --top-p
+      - "0.95"
+      - --reasoning-budget
+      - "0"
+
+    ports:
+      - "8010:8000"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nemotron.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.nemotron.priority=2147483647"
+      - "traefik.http.services.nemotron.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.nemotron-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.nemotron.middlewares=nemotron-strip"
+
+    networks:
+      - shml-platform
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ==========================================================================
+  # Nemotron Manager - GPU Yield API for Training Integration
+  # Provides /training/start and /training/end endpoints for Ray jobs
+  # ==========================================================================
+  nemotron-manager:
+    build:
+      context: ./manager
+      dockerfile: Dockerfile
+    container_name: nemotron-manager
+    restart: unless-stopped
+
+    environment:
+      - NEMOTRON_CONTAINER=nemotron-coding
+      - GPU_INDEX=0
+      - YIELD_WAIT_SECONDS=5
+
+    volumes:
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Run with docker group for socket access
+    user: "1000:984"  # UID:docker-GID (adjust GID if different)
+
+    ports:
+      - "8011:8000"
+
+    networks:
+      - shml-platform
+
+    labels:
+      - "traefik.enable=true"
+      # Training yield API - accessible to Ray jobs
+      - "traefik.http.routers.nemotron-manager.rule=PathPrefix(`/api/coding-manager`)"
+      - "traefik.http.routers.nemotron-manager.priority=2147483646"
+      - "traefik.http.services.nemotron-manager.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.nemotron-manager-strip.stripprefix.prefixes=/api/coding-manager"
+      - "traefik.http.routers.nemotron-manager.middlewares=nemotron-manager-strip"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    depends_on:
+      - nemotron-coding
+
+networks:
+  shml-platform:
+    external: true

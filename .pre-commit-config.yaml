@@ -18,6 +18,7 @@ repos:
       - id: check-yaml
         args: ['--unsafe']  # Allow custom tags in docker-compose
       - id: check-json
+        exclude: 'tsconfig\.json$'  # tsconfig uses JSONC (comments allowed)
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=1000']

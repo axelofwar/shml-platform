@@ -1,0 +1,65 @@
+# Unified GPU Manager
+# ====================
+# Coordinates GPU yield across all inference services for training and PII processing.
+#
+# Start: docker compose -f docker-compose.gpu-manager.yml up -d
+# Status: curl http://localhost:8012/status
+#
+# Endpoints:
+# - POST /training/start - Yield RTX 3090 for training, activate fallback on RTX 2070
+# - POST /training/end - Restore RTX 3090, deactivate fallback
+# - POST /pii/start - Free RTX 2070 for PII processing (only when not training)
+# - POST /pii/end - Restore RTX 2070 services
+# - GET /health - Quick health check
+# - GET /status - Detailed status of all GPUs and services
+#
+# This replaces nemotron-manager with a unified approach that handles:
+# - Nemotron (RTX 3090 Ti, 22GB) - Primary coding model
+# - coding-model-fallback (RTX 2070, 6GB) - Backup during training
+# - embedding-service (RTX 2070, 1.5GB) - Embeddings
+# - pii-blur-api (RTX 2070, 3GB) - Face detection/blurring
+
+services:
+  gpu-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpu-manager
+    restart: unless-stopped
+
+    environment:
+      - YIELD_WAIT_SECONDS=5
+
+    volumes:
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Run with docker group for socket access
+    # Get docker GID with: getent group docker | cut -d: -f3
+    user: "1000:984"  # UID:docker-GID (adjust GID if different)
+
+    ports:
+      - "8012:8000"
+
+    networks:
+      - shml-platform
+
+    labels:
+      - "traefik.enable=true"
+      # GPU Manager API - for Ray jobs and other services
+      - "traefik.http.routers.gpu-manager.rule=PathPrefix(`/api/gpu-manager`)"
+      - "traefik.http.routers.gpu-manager.priority=2147483645"
+      - "traefik.http.services.gpu-manager.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.gpu-manager-strip.stripprefix.prefixes=/api/gpu-manager"
+      - "traefik.http.routers.gpu-manager.middlewares=gpu-manager-strip"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  shml-platform:
+    external: true

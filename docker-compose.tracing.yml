@@ -1,0 +1,53 @@
+version: '3.8'
+
+# OpenTelemetry Distributed Tracing Stack
+# Collects traces from Ray jobs for performance analysis
+# Accessible via Grafana at http://localhost/grafana/
+
+services:
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: ${PLATFORM_PREFIX:-shml}-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - ./monitoring/tempo/data:/tmp/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9411:9411"   # Zipkin
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=false"  # Internal service, access via Grafana datasource
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: ${PLATFORM_PREFIX:-shml}-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./monitoring/tempo/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4315:4317"   # OTLP gRPC (avoid conflict with Tempo)
+      - "4316:4318"   # OTLP HTTP
+      - "8889:8888"   # Prometheus metrics (avoid conflict)
+      - "13133:13133" # Health check
+    networks:
+      - platform
+    depends_on:
+      - tempo
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

@@ -1,4 +1,13 @@
 # Chat API Service - OpenAI-compatible API with auth, rate limiting, and history
+# ==============================================================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start inference
+# Stop:   ./start_all_safe.sh stop inference
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks created by docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
 #
 # Provides:
 # - /v1/chat/completions - OpenAI-compatible endpoint for Cursor/editors
@@ -94,7 +103,4 @@ secrets:
 networks:
   platform:
     name: ${PLATFORM_PREFIX:-shml}-platform
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/16
+    external: true

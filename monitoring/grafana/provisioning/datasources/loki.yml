@@ -1,0 +1,25 @@
+# Loki Data Source for Grafana
+# Auto-provisioned on Grafana startup
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://shml-loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Extract job_id from log lines
+        - datasourceUid: tempo
+          matcherRegex: "job[_-]([a-zA-Z0-9-]+)"
+          name: JobID
+          url: "$${__value.raw}"
+        # Extract trace IDs for linking to Tempo
+        - datasourceUid: tempo
+          matcherRegex: "trace_id=([a-f0-9]+)"
+          name: TraceID
+          url: "$${__value.raw}"

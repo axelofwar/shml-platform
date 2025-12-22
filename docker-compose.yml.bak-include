@@ -1,0 +1,31 @@
+# ML Platform - Main Compose File
+# Entry point for starting all services with one command: docker compose up
+# Uses Docker Compose 'include' to orchestrate multiple compose files
+#
+# Start everything:  docker compose up -d
+# Start only infra:  docker compose -f docker-compose.infra.yml up -d
+# Start only MLflow: docker compose -f mlflow-server/docker-compose.yml up -d
+# Start only Ray:    docker compose -f ray_compute/docker-compose.yml up -d
+# Start only Chat:   docker compose -f inference/chat-api/docker-compose.yml -f chat-ui/docker-compose.yml up -d
+
+include:
+  # Shared Infrastructure (Traefik, Postgres, Redis, FusionAuth, Monitoring)
+  - docker-compose.infra.yml
+
+  # MLflow Services (Tracking Server, API, Prometheus)
+  - mlflow-server/docker-compose.yml
+
+  # Ray Services (Head Node, API, Prometheus)
+  - ray_compute/docker-compose.yml
+
+  # Coding Model Services (30B primary, 3B fallback)
+  - inference/coding-model/docker-compose.yml
+
+  # Chat API (OpenAI-compatible endpoint with auth and rate limiting)
+  - inference/chat-api/docker-compose.yml
+
+  # Chat UI (Web interface for asking questions - ask-only mode)
+  - chat-ui/docker-compose.yml
+
+  # Embedding Service (CPU-based for RAG)
+  - inference/embedding-service/docker-compose.yml

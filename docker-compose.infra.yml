@@ -23,13 +23,17 @@ services:
       - --api.dashboard=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=platform
+      - --providers.docker.network=${PLATFORM_PREFIX:-shml}-platform
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
-      - --log.level=WARN
+      - --log.level=DEBUG
+      - --log.format=common
       - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --accesslog.format=common
+      - --accesslog.fields.headers.defaultmode=keep
       - --metrics.prometheus=true
       - --ping=true
     ports:
@@ -43,6 +47,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./logs/traefik:/var/log/traefik
       # TLS certs from Tailscale - DEPLOYMENT-SPECIFIC PATHS
       # When using a different Tailscale domain, update these volume paths
       # and the corresponding paths in monitoring/traefik/dynamic.yml
@@ -224,6 +229,18 @@ services:
       - "traefik.http.routers.fusionauth-ajax.priority=150"
       - "traefik.http.routers.fusionauth-ajax.middlewares=fusionauth-headers"
       - "traefik.http.routers.fusionauth-ajax.service=fusionauth"
+      # FusionAuth password/registration endpoints
+      - "traefik.http.routers.fusionauth-password.rule=PathPrefix(`/password`)"
+      - "traefik.http.routers.fusionauth-password.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-password.priority=150"
+      - "traefik.http.routers.fusionauth-password.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-password.service=fusionauth"
+      # FusionAuth user registration endpoints
+      - "traefik.http.routers.fusionauth-registration.rule=PathPrefix(`/registration`)"
+      - "traefik.http.routers.fusionauth-registration.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-registration.priority=150"
+      - "traefik.http.routers.fusionauth-registration.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-registration.service=fusionauth"
       - "traefik.http.services.fusionauth.loadbalancer.server.port=9011"
 
   # ==========================================================================
@@ -244,7 +261,7 @@ services:
   # 3. Assign at least "viewer" role
   # ==========================================================================
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
     container_name: oauth2-proxy
     restart: unless-stopped
     # Allow container to resolve Tailscale domain to Tailscale IP
@@ -259,11 +276,26 @@ services:
         reservations:
           cpus: '0.1'
           memory: 64M
+    # Use Redis session store - sessions are too large for cookie storage
+    # Note: There's a known race condition with parallel requests - the frontend
+    # should wait for auth completion before making API calls
+    command:
+      - "--session-store-type=redis"
+      - "--redis-connection-url=redis://shml-redis:6379"
     environment:
       # Provider configuration - FusionAuth as OIDC provider
       OAUTH2_PROXY_PROVIDER: oidc
-      # Issuer URL without /auth since we route /.well-known and /oauth2 directly to FusionAuth
+
+      # CRITICAL: Trust X-Forwarded-* headers from Traefik reverse proxy
+      # This allows OAuth2-Proxy to use the original request host for cookie validation
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+
+      # Issuer URL - Use public URL to match FusionAuth's issuer claim in OIDC discovery
+      # FusionAuth's FUSIONAUTH_APP_URL is configured with this public URL
       OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}
+      # Skip issuer validation to allow OAuth2-Proxy to work with FusionAuth through Traefik
+      OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION: "true"
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
       OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
       OAUTH2_PROXY_CLIENT_SECRET: ${FUSIONAUTH_PROXY_CLIENT_SECRET}
 
@@ -272,6 +304,42 @@ services:
       OAUTH2_PROXY_COOKIE_SECURE: "true"
       OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
       OAUTH2_PROXY_COOKIE_NAME: "_sfml_oauth2"
+      # CRITICAL: Cookie path must be "/" so cookie is sent for ALL requests
+      # Without this, cookie is scoped to /oauth2-proxy/ and won't be sent for /ray/*, /api/*, etc.
+      OAUTH2_PROXY_COOKIE_PATH: "/"
+
+      # ===================================================================
+      # ENHANCED SESSION MANAGEMENT (Added 2025-12-06)
+      # ===================================================================
+      # Session duration - 8 hours for good UX without compromising security
+      # Access token lifetime before auto-refresh
+      OAUTH2_PROXY_COOKIE_EXPIRE: "8h"
+
+      # Auto-refresh tokens at 50% lifetime (4 hours) for seamless UX
+      # Prevents sudden session expiration
+      OAUTH2_PROXY_COOKIE_REFRESH: "4h"
+
+      # Enable refresh token flow for transparent re-authentication
+      # User stays logged in for 30 days without re-entering credentials
+      OAUTH2_PROXY_REFRESH_TOKEN: "true"
+
+      # Session persistence via Redis (survives browser/container restarts)
+      # Benefits: sessions persist across OAuth2-Proxy restarts, centralized revocation
+      # Note: There's a race condition where parallel requests can delete sessions
+      # The frontend should wait for auth completion before making API calls
+      OAUTH2_PROXY_SESSION_STORE_TYPE: "redis"
+      OAUTH2_PROXY_REDIS_CONNECTION_URL: "redis://shml-redis:6379"
+
+      # Cookie security hardening
+      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"   # Prevent JavaScript access
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"    # CSRF protection
+
+      # Grace period for temporary network issues (5 minutes)
+      # Prevents hard logout if FusionAuth temporarily unreachable
+      OAUTH2_PROXY_GRACE_PERIOD: "5m"
+
+      # Skip authentication for static assets (performance optimization)
+      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt).*$"
 
       # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
       OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
@@ -292,6 +360,13 @@ services:
       # oauth2-proxy treats roles as groups internally
       OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "roles"
 
+      # JWT BEARER TOKEN SUPPORT (v7.0+)
+      # Enable API access via Authorization: Bearer <JWT> headers
+      # OAuth2-Proxy will validate JWT signature against FusionAuth JWKS and check 'aud' claim
+      # This allows programmatic API access (CI/CD, scripts) without browser cookies
+      # Valid JWTs bypass cookie authentication and flow through to role-auth middleware
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+
       # NOTE: ALLOWED_GROUPS temporarily disabled for debugging
       # FusionAuth requires JWT Populate lambda to include roles in id_token
       # Re-enable after confirming lambda is configured:
@@ -307,8 +382,19 @@ services:
       OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
       OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER: "true"
 
-      # Session configuration
-      OAUTH2_PROXY_SESSION_STORE_TYPE: "cookie"
+      # DEBUG LOGGING - Enable verbose output for troubleshooting
+      OAUTH2_PROXY_LOGGING_FILENAME: ""
+      OAUTH2_PROXY_LOGGING_MAX_SIZE: "100"
+      OAUTH2_PROXY_LOGGING_MAX_AGE: "7"
+      OAUTH2_PROXY_LOGGING_LOCAL_TIME: "true"
+      OAUTH2_PROXY_LOGGING_COMPRESS: "false"
+      OAUTH2_PROXY_STANDARD_LOGGING: "true"
+      OAUTH2_PROXY_REQUEST_LOGGING: "true"
+      OAUTH2_PROXY_AUTH_LOGGING: "true"
+      # Set log level to debug for detailed output
+      LOG_LEVEL: "debug"
+
+      # Session configuration (moved to enhanced session block above)
       OAUTH2_PROXY_SKIP_AUTH_ROUTES: "^/auth/.*,^/health.*,^/api/status.*"
 
       # Custom templates for better user experience
@@ -325,6 +411,8 @@ services:
       - platform
     depends_on:
       fusionauth:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     # Note: oauth2-proxy is a scratch/distroless image with no shell tools
     # Using disable healthcheck so Traefik uses container running status instead
@@ -347,6 +435,8 @@ services:
       # OAuth2-Proxy serves auth endpoint at /oauth2-proxy/auth due to PROXY_PREFIX setting
       - "traefik.http.middlewares.oauth2-auth.forwardauth.address=http://oauth2-proxy:4180/oauth2-proxy/auth"
       - "traefik.http.middlewares.oauth2-auth.forwardauth.trustForwardHeader=true"
+      # CRITICAL: Forward Cookie header so OAuth2-Proxy can validate session cookies on XHR requests
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authRequestHeaders=Cookie,Authorization,X-Forwarded-Proto,X-Forwarded-Host,X-Forwarded-Uri"
       - "traefik.http.middlewares.oauth2-auth.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,Authorization"
 
       # ========================================================================
@@ -359,27 +449,35 @@ services:
       # ACCESS TIERS:
       # - viewer: Homer, Grafana (dashboards only)
       # - developer: MLflow, Ray, Dozzle (requires admin registration)
-      # - admin: All services + admin panels
+      # - elevated-developer: Agent tools, GitHub actions, model management
+      # - admin: All services + admin panels + host access
       # ========================================================================
 
-      # Developer-level auth: requires developer or admin role
+      # Developer-level auth: requires developer, elevated-developer, or admin role
       # Chain: oauth2-auth (authenticate) -> role-auth-developer (check role)
-      # Used for: MLflow, Ray, Dozzle
+      # Used for: MLflow, Ray, Dozzle, Chat API
       - "traefik.http.middlewares.role-auth-developer.forwardauth.address=http://role-auth:8080/auth/developer"
       - "traefik.http.middlewares.role-auth-developer.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.role-auth-developer.forwardauth.authResponseHeaders=X-Auth-Role-Check"
 
+      # Elevated developer auth: requires elevated-developer or admin role
+      # Chain: oauth2-auth (authenticate) -> role-auth-elevated (check role)
+      # Used for: Agent tools, GitHub actions, model management
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.address=http://role-auth:8080/auth/elevated-developer"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
       # Admin-level auth: requires admin role only
       # Chain: oauth2-auth (authenticate) -> role-auth-admin (check role)
-      # Used for: Traefik dashboard, system administration
+      # Used for: Traefik dashboard, system administration, host access
       - "traefik.http.middlewares.role-auth-admin.forwardauth.address=http://role-auth:8080/auth/admin"
       - "traefik.http.middlewares.role-auth-admin.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.role-auth-admin.forwardauth.authResponseHeaders=X-Auth-Role-Check"
 
-      # Error handling middleware - redirects 401/403 to OAuth2 sign-in page
-      # This is CRITICAL: without this, users see "Unauthorized" instead of being redirected to login
+      # Error handling middleware - redirects 401 (unauthenticated) to OAuth2 sign-in page
+      # 403 (authenticated but unauthorized) will be handled by role-auth's custom error page
       # The {url} placeholder is replaced with the original request URL for redirect after login
-      - "traefik.http.middlewares.oauth2-errors.errors.status=401-403"
+      - "traefik.http.middlewares.oauth2-errors.errors.status=401"
       - "traefik.http.middlewares.oauth2-errors.errors.service=oauth2-proxy"
       - "traefik.http.middlewares.oauth2-errors.errors.query=/oauth2-proxy/sign_in?rd={url}"
 
@@ -390,13 +488,15 @@ services:
   # Used as a second forwardAuth middleware AFTER oauth2-auth to enforce role requirements.
   #
   # Endpoints:
-  # - /auth/viewer: Requires viewer, developer, or admin role
-  # - /auth/developer: Requires developer or admin role (for MLflow, Ray, Dozzle)
+  # - /auth/viewer: Requires viewer, developer, elevated-developer, or admin role
+  # - /auth/developer: Requires developer, elevated-developer, or admin role (for MLflow, Ray, Dozzle)
+  # - /auth/elevated-developer: Requires elevated-developer or admin (for agent tools, GitHub)
   # - /auth/admin: Requires admin role only (for system administration)
   #
   # Usage in Traefik middleware chains:
   # - Public services: oauth2-errors,oauth2-auth (any authenticated user)
   # - Developer services: oauth2-errors,oauth2-auth,role-auth-developer
+  # - Elevated dev services: oauth2-errors,oauth2-auth,role-auth-elevated
   # - Admin services: oauth2-errors,oauth2-auth,role-auth-admin
   # ==========================================================================
   role-auth:
@@ -442,10 +542,12 @@ services:
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/textfile'
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      - ./monitoring/prometheus:/textfile:ro
     networks:
       - platform
     expose:
@@ -453,20 +555,29 @@ services:
     pid: host
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
     container_name: ${PLATFORM_PREFIX:-shml}-cadvisor
     restart: unless-stopped
+    # Enable container labels for Grafana dashboards
+    # v0.47.2 has better Docker compatibility than latest
+    command:
+      - --store_container_labels=true
+      - --docker=unix:///var/run/docker.sock
+      - --housekeeping_interval=30s
+      - --max_housekeeping_interval=60s
+      - --event_storage_event_limit=default=0
+      - --event_storage_age_limit=default=0
     deploy:
       resources:
         limits:
           cpus: '0.47'
-          memory: 141M
+          memory: 200M
         reservations:
           cpus: '0.1'
           memory: 64M
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
+      - /var/run:/var/run:rw
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
@@ -525,6 +636,37 @@ services:
       - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,prometheus-strip"
       - "traefik.http.routers.prometheus.priority=100"
 
+  # Prometheus Pushgateway - for batch job metrics (training jobs)
+  pushgateway:
+    image: prom/pushgateway:v1.6.2
+    container_name: ${PLATFORM_PREFIX:-shml}-pushgateway
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    expose:
+      - "9091"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pushgateway.rule=PathPrefix(`/pushgateway`)"
+      - "traefik.http.routers.pushgateway.entrypoints=web,websecure"
+      - "traefik.http.services.pushgateway.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.pushgateway-strip.stripprefix.prefixes=/pushgateway"
+      - "traefik.http.routers.pushgateway.middlewares=pushgateway-strip"
+      - "traefik.http.routers.pushgateway.priority=100"
+
   unified-grafana:
     image: grafana/grafana:10.2.2
     container_name: unified-grafana
@@ -560,20 +702,21 @@ services:
       GF_SECURITY_COOKIE_SAMESITE: "none"
       # X-Frame-Options must be disabled for iframe embedding
       GF_SECURITY_X_FRAME_OPTIONS: ""
-      # FusionAuth OAuth integration
-      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
-      GF_AUTH_GENERIC_OAUTH_NAME: "SFML Platform"
-      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${FUSIONAUTH_GRAFANA_CLIENT_ID}
-      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${FUSIONAUTH_GRAFANA_CLIENT_SECRET}
-      GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
-      # Auth URL uses public domain (browser redirect), token/api use internal docker network
-      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/oauth2/authorize"
-      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://fusionauth:9011/oauth2/token"
-      GF_AUTH_GENERIC_OAUTH_API_URL: "http://fusionauth:9011/oauth2/userinfo"
-      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
-      GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "false"
-      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(groups[*], 'platform-admins') && 'Admin' || contains(groups[*], 'grafana-users') && 'Editor' || 'Viewer'"
-      GF_AUTH_GENERIC_OAUTH_USE_PKCE: "true"
+      # =====================================================================
+      # AUTH PROXY MODE - OAuth2-Proxy Integration
+      # Grafana trusts OAuth2-Proxy headers instead of doing its own OAuth
+      # =====================================================================
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-Auth-Request-Email"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "email"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_SYNC_TTL: "60"
+      # Trust all internal Docker network IPs (172.16.0.0/12 covers all Docker bridge networks)
+      GF_AUTH_PROXY_WHITELIST: "172.16.0.0/12,192.168.0.0/16,127.0.0.1"
+      GF_AUTH_PROXY_HEADERS: "Name:X-Auth-Request-User Email:X-Auth-Request-Email"
+      # Map OAuth2-Proxy roles to Grafana roles
+      # X-Auth-Request-Groups contains comma-separated roles from FusionAuth
+      GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN: "false"
     volumes:
       - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
@@ -640,6 +783,49 @@ services:
       - "traefik.http.routers.dozzle.priority=100"
       # OAuth2 + Developer role required - log viewing requires elevated access
       - "traefik.http.routers.dozzle.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+
+  # --------------------------------------------------------------------------
+  # SBA RESOURCE PORTAL - Gemini AI Document Q&A
+  # Voice-enabled document analysis with PDF/audio support
+  # --------------------------------------------------------------------------
+  sba-resource-portal:
+    build:
+      context: ./sba-resource-portal
+      dockerfile: Dockerfile
+      args:
+        GEMINI_API_KEY: ${BNCCYBERSPACE_GOOGLE_API_KEY:-}
+    image: ${PLATFORM_PREFIX:-shml}-sba-resource-portal:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-sba-resource-portal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - platform
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # SBA Resource Portal - Developer role required
+      - "traefik.http.routers.sba-portal.rule=PathPrefix(`/sba-portal`)"
+      - "traefik.http.routers.sba-portal.entrypoints=web,websecure"
+      - "traefik.http.routers.sba-portal.priority=200"
+      - "traefik.http.services.sba-portal.loadbalancer.server.port=80"
+      # Strip prefix before forwarding to service
+      - "traefik.http.middlewares.sba-strip.stripprefix.prefixes=/sba-portal"
+      # OAuth + Developer role required
+      - "traefik.http.routers.sba-portal.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,sba-strip"
 
   # --------------------------------------------------------------------------
   # HOMER - Static Dashboard (Root Landing Page)
@@ -759,6 +945,59 @@ services:
       # Webhooks should be publicly accessible (authenticated via secret)
       # Do NOT add oauth2-auth middleware here
 
+  # --------------------------------------------------------------------------
+  # CODE-SERVER - VS Code in Browser for Remote Development
+  # Uses coder/code-server for better extension marketplace compatibility
+  # Admin-only OAuth protection via /ide path
+  # --------------------------------------------------------------------------
+  code-server:
+    image: codercom/code-server:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-code-server
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    command:
+      - --auth=none
+      - --bind-addr=0.0.0.0:8080
+      - --app-name=SHML Platform IDE
+      - --extensions-dir=/home/coder/.local/share/code-server/extensions
+      - /home/coder/project
+    deploy:
+      resources:
+        limits:
+          cpus: '${CODE_SERVER_CPU_LIMIT:-4.0}'
+          memory: ${CODE_SERVER_MEM_LIMIT:-4G}
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    environment:
+      DISABLE_TELEMETRY: "true"
+      DISABLE_UPDATE_CHECK: "true"
+      # Use Microsoft's extension gallery for Copilot access
+      EXTENSIONS_GALLERY: '{"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery","itemUrl":"https://marketplace.visualstudio.com/items","cacheUrl":"https://vscode.blob.core.windows.net/gallery/index","controlUrl":"","recommendationsUrl":""}'
+    volumes:
+      - ${PWD}:/home/coder/project:cached
+      - ${HOME}/.local/share/code-server-platform:/home/coder/.local/share/code-server
+      - ${HOME}/.config/code-server-platform:/home/coder/.config/code-server
+    networks:
+      - platform
+    working_dir: /home/coder/project
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.code-server.rule=PathPrefix(`/ide`)"
+      - "traefik.http.routers.code-server.priority=2147483647"
+      - "traefik.http.routers.code-server.entrypoints=web,websecure"
+      - "traefik.http.services.code-server.loadbalancer.server.port=8080"
+      # Strip /ide prefix - code-server serves from root
+      - "traefik.http.middlewares.code-server-strip.stripprefix.prefixes=/ide"
+      # SECURITY: Admin-only OAuth protection
+      - "traefik.http.routers.code-server.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,code-server-strip"
+
 secrets:
   shared_db_password:
     file: ./secrets/shared_db_password.txt
@@ -785,6 +1024,12 @@ volumes:
   # FusionAuth
   fusionauth-config:
     name: ${PLATFORM_PREFIX:-shml}-fusionauth-config
+
+  # Code Server
+  code-server-data:
+    name: ${PLATFORM_PREFIX:-shml}-code-server-data
+  code-server-config:
+    name: ${PLATFORM_PREFIX:-shml}-code-server-config
 
 networks:
   platform:

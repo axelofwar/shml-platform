@@ -1,0 +1,52 @@
+{
+  "timestamp": "2025-12-13T07:49:00.134628",
+  "targets": {
+    "mAP50": 0.94,
+    "recall": 0.95,
+    "precision": 0.9
+  },
+  "results": {
+    "phase3_trained": {
+      "model": "phase3_trained",
+      "description": "Phase 3 (1280px, 35 epochs, curriculum)",
+      "mAP50": 0.8180332607239399,
+      "mAP50_95": 0.47906395270233054,
+      "precision": 0.8961965954500744,
+      "recall": 0.7370707736865061,
+      "f1": 0.8088815414123292,
+      "eval_time_sec": 77.55098986625671,
+      "mAP50_gap": 0.12196673927606005,
+      "recall_gap": 0.21292922631349387,
+      "precision_gap": 0.003803404549925671,
+      "meets_targets": false
+    },
+    "phase2_trained": {
+      "model": "phase2_trained",
+      "description": "Phase 2 (800px)",
+      "mAP50": 0.8264156707965715,
+      "mAP50_95": 0.48047304550970005,
+      "precision": 0.9008787704317178,
+      "recall": 0.7475134872542252,
+      "f1": 0.8170611328804814,
+      "eval_time_sec": 75.92874002456665,
+      "mAP50_gap": 0.11358432920342842,
+      "recall_gap": 0.20248651274577478,
+      "precision_gap": -0.0008787704317178013,
+      "meets_targets": false
+    },
+    "phase1_trained": {
+      "model": "phase1_trained",
+      "description": "Phase 1 (640px)",
+      "mAP50": 0.8089921226060153,
+      "mAP50_95": 0.45936931883308596,
+      "precision": 0.888877257373464,
+      "recall": 0.7333742425404618,
+      "f1": 0.803672283287953,
+      "eval_time_sec": 76.40344882011414,
+      "mAP50_gap": 0.13100787739398467,
+      "recall_gap": 0.21662575745953816,
+      "precision_gap": 0.011122742626536009,
+      "meets_targets": false
+    }
+  }
+}

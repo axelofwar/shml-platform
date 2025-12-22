@@ -122,7 +122,7 @@ Admin will update your role in FusionAuth → Users → [Your Account] → Regis
 - **CPUs:** 8 cores allocated
 - **GPUs:** 2 GPUs available for job scheduling
 - **Object Store:** 512MB
-- **GPU Sharing:** NVIDIA MPS enabled for multi-process access
+- **GPU Strategy:** Dedicated allocation (GPU 0 for training, GPU 1 for fallback)
 
 ---
 

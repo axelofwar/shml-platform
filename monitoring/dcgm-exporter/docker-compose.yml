@@ -1,4 +1,14 @@
 # DCGM Exporter - NVIDIA GPU Metrics
+# ==================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start monitoring
+# Stop:   ./start_all_safe.sh stop monitoring
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks created by docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
+#
 # Official NVIDIA exporter for comprehensive GPU monitoring
 
 services:
@@ -9,7 +19,8 @@ services:
     image: ml-platform-dcgm-exporter:3.3.5-3.4.0
     container_name: dcgm-exporter
     restart: unless-stopped
-    runtime: nvidia
+    # Note: Using deploy.resources.reservations.devices instead of runtime: nvidia
+    # The nvidia runtime requires explicit daemon.json config which may not be present
     deploy:
       resources:
         reservations:
@@ -23,7 +34,7 @@ services:
     ports:
       - "9400:9400"
     networks:
-      - ml-platform
+      - platform
     cap_add:
       - SYS_ADMIN
     healthcheck:
@@ -34,5 +45,6 @@ services:
       start_period: 20s
 
 networks:
-  ml-platform:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
     external: true

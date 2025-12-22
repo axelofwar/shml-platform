@@ -138,34 +138,47 @@ REDIS_DB: 1  # Ray
 - ✅ Citus: Distributed PostgreSQL
 - ⚠️ Consider managed (RDS/CloudSQL)
 
-### 5. NVIDIA MPS (GPU Sharing)
+### 5. GPU Resource Management (Dual GPU Architecture)
 
-**Selected:** MPS for concurrent GPU access
+**Selected:** Dedicated GPU allocation with health-check routing
 
-**Why:**
-- Multiple services use GPU simultaneously
-- Better utilization
-- No code changes
-- Transparent to apps
+**Why MPS was NOT used:**
+- Memory math doesn't work: 32B model (~20GB) + training (~12GB) > 24GB VRAM
+- MPS daemon blocks Docker containers from accessing GPUs
+- OOM risk during training validation peaks
+- See `docs/internal/archived_approaches/` for details
+
+**Actual Implementation:**
+```
+GPU 0 (RTX 3090 Ti, 24GB): Training OR Primary Model (mutually exclusive)
+GPU 1 (RTX 2070, 8GB):     Fallback Model (always available)
+```
 
 **Config:**
 ```yaml
+# Primary model yields to training
 environment:
-  CUDA_MPS_PIPE_DIRECTORY: /tmp/nvidia-mps
-volumes:
-  - nvidia-mps:/tmp/nvidia-mps
+  YIELD_ON_TRAINING: "true"
+  RAY_ADDRESS: http://ray-head:8265
 deploy:
   resources:
     reservations:
       devices:
         - driver: nvidia
-          count: 1
+          device_ids: ["0"]  # 3090 Ti
+
+# Fallback always available on GPU 1
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          device_ids: ["1"]  # 2070
 ```
 
-**Alternatives:**
-- **MIG:** A100/H100 only, hard isolation
-- **Time-slicing:** K8s round-robin
-- **vGPU:** VM-level sharing
+**Routing:** Traefik health checks route traffic:
+- Primary healthy (no training) → priority 210
+- Primary unhealthy (training active) → fallback priority 200
 
 ---
 
@@ -241,7 +254,7 @@ docker exec ray-compute-api curl http://mlflow-nginx:80/health
 **Capacity:**
 - Users: <10
 - Experiments: <1000/month
-- GPU: 1 shared via MPS
+- GPU: 2 dedicated (3090 Ti for training, 2070 for fallback)
 - Storage: Local filesystem
 
 **Limitations:**
@@ -558,6 +571,73 @@ ufw deny 80
 
 ---
 
+## Model Idle Management
+
+### Overview
+
+The primary coding model (Qwen2.5-Coder-32B on RTX 3090 Ti) implements intelligent idle management to conserve GPU resources when not in use.
+
+### Behavior
+
+```
+Request Flow:
+                                    ┌─────────────────────┐
+                                    │   Primary Model     │
+                                    │   (32B, 3090 Ti)    │
+User Request ──▶ Traefik ──▶       │                     │
+                    │              │  Idle after 30 min  │
+                    │              │  ↓ (health=unhealthy)│
+                    │              └─────────────────────┘
+                    │                        │
+                    │              Wake-up triggered
+                    │              (background, ~2-3 min)
+                    ▼                        │
+              ┌─────────────────────┐        │
+              │   Fallback Model    │◀───────┘
+              │   (3B, 2070)        │   Handles current request
+              │   Always Available  │   while primary loads
+              └─────────────────────┘
+```
+
+### Configuration
+
+```yaml
+# Environment variables (docker-compose.yml)
+environment:
+  # Idle timeout in minutes (0 = disabled)
+  - IDLE_TIMEOUT_MINUTES=30
+  # How often to check idle status
+  - IDLE_CHECK_INTERVAL_SECONDS=60
+```
+
+### States
+
+| State | Health Check | Traefik Routing | GPU Memory |
+|-------|--------------|-----------------|------------|
+| **Active** | healthy | Primary preferred | ~22GB used |
+| **Idle (sleeping)** | unhealthy | Routes to fallback | ~0GB (freed) |
+| **Yielded (training)** | unhealthy | Routes to fallback | ~0GB (freed) |
+| **Waking up** | unhealthy | Routes to fallback | Loading... |
+
+### Admin Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/status` | GET | Current model status including idle time |
+| `/admin/wake` | POST | Force wake from idle |
+| `/admin/sleep` | POST | Force into idle state |
+| `/admin/yield` | POST | Force yield for training |
+| `/admin/reclaim` | POST | Force reclaim from yield |
+
+### Benefits
+
+- **Resource Conservation**: Primary model releases ~22GB VRAM when idle
+- **Always Available**: Fallback model provides instant responses 24/7
+- **Seamless Handoff**: Users don't notice the transition
+- **Auto Wake**: Primary automatically wakes on high-complexity requests
+
+---
+
 ## References
 
 - [Traefik Docs](https://doc.traefik.io)
@@ -567,14 +647,12 @@ ufw deny 80
 
 ---
 
-**Version:** 2.0  
+**Version:** 2.1  
+**Last Updated:** 2025-12-05  
 **Next Review:** 2025-12-22
 
 
-```
-Confirm that the model is properly setup to integrate with cursor and create a document in docs/ that walks through the integration of our model into cursor step by step
-
-modify so that the only users/roles/groups with edit/agent capabilites for the model are admins or developers who have been given an api key. this should be the same api key they get to access fusion auth api and other services but we should be able to elevate certain users (and their api keys) who are developers with edit and agent capabilites (where admins choose the evelbated api keys) - otherwise developres have the same ask only access as viewers
+The model does not seem to be implementing proper sleep mechanisms (primary or secondary) when a response has not been sent to it for 30+ minutes. I want it configured so that the primary model goes idle and yeilds system resources after 30 minutes of inactivity and the fallback model spins up for quick response in case anyone asks something after 30 minutes. The fallback model can fill in while the primary model spins back up if the request made to the model requires it given our auto switching context based on complextig.
 
 
 Let's create a small section near the embedded chat on homer near the section that has a redirect to the chat web page. This section/icon (or whatever else is better to organize both together with options to extend in the future)  will contain a link to a jupyter notebook server. We should host create the infrastructure to host this server, it should be authenticated for each user (with developer or admin access required) that the user can test interacting with the sdk in a jupyter notebook. This jupyter notebook server should be shut down or made idle after 30 monutes of inactivitiy to free up resources elsewhere, but it should store the user's workspace as it was in the postgres server. This should be stored per user so that it can be easily loaded. The databases should have shared attribtues  across the shared postgres instance so that the databse admin can use queries to align across all the database tables etc. with the same or similar keys where possible. The server should also include a chat integration if possible similar to copilot that allows the user to ask the model questions as well. If having the model be able to actually modify code in the notebook is not too much more to add I would like to add this to. Any questions?

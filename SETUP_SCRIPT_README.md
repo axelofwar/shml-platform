@@ -345,10 +345,11 @@ Just say "no" when prompted, or press Ctrl+C during Tailscale setup.
 
 ## Performance Notes
 
-### GPU Sharing
-- NVIDIA MPS enabled for multi-process GPU sharing
-- Both GPUs accessible to all containers
-- See NEW_GPU_SETUP.md for configuration details
+### GPU Allocation
+- Dedicated GPU allocation (not MPS shared)
+- GPU 0 (3090 Ti): Training OR Primary model
+- GPU 1 (2070): Fallback inference (always available)
+- See docs/internal/ARCHITECTURE.md for configuration details
 
 ### Memory Allocation
 - Ray object store: 512MB per worker (in 2GB containers)

@@ -1,0 +1,21 @@
+# FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Audio processing
+librosa==0.10.1
+soundfile==0.12.1
+pydub==0.25.1
+numpy==1.26.3
+
+# Audio separation - Demucs as fallback
+demucs==4.0.1
+
+# SAM Audio (when available from HuggingFace)
+# sam-audio @ git+https://github.com/facebookresearch/sam-audio.git
+
+# Utilities
+aiofiles==23.2.1

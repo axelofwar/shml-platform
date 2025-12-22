@@ -186,10 +186,10 @@ jobs:
             exit 0
           fi
 
-          URL="${CHAT_API_URL:-https://shml-platform.tail38b60a.ts.net/chat-api}"
+          URL="${CHAT_API_URL:-https://shml-platform.tail38b60a.ts.net/api/chat}"
 
           echo "Testing Chat API at: $URL"
-          if curl -sf -H "Authorization: Bearer $CHAT_API_DEVELOPER_KEY" "$URL/health" > /dev/null 2>&1; then
+          if curl -sf "$URL/health" > /dev/null 2>&1; then
             echo "Chat API is accessible!"
             echo "skip=false" >> $GITHUB_OUTPUT
           else
@@ -200,7 +200,8 @@ jobs:
       - name: Run Chat API live integration tests
         if: steps.check_chat_api.outputs.skip != 'true'
         env:
-          CHAT_API_DIRECT_URL: ${{ secrets.CHAT_API_URL }}
+          # Use /api/chat as the base URL - test appends /v1/chat/completions etc
+          CHAT_API_DIRECT_URL: https://shml-platform.tail38b60a.ts.net/api/chat
           # Reuse existing FusionAuth CI/CD keys
           CHAT_API_TEST_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
           CHAT_API_ADMIN_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
@@ -218,13 +219,195 @@ jobs:
           echo "⚠️ Live Chat API tests skipped - API not accessible from CI"
           echo ""
           echo "To enable live tests, ensure these GitHub secrets are set:"
-          echo "  - CHAT_API_URL: Your Chat API endpoint"
+          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://shml-platform.tail38b60a.ts.net/api/chat)"
           echo "  - FUSIONAUTH_DEVELOPER_KEY: CI/CD Developer key from FusionAuth"
           echo "  - FUSIONAUTH_API_KEY: CI/CD Superkey from FusionAuth (admin)"
           echo "  - FUSIONAUTH_VIEWER_KEY: CI/CD Viewer key from FusionAuth"
           echo ""
           echo "For now, run live tests locally with:"
           echo "  pytest tests/integration/test_chat_api_live.py -v -m integration"
+
+  # ============================================================================
+  # Live Full Stack Tests - MLflow, Ray, Grafana, Prometheus via Tailscale Funnel
+  # ============================================================================
+  full-stack-live-tests:
+    name: Full Stack Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest requests
+
+      - name: Check if Tailscale Funnel is accessible
+        id: check_funnel
+        env:
+          PUBLIC_DOMAIN: ${{ secrets.PUBLIC_DOMAIN }}
+        run: |
+          DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+
+          echo "Testing Tailscale Funnel at: https://$DOMAIN"
+          if curl -sf -o /dev/null -w "%{http_code}" "https://$DOMAIN/mlflow/health" | grep -qE "200|302|401|403"; then
+            echo "Tailscale Funnel is accessible!"
+            echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tailscale Funnel not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Full Stack live tests (External via Funnel)
+        if: steps.check_funnel.outputs.skip != 'true'
+        env:
+          PUBLIC_DOMAIN: ${{ steps.check_funnel.outputs.domain }}
+          # We don't have LAN access from CI, so skip LAN tests
+          SKIP_LAN_TESTS: "true"
+        run: |
+          pytest tests/integration/test_full_stack.py \
+            -v \
+            --tb=short \
+            -m "external or security" \
+            -x  # Stop on first failure
+
+      - name: Test MLflow health endpoint
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing MLflow health..."
+          curl -sf "https://$DOMAIN/mlflow/health" && echo "✓ MLflow health OK"
+
+      - name: Test Ray Dashboard protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Ray Dashboard protection..."
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://$DOMAIN/ray/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Ray Dashboard properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Ray Dashboard returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Test Grafana protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Grafana protection..."
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://$DOMAIN/grafana/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Grafana properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Grafana returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Test Prometheus protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Prometheus protection..."
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://$DOMAIN/prometheus/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Prometheus properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Prometheus returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Live tests skipped
+        if: steps.check_funnel.outputs.skip == 'true'
+        run: |
+          echo "⚠️ Full Stack live tests skipped - Tailscale Funnel not accessible from CI"
+          echo ""
+          echo "These tests verify that MLflow, Ray, Grafana, and Prometheus are:"
+          echo "  1. Accessible via Tailscale Funnel"
+          echo "  2. Properly protected with OAuth2 authentication"
+          echo ""
+          echo "To enable, ensure your server's Tailscale Funnel is running."
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/integration/test_full_stack.py -v -m external"
+
+  # ============================================================================
+  # FusionAuth SDK Live Tests - Test Platform SDK against live FusionAuth
+  # ============================================================================
+  fusionauth-live-tests:
+    name: FusionAuth SDK Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available and marked ready
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready-to-merge'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest httpx pydantic tenacity python-dotenv requests
+
+      - name: Check if FusionAuth is accessible
+        id: check_fusionauth
+        env:
+          FUSIONAUTH_URL: ${{ secrets.FUSIONAUTH_URL }}
+          FUSIONAUTH_API_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+        run: |
+          if [ -z "$FUSIONAUTH_API_KEY" ]; then
+            echo "FUSIONAUTH_API_KEY not set - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          URL="${FUSIONAUTH_URL:-https://shml-platform.tail38b60a.ts.net/fusionauth}"
+
+          echo "Testing FusionAuth at: $URL"
+          if curl -sf -H "Authorization: $FUSIONAUTH_API_KEY" "$URL/api/status" > /dev/null 2>&1; then
+            echo "FusionAuth is accessible!"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "FusionAuth not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run FusionAuth SDK integration tests
+        if: steps.check_fusionauth.outputs.skip != 'true'
+        env:
+          FUSIONAUTH_URL: ${{ secrets.FUSIONAUTH_URL }}
+          FUSIONAUTH_API_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+        run: |
+          pytest tests/platform_sdk/test_integration.py \
+            -v \
+            --tb=short
+
+      - name: Live tests skipped
+        if: steps.check_fusionauth.outputs.skip == 'true'
+        run: |
+          echo "⚠️ FusionAuth SDK live tests skipped - FusionAuth not accessible from CI"
+          echo ""
+          echo "To enable live tests, ensure these GitHub secrets are set:"
+          echo "  - FUSIONAUTH_URL: Your FusionAuth endpoint"
+          echo "  - FUSIONAUTH_API_KEY: Admin API key"
+          echo ""
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/platform_sdk/test_integration.py -v"
 
   # Validate Docker builds
   docker-build:

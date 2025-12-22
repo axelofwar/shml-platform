@@ -1,0 +1,4 @@
+# Router package dependencies
+httpx>=0.25.0
+textual>=0.47.0
+textual-dev>=1.0.0  # For development/debugging

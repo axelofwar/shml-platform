@@ -479,27 +479,37 @@ docker-compose.api.yml           # Ray Compute API (1 container)
 
 ### Service Management Commands
 
+**✅ ALWAYS use start_all_safe.sh from project root:**
 ```bash
-# Start authentication stack
-docker-compose -f docker-compose.auth.yml up -d
+# Navigate to project root first
+cd /home/axelofwar/Projects/shml-platform
 
-# Start monitoring stack
-docker-compose -f docker-compose.observability.yml up -d
+# Restart Ray services (CORRECT METHOD)
+./start_all_safe.sh restart ray
 
-# Start API server
-docker-compose -f docker-compose.api.yml up -d
+# Start Ray services
+./start_all_safe.sh start ray
 
-# Check all services
-docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+# Stop Ray services
+./start_all_safe.sh stop ray
 
-# View logs
-docker-compose -f docker-compose.api.yml logs -f ray-compute-api
-docker logs authentik-server --tail 50
-docker logs ray-prometheus --tail 50
+# Check platform status
+./start_all_safe.sh status
+```
 
-# Restart specific service
-docker restart ray-compute-api
-docker restart authentik-server
+**❌ NEVER use direct docker compose commands:**
+```bash
+# ❌ WRONG - skips migrations, wrong order, orphaned containers
+docker-compose -f ray_compute/docker-compose.yml restart ray-compute-api
+docker compose up -d --build ray-compute-ui
+docker-compose down
+```
+
+**View logs (read-only, always safe):**
+```bash
+docker logs ray-compute-api -f
+docker logs ray-compute-ui -f
+docker logs ray-head -f
 ```
 
 ### Container Networking

@@ -1,0 +1,32 @@
+# OpenCode Configuration for SHML Platform
+# Auto-generated: 2025-12-18
+
+# Default model for coding tasks
+defaultModel = "local-coding/nemotron-coding"
+
+# Nemotron-3-Nano-30B-A3B (Local Coding Model)
+[providers.local-coding]
+type = "openai"
+baseURL = "http://localhost:8010/v1"
+
+[[providers.local-coding.models]]
+id = "nemotron-coding"
+name = "Nemotron-3-Nano-30B-A3B (Local)"
+maxTokens = 32768
+contextWindow = 131072
+
+# Qwen3-VL-8B (Local Vision Model)
+[providers.local-vision]
+type = "openai"
+baseURL = "http://localhost:8000/api/llm/v1"
+
+[[providers.local-vision.models]]
+id = "qwen3-vl"
+name = "Qwen3-VL-8B (Vision)"
+supportsAttachments = true
+
+# MCP Tools Integration
+[mcp.shml-platform]
+type = "http"
+url = "http://localhost:8000/mcp"
+timeout = 120000

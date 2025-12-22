@@ -1,351 +1,321 @@
 # Ray Compute Platform
 
-**Status:** ⏸️ Infrastructure Ready, App Development Pending  
-OAuth-enabled GPU platform with Ray 2.9.0-gpu, FastAPI, Authentik, Next.js Web UI
+**Status:** ✅ Production Ready  
+OAuth-enabled GPU platform with Ray 2.9.0-gpu, FastAPI, FusionAuth, Next.js Web UI
 
 ---
 
 ## Quick Start
 
-**Note:** Services not yet deployed. Infrastructure & Web UI ready.
+### Access URLs
+
+| Service | URL | Auth Required |
+|---------|-----|---------------|
+| Ray Compute UI | https://shml-platform.tail38b60a.ts.net/ray/ui | OAuth (developer+) |
+| Ray Dashboard | https://shml-platform.tail38b60a.ts.net/ray/ | OAuth (developer+) |
+| Ray API | https://shml-platform.tail38b60a.ts.net/api/ray | API Key or OAuth |
+| Grafana | https://shml-platform.tail38b60a.ts.net/grafana | OAuth (developer+) |
 
 ### Prerequisites
 
 ```bash
 # Docker 24.0+, Compose 2.20+
-docker --version
-docker compose version
+docker --version && docker compose version
 
 # NVIDIA GPU drivers
 nvidia-smi
 
-# Join ml-platform network
-docker network inspect ml-platform
+# Platform network
+docker network inspect shml-platform
 ```
 
-### When Deployed
+### Start Services
 
 ```bash
 cd ray_compute
 
-# Start all
-../start_all.sh  # Or stack-specific: ./start.sh
+# Start with safe startup (recommended)
+../start_all_safe.sh start ray
 
-# Access
-# Dashboard: http://localhost/ray/
-# API: http://localhost/api/compute/
-# Web UI: http://localhost/ray-ui/
+# Check status
+../check_platform_status.sh
 ```
 
 ---
 
-## What's Included
+## 🔐 Authentication
 
-**Services (Infrastructure Ready):**
-- Ray 2.9.0-gpu head node (NVIDIA MPS fractional GPU sharing)
-- FastAPI API server (auth, scheduler, queue, notifications)
-- PostgreSQL 15 (8 tables: users, jobs, quotas, artifacts, audit)
-- Authentik OAuth (3 user tiers: admin, premium, user)
-- Next.js Web UI (production-ready, not deployed)
-- Grafana + Prometheus + Loki (monitoring stack)
-- Redis (shared cache, DB 1)
+### API Keys (Recommended for Scripts)
 
-**Network:**
-- Traefik gateway on port 80/8090
-- Path routing: /ray/*, /api/compute/*, /ray-ui/*
-- Shared: ml-platform network with MLflow
+API keys bypass OAuth and provide direct API access. Get keys from:
 
-**GPU:**
-- NVIDIA MPS enabled (fractional allocation)
-- Per-user quotas (admin: unlimited, premium: full, user: 0.5 max)
+1. **Admin keys**: \`ray_compute/.env\` → \`CICD_ADMIN_KEY\`, \`CICD_DEVELOPER_KEY\`
+2. **User keys**: Ray Compute UI → Settings → Generate API Key
+
+```bash
+# Set environment variable
+export SHML_API_KEY='your-api-key-here'
+
+# Or pass directly
+python submit_face_detection_job.py --api-key 'your-key'
+```
+
+### OAuth (Browser Sessions)
+
+OAuth is handled automatically when accessing UIs via browser. Requires:
+- FusionAuth account with \`developer\` role or higher
+- Active session cookie
+
+### Checking Auth Status
+
+```bash
+# Via API
+curl -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/users/me
+
+# Response
+{
+  "user_id": "...",
+  "username": "cicd-admin",
+  "email": "cicd-admin@ray-compute.local",
+  "role": "admin"
+}
+```
 
 ---
 
-## MLflow Integration
+## 📡 Health Checks
 
-**Internal (Ray → MLflow):**
+### Quick Health Check
+
+```bash
+# All-in-one platform health
+curl https://shml-platform.tail38b60a.ts.net/api/ray/health
+
+# Expected response
+{
+  "status": "ok",
+  "database": "healthy",
+  "mlflow": "healthy",
+  "ray": "healthy",
+  "timestamp": "2025-12-11T..."
+}
+```
+
+### Service-Specific Health
+
+```bash
+# Ray Compute API
+curl https://shml-platform.tail38b60a.ts.net/api/ray/health
+
+# MLflow
+curl https://shml-platform.tail38b60a.ts.net/mlflow/health
+
+# Direct container health (local only)
+curl http://172.30.0.25:8000/health   # Ray API
+curl http://172.30.0.23:8265/api/version  # Ray Head
+```
+
+---
+
+## 🚀 Job Submission
+
+### Using the SDK (Recommended)
+
+```bash
+cd ray_compute/jobs
+
+# Dry run (validate without submitting)
+python submit_face_detection_job.py --dry-run --api-key \$SHML_API_KEY
+
+# Submit training job (works remotely via Tailscale)
+python submit_face_detection_job.py \\
+  --api-key \$SHML_API_KEY \\
+  --epochs 100 \\
+  --batch-size 8 \\
+  --curriculum \\
+  --sapo \\
+  --hard-mining
+
+# Submit from local server (faster, direct container access)
+python submit_face_detection_job.py --local --api-key \$SHML_API_KEY
+
+# Resume from checkpoint
+python submit_face_detection_job.py --resume-phase1 --api-key \$SHML_API_KEY
+```
+
+### Using curl (Direct API)
+
+```bash
+# Submit a simple job
+curl -X POST https://shml-platform.tail38b60a.ts.net/api/ray/jobs \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: \$SHML_API_KEY" \\
+  -d '{
+    "name": "my-training-job",
+    "job_type": "training",
+    "code": "print(\"Hello from Ray!\")",
+    "resources": {"num_cpus": 4, "num_gpus": 1, "memory_gb": 16}
+  }'
+```
+
+### Using Python SDK Directly
 
 ```python
-import mlflow
+from shml.client import Client
 
-# Use Docker DNS
-mlflow.set_tracking_uri("http://mlflow-nginx:80")
+client = Client(api_key="your-api-key")
 
-@ray.remote
-def train_model(data):
-    with mlflow.start_run():
-        model = train(data)
-        mlflow.log_metric("accuracy", 0.95)
-    return model
-```
+# Submit a job
+response = client.submit(
+    name="my-job",
+    code="print('Hello!')",
+    gpu=1.0,
+    cpu=4,
+    memory_gb=16,
+)
+print(f"Job ID: {response.job_id}")
 
-**External (Client → MLflow):**
-
-```python
-# Use LAN/VPN IP
-mlflow.set_tracking_uri("http://localhost/mlflow/")
-```
-
-**Full Guide:** [/Projects/INTEGRATION_GUIDE.md](/Projects/INTEGRATION_GUIDE.md)
-
-**Default Credentials** (change immediately!):
-- Username: `admin`
-- Password: `admin`
-
----
-
-## 📖 Documentation
-
-### User Guides
-- **[Operations Guide](docs/OPERATIONS.md)** - Start/stop services, troubleshooting, daily operations
----
-
-## OAuth Setup
-
-**Authentik Configuration:**
-- Client ID: ray-compute-api
-- User Groups: admins (unlimited), premium (10 jobs, full GPU), users (3 jobs, 0.5 GPU)
-- Redirect URIs: http://${TAILSCALE_IP}:3002/api/auth/callback/authentik
-
-**Environment (.env):**
-```bash
-AUTHENTIK_CLIENT_ID=ray-compute-api
-AUTHENTIK_CLIENT_SECRET=<secret>
-NEXTAUTH_SECRET=<secret>
-NEXTAUTH_URL=http://${TAILSCALE_IP}:3002
-NEXT_PUBLIC_API_URL=http://${TAILSCALE_IP}:8000
-```
-
-**Full Guide:** docs/OAUTH_SETUP_GUIDE.md
-
----
-
-## Access (When Deployed)
-
-### Local (on server)
-
-```bash
-curl http://localhost/ray/
-curl http://localhost/api/compute/health
-```
-
-### LAN (${SERVER_IP})
-
-```bash
-curl http://localhost/ray/
-curl http://localhost/api/compute/health
-```
-
-### VPN (Tailscale: ${TAILSCALE_IP})
-
-```bash
-curl http://${TAILSCALE_IP}/ray/
-curl http://${TAILSCALE_IP}/api/compute/health
+# Check status
+job = client.status(response.job_id)
+print(f"Status: {job.status}")
 ```
 
 ---
 
-## Management
+## 📋 Job Management
 
-### Service Control
+### Check Job Status
 
 ```bash
-# Status
-docker compose -f docker-compose.ray.yml ps
+# Via SDK script
+python submit_face_detection_job.py --status job-abc123 --api-key \$SHML_API_KEY
 
-# Logs
-docker logs ray-head --tail 50
-docker logs ray-compute-api --tail 50
+# Via curl
+curl -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123
 
-# Restart
-docker compose -f docker-compose.ray.yml restart
+# Via Ray CLI (local only)
+docker exec ray-head ray job status job-abc123
 ```
 
-### Database
+### Get Job Logs
 
 ```bash
-# CLI access
-PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -p 5433 -U ray_compute -d ray_compute
+# Via SDK script
+python submit_face_detection_job.py --logs job-abc123 --api-key \$SHML_API_KEY
 
-# Check tables
-psql -h localhost -p 5433 -U ray_compute -d ray_compute -c '\dt'
+# Via curl
+curl -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123/logs
 
-# Query jobs
-psql -h localhost -p 5433 -U ray_compute -d ray_compute -c 'SELECT * FROM jobs LIMIT 10;'
+# Via Ray CLI (local only, real-time)
+docker exec ray-head ray job logs job-abc123 --follow
+
+# Direct log file (local only)
+docker exec ray-head tail -f /tmp/ray/session_latest/logs/job-driver-job-abc123.log
+```
+
+### List Recent Jobs
+
+```bash
+# Via SDK script
+python submit_face_detection_job.py --list --api-key \$SHML_API_KEY
+
+# Via curl
+curl -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/jobs
+
+# Via Ray CLI (local only)
+docker exec ray-head ray job list
+```
+
+### Cancel a Job
+
+```bash
+# Via curl
+curl -X DELETE -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123
+
+# Via Ray CLI (local only)
+docker exec ray-head ray job stop job-abc123
+```
+
+---
+
+## 📊 Monitoring
+
+### Grafana Dashboards
+
+- **Face Detection Training**: https://shml-platform.tail38b60a.ts.net/grafana/d/face-detection-training
+- **Ray Cluster**: https://shml-platform.tail38b60a.ts.net/grafana/d/ray-cluster
+
+### Container Logs
+
+```bash
+# Ray Compute API
+docker logs ray-compute-api -f --tail 100
+
+# Ray Head Node
+docker logs ray-head -f --tail 100
+
+# Ray Compute UI
+docker logs ray-compute-ui -f --tail 100
 ```
 
 ### GPU Monitoring
 
 ```bash
-# Check GPU
+# Check GPU utilization
 nvidia-smi
 
-# Check MPS
-nvidia-cuda-mps-control -d
+# Watch GPU usage
+watch -n 1 nvidia-smi
 
-# Container GPU access
-docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
+# GPU inside Ray container
+docker exec ray-head nvidia-smi
 ```
 
 ---
 
-## Troubleshooting
+## ��️ Troubleshooting
 
-### Ray Services Won't Start
+### Ray UI 404 After Login
+
+1. Clear browser cookies
+2. Try incognito window
+3. Check Traefik logs: \`docker logs shml-traefik 2>&1 | grep ray/ui\`
+
+### Job Stuck in PENDING
 
 ```bash
-# Check network
-docker network inspect ml-platform
+# Check Ray cluster status
+docker exec ray-head ray status
 
-# Check GPU
-nvidia-smi
-docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi
-
-# Install nvidia-container-toolkit if needed
-sudo apt install -y nvidia-container-toolkit
-sudo systemctl restart docker
+# Check available resources
+docker exec ray-head ray resources
 ```
 
-### OAuth Login Failed
+### Authentication Failures
 
 ```bash
-# Check Authentik
-docker logs authentik-server --tail 50
+# Test API key
+curl -H "X-API-Key: \$SHML_API_KEY" \\
+  https://shml-platform.tail38b60a.ts.net/api/ray/users/me
 
-# Verify redirect URIs
-docker exec authentik-postgres psql -U authentik -d authentik \
-  -c "SELECT _redirect_uris FROM authentik_providers_oauth2_oauth2provider WHERE client_id='ray-compute-api';"
-
-# Restart
-docker restart authentik-server ray-compute-ui
-```
-
-### API 500 Errors
-
-```bash
-# Check logs
-docker logs ray-compute-api --tail 100
-
-# Check Ray connection
-docker exec ray-compute-api curl http://ray-head:8265/api/version
-
-# Check MLflow connection
-docker exec ray-compute-api curl http://mlflow-nginx:80/health
-```
-
-**Full Guide:** [/Projects/TROUBLESHOOTING.md](/Projects/TROUBLESHOOTING.md)
-
----
-
-## Testing (Web UI)
-
-### Unit Tests
-
-```bash
-cd web_ui
-npm test
-```
-
-### E2E Tests
-
-```bash
-npm run test:e2e
-```
-
-### Coverage
-
-```bash
-npm run test:ci --coverage
+# Check OAuth2-proxy logs
+docker logs oauth2-proxy 2>&1 | tail -50
 ```
 
 ---
 
-## Documentation
+## 📚 Documentation
 
-**Core Docs:**
-- [/Projects/ARCHITECTURE.md](/Projects/ARCHITECTURE.md) - Tool decisions, GPU sharing (NVIDIA MPS)
-- [/Projects/API_REFERENCE.md](/Projects/API_REFERENCE.md) - Ray Jobs API + Ray Compute API specs
-- [/Projects/INTEGRATION_GUIDE.md](/Projects/INTEGRATION_GUIDE.md) - MLflow+Ray integration
-- [/Projects/CURRENT_DEPLOYMENT.md](/Projects/CURRENT_DEPLOYMENT.md) - Deployment status
-- [/Projects/TROUBLESHOOTING.md](/Projects/TROUBLESHOOTING.md) - Common issues
-
-**Ray Docs:**
-- docs/OAUTH_SETUP_GUIDE.md - Authentik configuration
-- LESSONS_LEARNED.md - Debugging insights (OAuth, React, Tailwind)
-- CONTRIBUTING.md - Development guidelines
-- INFRASTRUCTURE_STATUS.md - Service topology
-- REPOSITORY_STATUS.md - Testing & CI/CD
+- **[ARCHITECTURE.md](../ARCHITECTURE.md)** - System design
+- **[API_REFERENCE.md](../API_REFERENCE.md)** - Full API documentation  
+- **[INTEGRATION_GUIDE.md](../INTEGRATION_GUIDE.md)** - MLflow + Ray integration
+- **[TROUBLESHOOTING.md](../TROUBLESHOOTING.md)** - Common issues & solutions
 
 ---
 
-## Development (Web UI)
-
-### Local Setup
-
-```bash
-cd web_ui
-npm install
-npm run dev
-# Visit: http://localhost:3000
-```
-
-### Environment (.env.local)
-
-```bash
-NEXTAUTH_URL=http://localhost:3000
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_AUTHENTIK_URL=http://localhost:9000
-AUTHENTIK_CLIENT_ID=ray-compute-api
-AUTHENTIK_CLIENT_SECRET=<secret>
-NEXTAUTH_SECRET=<secret>
-```
-
----
-
-## Pending Development
-
-**API Server:**
-- [ ] auth.py - OAuth middleware, session management
-- [ ] scheduler.py - Fractional GPU bin-packing
-- [ ] queue.py - Redis priority queue
-- [ ] notifications.py - Apprise alerts
-
-**Ray Cluster:**
-- [ ] Deploy Ray head node
-- [ ] Configure NVIDIA MPS
-- [ ] Job submission endpoint
-- [ ] Resource monitoring
-
-**Web UI:**
-- [ ] Login page (OAuth button)
-- [ ] Job submission form
-- [ ] Job details page (logs, artifacts)
-- [ ] Real-time updates (WebSocket/polling)
-
----
-
-## Status
-
-**Version:** Ray 2.9.0-gpu  
-**Database:** PostgreSQL 15 (schema ready)  
-**Network:** ml-platform (shared with MLflow)  
-**Gateway:** Traefik v2.10  
-**OAuth:** Authentik (infrastructure ready)  
-**Web UI:** Next.js 14 (production-ready, not deployed)  
-**Deployment:** ⏸️ Infrastructure Ready, App Development Pending  
-**Last Updated:** 2025-11-22
-
-**See:** [/Projects/CURRENT_DEPLOYMENT.md](/Projects/CURRENT_DEPLOYMENT.md) for full status
-1. Verify `NEXTAUTH_URL` matches your public URL
-2. Check Authentik redirect URI: `http://YOUR_IP:3002/api/auth/callback/authentik`
-3. Ensure `issuer` and `jwks_endpoint` are configured
-4. Check Docker networking (internal vs public URLs)
-
-See [OAuth Setup Guide](docs/OAUTH_SETUP_GUIDE.md) for details.
-
-### Styles Not Loading
-
-**Symptom**: Dashboard looks unstyled
-
-**Solution**:
-1. Verify `postcss.config.js` exists
+**Last Updated:** 2025-12-11

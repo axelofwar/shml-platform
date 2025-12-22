@@ -12,6 +12,7 @@ Provides:
 import os
 import uuid
 import time
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional, Union, Dict, Any
@@ -242,7 +243,175 @@ async def force_reclaim():
     """Force load the model (admin endpoint)."""
     await model_manager._load_model()
     model_manager.is_yielded = False
+    model_manager.is_idle = False
     return {"status": "model loaded", "mode": model_manager.model_mode}
+
+
+@app.post("/admin/wake")
+async def force_wake():
+    """Wake up the model from idle state (admin endpoint)."""
+    if not model_manager.is_idle:
+        return {
+            "status": "already_awake",
+            "mode": model_manager.model_mode,
+            "is_loaded": model_manager.is_loaded,
+        }
+
+    result = await model_manager.wake_up()
+    return {
+        "status": "waking_up" if result else "wake_failed",
+        "mode": model_manager.model_mode,
+        "is_loaded": model_manager.is_loaded,
+    }
+
+
+@app.post("/admin/sleep")
+async def force_sleep():
+    """Force the model into idle/sleep state (admin endpoint)."""
+    if model_manager.is_idle:
+        return {"status": "already_sleeping", "mode": model_manager.model_mode}
+
+    if model_manager.is_yielded:
+        return {
+            "status": "cannot_sleep_while_yielded",
+            "mode": model_manager.model_mode,
+        }
+
+    await model_manager._unload_model()
+    model_manager.is_idle = True
+    return {"status": "model sleeping", "mode": model_manager.model_mode}
+
+
+# =============================================================================
+# Training Signal Endpoints (for external training scripts)
+# =============================================================================
+
+
+class TrainingSignalRequest(BaseModel):
+    """Request to signal training start/stop."""
+
+    job_id: str
+    gpus: Optional[List[int]] = None
+    priority: int = 5
+    metadata: Optional[Dict[str, Any]] = None
+    wait_for_yield: bool = True  # Block until GPU is freed
+    timeout_seconds: int = 30  # Max wait time for yield
+
+
+@app.post("/training/start")
+async def signal_training_start(request: TrainingSignalRequest):
+    """Signal that a training job is starting.
+
+    Training scripts should call this endpoint BEFORE initializing CUDA
+    to ensure the inference model yields GPU resources first.
+
+    Args:
+        wait_for_yield: If True (default), blocks until model is fully unloaded
+        timeout_seconds: Maximum time to wait for yield (default 30s)
+
+    Example:
+        curl -X POST http://localhost:8000/training/start \\
+            -H "Content-Type: application/json" \\
+            -d '{"job_id": "face-detection-001", "gpus": [0], "wait_for_yield": true}'
+    """
+    # If training detection is enabled, use the detector
+    if model_manager._training_detector is not None:
+        receiver = model_manager._training_detector.http_receiver
+        await receiver.signal_start(
+            job_id=request.job_id,
+            gpus=request.gpus,
+            priority=request.priority,
+            metadata=request.metadata or {},
+        )
+
+    # Force yield immediately if requested GPU is being used
+    target_gpu = request.gpus[0] if request.gpus else 0
+    if target_gpu == 0 and model_manager.is_loaded and not model_manager.is_yielded:
+        logger.info(f"Training job {request.job_id} requesting GPU 0 - forcing yield")
+        await model_manager._unload_model()
+        model_manager.is_yielded = True
+
+    # Wait for yield to complete if requested
+    if request.wait_for_yield:
+        start_time = asyncio.get_event_loop().time()
+        while model_manager.is_loaded:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > request.timeout_seconds:
+                return {
+                    "status": "timeout",
+                    "job_id": request.job_id,
+                    "model_yielded": model_manager.is_yielded,
+                    "model_loaded": model_manager.is_loaded,
+                    "message": f"Yield did not complete within {request.timeout_seconds}s",
+                }
+            await asyncio.sleep(0.5)
+
+        # Double-check GPU memory is freed
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    return {
+        "status": "ready",
+        "job_id": request.job_id,
+        "model_yielded": model_manager.is_yielded,
+        "model_loaded": model_manager.is_loaded,
+        "message": "GPU resources released. Training can proceed.",
+    }
+
+
+@app.post("/training/stop")
+async def signal_training_stop(job_id: str):
+    """Signal that a training job has completed.
+
+    Call this when training finishes to allow the inference model
+    to reclaim GPU resources.
+
+    Example:
+        curl -X POST "http://localhost:8000/training/stop?job_id=pii-pro-training-001"
+    """
+    if model_manager._training_detector is None:
+        return {"status": "error", "message": "Training detection not enabled"}
+
+    receiver = model_manager._training_detector.http_receiver
+    await receiver.signal_stop(job_id)
+
+    return {
+        "status": "acknowledged",
+        "job_id": job_id,
+        "message": "Training complete signal received. Model will reclaim GPU soon.",
+    }
+
+
+@app.get("/training/status")
+async def get_training_status():
+    """Get current training detection status.
+
+    Shows active training signals from all detection sources.
+    """
+    if model_manager._training_detector is None:
+        return {"detection_enabled": False, "message": "Training detection not enabled"}
+
+    detector_status = model_manager._training_detector.get_status()
+    current_signal = model_manager._current_training_signal
+
+    return {
+        "detection_enabled": True,
+        "model_yielded": model_manager.is_yielded,
+        "active_detectors": detector_status["detectors"],
+        "http_active_jobs": detector_status["http_active_jobs"],
+        "current_signal": (
+            {
+                "source": current_signal.source.value if current_signal else None,
+                "job_id": current_signal.job_id if current_signal else None,
+                "priority": current_signal.priority if current_signal else None,
+            }
+            if current_signal
+            else None
+        ),
+    }
 
 
 # =============================================================================
@@ -594,6 +763,166 @@ async def reject_all_changes(
 
     changes = await change_staging.reject_all(user_id, session_id, comment)
     return {"status": "rejected", "count": len(changes)}
+
+
+# =============================================================================
+# Routing API Endpoints (Dynamic MPS Control)
+# =============================================================================
+
+
+class RouteAnalyzeRequest(BaseModel):
+    """Request to analyze a potential request's routing."""
+
+    messages: List[Dict[str, Any]]
+    max_tokens: Optional[int] = None
+    model_selection: Optional[str] = None  # "primary", "fallback", "auto"
+    user_role: str = "developer"
+    conversation_id: Optional[str] = None
+    force_primary: bool = False
+
+
+@app.post("/routing/analyze")
+async def analyze_routing(request: RouteAnalyzeRequest):
+    """Analyze how a request would be routed without executing it.
+
+    This endpoint implements the sophisticated routing logic from DYNAMIC_MPS_DESIGN.md [NAV:ROUTER]:
+    - RAG availability check (score > 0.75 → fallback)
+    - History relevance check
+    - Prompt compression potential
+    - Complexity scoring
+    - Skill/tool detection for agentic tasks
+
+    Example:
+        curl -X POST http://localhost:8000/routing/analyze \\
+            -H "Content-Type: application/json" \\
+            -d '{"messages": [{"role": "user", "content": "Refactor the entire codebase"}], "user_role": "developer"}'
+    """
+    # Check if dynamic routing is enabled
+    if (
+        not hasattr(model_manager, "_training_detector")
+        or model_manager._training_detector is None
+    ):
+        return {
+            "routing_enabled": False,
+            "message": "Advanced routing not enabled. Using default routing.",
+            "recommended_model": model_manager.model_mode,
+        }
+
+    # For now, return a simplified analysis
+    # Full integration with DynamicModelManager will happen in next iteration
+    from .request_router import RequestRouter, RoutingConfig, UserRole
+
+    router = RequestRouter(config=RoutingConfig())
+
+    # Check training state
+    training_active = model_manager.is_yielded
+    router.set_training_active(training_active)
+
+    try:
+        role = UserRole(request.user_role)
+    except ValueError:
+        role = UserRole.DEVELOPER
+
+    result = router.analyze_request(
+        messages=request.messages,
+        max_tokens=request.max_tokens,
+        model_selection=request.model_selection,
+        user_role=role,
+        conversation_id=request.conversation_id,
+        force_primary=request.force_primary,
+    )
+
+    return {
+        "routing_enabled": True,
+        "training_active": training_active,
+        "result": result.to_dict(),
+        "ui_display": result.to_ui_response(),
+    }
+
+
+@app.get("/routing/config")
+async def get_routing_config():
+    """Get current routing configuration."""
+    return {
+        "context_threshold": int(os.getenv("ROUTING_CONTEXT_THRESHOLD", "4096")),
+        "max_tokens_threshold": int(os.getenv("ROUTING_MAX_TOKENS_THRESHOLD", "2048")),
+        "queue_timeout_seconds": float(os.getenv("QUEUE_TIMEOUT_SECONDS", "30.0")),
+        "checkpoint_trigger_threshold": int(
+            os.getenv("CHECKPOINT_TRIGGER_THRESHOLD", "3")
+        ),
+        "training_active": model_manager.is_yielded,
+        "model_mode": model_manager.model_mode,
+    }
+
+
+@app.get("/routing/models")
+async def get_model_availability():
+    """Get model availability for UI model selector.
+
+    During training:
+    - primary: HIDDEN (not selectable in UI)
+    - auto: Available, but routes to fallback unless truly necessary
+    - fallback: Always available
+
+    This implements the UI requirements from DYNAMIC_MPS_DESIGN.md [NAV:ROUTER].
+    """
+    training_active = model_manager.is_yielded
+
+    return {
+        "models": {
+            "primary": {
+                "available": not training_active,
+                "selectable": not training_active,
+                "reason": "training_active" if training_active else None,
+                "display_name": (
+                    "Primary (32B)" if not training_active else None
+                ),  # Hidden during training
+            },
+            "auto": {
+                "available": True,
+                "selectable": True,
+                "behavior": (
+                    "fallback_preferred" if training_active else "smart_routing"
+                ),
+                "display_name": "Auto (Smart Routing)",
+            },
+            "fallback": {
+                "available": True,
+                "selectable": True,
+                "reason": None,
+                "display_name": "Fallback (3B)",
+            },
+        },
+        "training_active": training_active,
+        "queue_length": 0,  # Will be populated by DynamicModelManager
+        "recommended": "auto",
+    }
+
+
+# =============================================================================
+# Queue API Endpoints
+# =============================================================================
+
+
+@app.get("/queue/status")
+async def get_queue_status():
+    """Get status of the request queue for primary model.
+
+    During training, requests that need primary are queued.
+    This endpoint shows queue length, wait times, and trigger status.
+    """
+    # Simplified for now - will be enhanced with DynamicModelManager
+    return {
+        "queue_enabled": os.getenv("QUEUE_ENABLED", "true").lower() == "true",
+        "queue_length": 0,
+        "oldest_request_age_seconds": None,
+        "estimated_wait_time_seconds": None,
+        "will_trigger_checkpoint": False,
+        "checkpoint_trigger_threshold": int(
+            os.getenv("CHECKPOINT_TRIGGER_THRESHOLD", "3")
+        ),
+        "training_active": model_manager.is_yielded,
+    }
 
 
 # =============================================================================

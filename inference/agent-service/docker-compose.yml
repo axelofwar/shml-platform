@@ -1,0 +1,131 @@
+# Agent Service - ACE Pattern Implementation
+# Integrates with coding models (Qwen2.5-Coder) for G-R-C workflow
+
+services:
+  agent-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${PLATFORM_PREFIX:-shml}-agent-service
+    restart: unless-stopped
+    environment:
+      # Database connection (shml-postgres)
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+
+      # Gateway URLs (for LLM calls) - Use Nemotron-3 for agentic coding
+      - GATEWAY_URL=http://nemotron-coding:8000
+      - CODING_MODEL_URL=http://nemotron-coding:8000
+      # Fallback to coding-model-fallback if needed
+      - FALLBACK_MODEL_URL=http://coding-model-fallback:8000
+
+      # Redis (for WebSocket pub/sub if needed)
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=3
+
+      # ACE Pattern settings
+      - MAX_AGENT_ITERATIONS=15
+      - AGENT_THINKING_TIMEOUT=300
+      - RUBRIC_THRESHOLD=0.7
+
+      # Embeddings (CPU mode to avoid GPU conflicts)
+      - TORCH_DEVICE=cpu
+
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Docker socket for SandboxSkill (elevated-developer/admin only)
+      # Security: Agent service enforces role-based access before container creation
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - shml-platform
+
+    secrets:
+      - shared_db_password
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    labels:
+      - "traefik.enable=true"
+
+      # Router 1: /api/agent/* - Protected ACE workflow (web UI, requires OAuth)
+      - "traefik.http.routers.agent-service.rule=PathPrefix(`/api/agent`)"
+      - "traefik.http.routers.agent-service.priority=2147483647"
+      - "traefik.http.routers.agent-service.entrypoints=web,websecure"
+      - "traefik.http.services.agent-service.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.agent-strip.stripprefix.prefixes=/api/agent"
+      # SECURITY: Require FusionAuth authentication for ACE workflow
+      - "traefik.http.routers.agent-service.middlewares=oauth2-errors,oauth2-auth,agent-strip"
+
+      # Router 2: /cli/* - CLI/terminal access (no OAuth, DEV_MODE handles auth)
+      # Allows SHML CLI tool to access agent service without browser auth
+      - "traefik.http.routers.agent-cli.rule=PathPrefix(`/cli`)"
+      - "traefik.http.routers.agent-cli.priority=2147483647"
+      - "traefik.http.routers.agent-cli.entrypoints=web,websecure"
+      - "traefik.http.routers.agent-cli.service=agent-service"
+      - "traefik.http.middlewares.agent-cli-strip.stripprefix.prefixes=/cli"
+      - "traefik.http.routers.agent-cli.middlewares=agent-cli-strip"
+      # NOTE: No OAuth - CLI tool uses DEV_MODE or API key auth internally
+
+      # Router 3: /v1/chat/* - OpenAI-compatible endpoint (Cursor/IDE, no OAuth)
+      # Bypasses OAuth for IDE integrations (Continue.dev, Cursor, etc.)
+      - "traefik.http.routers.agent-openai.rule=PathPrefix(`/v1/chat`)"
+      - "traefik.http.routers.agent-openai.priority=2147483646"
+      - "traefik.http.routers.agent-openai.entrypoints=web,websecure"
+      - "traefik.http.routers.agent-openai.service=agent-service"
+      # NOTE: No OAuth middleware - direct access for IDE tools
+
+      # Router 3: /ws-test/* - Unprotected WebSocket test endpoint (development only)
+      - "traefik.http.routers.agent-ws-test.rule=PathPrefix(`/ws-test`)"
+      - "traefik.http.routers.agent-ws-test.priority=2147483645"
+      - "traefik.http.routers.agent-ws-test.entrypoints=web,websecure"
+      - "traefik.http.routers.agent-ws-test.service=agent-service"
+      - "traefik.http.middlewares.agent-ws-test-strip.stripprefix.prefixes=/ws-test"
+      - "traefik.http.routers.agent-ws-test.middlewares=agent-ws-test-strip"
+      # NOTE: No OAuth - for WebSocket testing during development
+
+      # Router 4: /agent-health - Public health check (no auth required)
+      - "traefik.http.routers.agent-health.rule=Path(`/agent-health`)"
+      - "traefik.http.routers.agent-health.priority=2147483644"
+      - "traefik.http.routers.agent-health.entrypoints=web,websecure"
+      - "traefik.http.routers.agent-health.service=agent-service"
+      - "traefik.http.middlewares.agent-health-rewrite.replacepathregex.regex=^/agent-health"
+      - "traefik.http.middlewares.agent-health-rewrite.replacepathregex.replacement=/health"
+      - "traefik.http.routers.agent-health.middlewares=agent-health-rewrite"
+      # NOTE: No OAuth - public health check for monitoring
+
+      # Router 5: /api/agent/user/me - Public user info (DEV_MODE fallback, no auth)
+      - "traefik.http.routers.agent-user-info.rule=PathPrefix(`/api/agent/user`)"
+      - "traefik.http.routers.agent-user-info.priority=2147483648"
+      - "traefik.http.routers.agent-user-info.entrypoints=web,websecure"
+      - "traefik.http.routers.agent-user-info.service=agent-service"
+      - "traefik.http.middlewares.agent-user-strip.stripprefix.prefixes=/api/agent"
+      - "traefik.http.routers.agent-user-info.middlewares=agent-user-strip"
+      # NOTE: No OAuth - DEV_MODE handles auth internally (returns demo user if no headers)
+
+networks:
+  shml-platform:
+    external: true
+
+secrets:
+  shared_db_password:
+    file: ../../secrets/shared_db_password.txt

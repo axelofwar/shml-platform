@@ -286,25 +286,39 @@ sudo chmod 666 /var/run/docker.sock
 
 ### Service Management Patterns
 
-**Starting/Stopping Services:**
+**✅ ALWAYS use start_all_safe.sh from project root:**
 ```bash
-# Always use docker compose (not docker-compose)
-docker compose up -d
-docker compose down
-docker compose restart mlflow
+# Navigate to project root first
+cd /home/axelofwar/Projects/shml-platform
 
-# Check status
-docker compose ps
+# Restart MLflow services (CORRECT METHOD)
+./start_all_safe.sh restart mlflow
 
-# View logs
-docker compose logs -f mlflow
+# Start MLflow services
+./start_all_safe.sh start mlflow
+
+# Stop MLflow services
+./start_all_safe.sh stop mlflow
+
+# Check platform status
+./start_all_safe.sh status
 ```
 
-**Health Checks:**
+**❌ NEVER use direct docker compose commands:**
 ```bash
-# Use existing scripts (don't create new ones)
-./scripts/check_status.sh         # Comprehensive status
-curl http://localhost:8080/health  # Quick health check
+# ❌ WRONG - skips migrations, wrong order
+docker compose -f mlflow-server/docker-compose.yml restart mlflow-api
+docker compose up -d --build mlflow-server
+
+# ❌ WRONG - missing dependency checks
+docker compose down
+```
+
+**Health Checks (read-only, always safe):**
+```bash
+./check_platform_status.sh                    # Comprehensive status
+curl http://localhost:8080/health             # MLflow health
+docker logs mlflow-server -f                  # View logs
 ```
 
 ### Background Process Management

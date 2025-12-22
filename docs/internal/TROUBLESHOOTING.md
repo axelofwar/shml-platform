@@ -1,6 +1,30 @@
 # Troubleshooting Guide
 
-**Last Updated:** 2025-11-22
+**Last Updated:** 2025-12-05
+
+---
+
+## ⚠️ IMPORTANT: Service Management
+
+**Always use `./start_all_safe.sh` for starting services!**
+
+Do NOT use `docker compose up` directly - it will fail due to network/volume dependencies between services.
+
+```bash
+# Correct way to start services
+./start_all_safe.sh                   # Full restart (recommended)
+./start_all_safe.sh start mlflow      # Start MLflow only
+./start_all_safe.sh start ray         # Start Ray only
+./start_all_safe.sh start inference   # Start coding models + chat
+
+# Correct way to stop services
+./start_all_safe.sh stop              # Stop all
+./start_all_safe.sh stop mlflow       # Stop MLflow only
+
+# Check status
+./start_all_safe.sh status
+./check_platform_status.sh
+```
 
 ---
 
@@ -11,7 +35,7 @@
 docker ps
 
 # Check network
-docker network inspect ml-platform
+docker network inspect shml-platform
 
 # Check logs
 docker logs <container> --tail 50
@@ -23,12 +47,283 @@ curl http://localhost:8090/ping  # Traefik
 
 ---
 
+## Authentication & OAuth Issues
+
+### OAuth Redirect Loop - Users Keep Redirected to Sign-In Page
+
+**Symptoms:**
+- Users sign in with Google successfully but keep getting sent back to "Sign in with OpenID Connect" page
+- Infinite redirect loop, never reaching Homer/Grafana/MLflow
+- OAuth2-Proxy logs show `202` responses for `/oauth2-proxy/auth`
+- Users have roles assigned in FusionAuth but still can't access services
+- No error messages visible to user
+
+**Root Cause:**
+FusionAuth is NOT including the `roles` claim in the JWT `id_token`. Even if users have roles assigned in FusionAuth, the JWT doesn't contain them without a **JWT Populate Lambda**.
+
+This results in:
+1. User authenticates successfully ✓
+2. FusionAuth issues JWT **without roles claim**
+3. OAuth2-Proxy reads `roles` claim (via `OAUTH2_PROXY_OIDC_GROUPS_CLAIM`) → finds nothing
+4. OAuth2-Proxy passes empty `X-Auth-Request-Groups` header to services
+5. If `OAUTH2_PROXY_ALLOWED_GROUPS` is enabled → OAuth2-Proxy rejects request
+6. Traefik redirects back to sign-in → infinite loop
+
+**Quick Diagnosis:**
+```bash
+# 1. Verify user HAS roles in FusionAuth
+open https://shml-platform.tail38b60a.ts.net/admin
+# Users → [user] → Registrations → OAuth2-Proxy → should show "viewer" checked
+
+# 2. Check if JWT contains roles claim
+# Have user sign in, then in browser:
+# DevTools → Application → Cookies → _sfml_oauth2 (copy value)
+# Go to https://jwt.io and paste JWT
+# Look for "roles": [...] in payload
+# If MISSING → JWT Populate lambda not configured
+
+# 3. Check OAuth2-Proxy logs
+docker logs oauth2-proxy --tail 50 | grep "user@example.com"
+# Should show 202 with roles in request
+
+# 4. Check FusionAuth Event Log
+# Admin → System → Event Log
+# Filter by: Debug or Information
+# Look for: "Added roles to JWT for user..."
+# If NOT FOUND → Lambda not attached or not executing
+```
+
+**Solution: Configure JWT Populate Lambda**
+
+FusionAuth needs a lambda to include roles in the JWT token:
+
+1. **Create the JWT Populate Lambda:**
+   ```
+   FusionAuth Admin → Settings → Lambdas → ➕ Add Lambda
+
+   Name: JWT Populate - Include Roles Claim
+   Type: JWT populate
+   Enabled: ✓ (checked)
+   Debug: ✓ (checked, for setup)
+
+   Copy code from: fusionauth/lambdas/jwt-populate-roles.js
+
+   Click: Save
+   ```
+
+2. **Attach Lambda to Tenant:**
+   ```
+   FusionAuth Admin → Tenants → ML Platform → Edit (pencil icon)
+
+   Scroll down to "JWT" section
+
+   Id Token populate lambda: ▼ Select "JWT Populate - Include Roles Claim"
+
+   Click: Save (💾 icon at top right)
+   ```
+
+3. **Verify Lambda Execution:**
+   ```bash
+   # Check Event Log
+   FusionAuth Admin → System → Event Log
+
+   # Should see (after user signs in):
+   # "Added roles to JWT for user user@example.com: viewer"
+   ```
+
+4. **Force Users to Get New Tokens:**
+   ```bash
+   # Option 1: Users clear cookies and sign in again
+   # Browser → Clear cookies for: shml-platform.tail38b60a.ts.net
+
+   # Option 2: Restart OAuth2-Proxy (invalidates all sessions)
+   docker restart oauth2-proxy
+
+   # Users will be asked to sign in again with new JWT
+   ```
+
+5. **Verify JWT Contains Roles:**
+   ```bash
+   # After fresh sign-in:
+   # Browser DevTools → Application → Cookies → _sfml_oauth2
+   # Copy JWT → Paste at https://jwt.io
+
+   # Should see in payload:
+   {
+     "email": "user@example.com",
+     "roles": ["viewer"],     # ← OAuth2-Proxy reads this
+     "role": "viewer",        # ← Backup string format
+     ...
+   }
+   ```
+
+**Verification:**
+```bash
+# 1. User should be able to access Homer dashboard
+open https://shml-platform.tail38b60a.ts.net/
+
+# 2. Check OAuth2-Proxy logs show roles
+docker logs oauth2-proxy --tail 20
+
+# 3. Test role-auth middleware (for developer role)
+curl -H "X-Auth-Request-Groups: viewer,developer" \
+  http://localhost:8080/auth/developer
+# Should return: 200 OK "Authorized"
+
+# 4. Check Traefik access logs
+docker logs traefik --tail 50
+# Should show successful requests without redirects
+```
+
+**Related Files:**
+- Lambda code: `fusionauth/lambdas/jwt-populate-roles.js` (JWT Populate)
+- Lambda docs: `fusionauth/lambdas/README.md` (setup guide)
+- OAuth2-Proxy config: `docker-compose.infra.yml` (lines 260-400)
+- Role-auth nginx: `scripts/role-auth/nginx.conf`
+
+**Prevention:**
+- **ALWAYS configure JWT Populate lambda when setting up FusionAuth**
+- Test authentication with a fresh user account before production
+- Document lambda configuration in deployment checklist
+- Use FusionAuth Event Log to verify lambda execution
+- Decode JWT tokens to confirm claims are present
+
+**Common Mistakes:**
+- ❌ Creating lambda but not attaching it to tenant
+- ❌ Attaching lambda to application instead of tenant
+- ❌ Using Google Reconcile lambda instead of JWT Populate lambda
+- ❌ Forgetting to enable "Debug" mode in lambda settings
+- ❌ Not having users clear cookies after adding lambda
+- ❌ Assuming roles in FusionAuth == roles in JWT (they're separate)
+
+---
+
+### OAuth Redirect Loop - AuthenticatedRegistrationNotVerified
+
+**Symptoms:**
+- User authenticates successfully with OAuth provider (Google/GitHub/Twitter)
+- OAuth2-Proxy logs show: `userState=AuthenticatedRegistrationNotVerified`
+- Continuous 401 responses every 4 seconds from `/oauth2-proxy/auth`
+- User stuck in infinite redirect loop despite having roles assigned
+- JWT contains roles but session is immediately rejected
+
+**Root Cause:**
+User's **registration is not verified** in FusionAuth database. Even though:
+- User account is verified (`identities.verified = true`) ✓
+- JWT Populate lambda is working and adding roles ✓
+- Email verification is disabled at tenant level ✓
+
+The registration itself has `user_registrations.verified = false` which causes FusionAuth to add `userState=AuthenticatedRegistrationNotVerified` to the OAuth callback, and OAuth2-Proxy rejects the session.
+
+**Quick Diagnosis:**
+```bash
+# 1. Check OAuth2-Proxy logs for the specific user
+docker logs oauth2-proxy --tail 100 | grep "user@example.com"
+# Look for: userState=AuthenticatedRegistrationNotVerified
+
+# 2. Check user's registration verification status
+./scripts/user_verification_report.sh
+# Look for: Registration Verified = ❌
+
+# 3. Query database directly
+docker exec shml-postgres psql -U fusionauth -d fusionauth -c "
+SELECT i.email, i.verified as email_verified, ur.verified as registration_verified
+FROM identities i
+JOIN users u ON i.users_id = u.id
+JOIN user_registrations ur ON u.id = ur.users_id
+WHERE i.email = 'user@example.com'
+  AND ur.applications_id = 'acda34f0-7cf2-40eb-9cba-7cb0048857d3';
+"
+# If registration_verified = f → User has unverified registration
+```
+
+**Solution: Verify User Registrations**
+
+```bash
+# Option 1: Verify all users at once (recommended)
+./scripts/verify_all_registrations.sh
+
+# Option 2: Verify specific user
+./scripts/verify_user_email.sh user@example.com
+
+# Option 3: Manual SQL update (for single user)
+docker exec shml-postgres psql -U fusionauth -d fusionauth -c "
+UPDATE user_registrations
+SET verified = true
+WHERE users_id = (SELECT users_id FROM identities WHERE email = 'user@example.com')
+  AND applications_id = 'acda34f0-7cf2-40eb-9cba-7cb0048857d3';
+"
+```
+
+**Post-Fix: Users Must Clear Browser Cookies**
+
+After fixing registration verification, users MUST clear their browser cookies for the platform domain:
+
+```
+1. Browser → Settings → Cookies
+2. Search for: shml-platform.tail38b60a.ts.net
+3. Delete all cookies for this domain
+4. Navigate to platform homepage and sign in again
+
+OR use incognito/private browsing mode for testing
+```
+
+Old session cookies still contain the `AuthenticatedRegistrationNotVerified` state, so they must be cleared.
+
+**Verification:**
+```bash
+# 1. Run verification report
+./scripts/user_verification_report.sh
+# Should show: Registration Verified = ✅ for all users
+
+# 2. Check OAuth2-Proxy logs after user signs in
+docker logs oauth2-proxy --tail 50 | grep "user@example.com"
+# Should show: [AuthSuccess] ... groups:[viewer]
+# Should NOT show: userState=AuthenticatedRegistrationNotVerified
+
+# 3. User should reach Homer dashboard without redirect loop
+```
+
+**Prevention:**
+```bash
+# 1. Disable email verification at tenant level (already done)
+FusionAuth Admin → Tenants → Default → Email → Verify Email: OFF
+
+# 2. Disable registration verification at application level (already done)
+FusionAuth Admin → Applications → OAuth2-Proxy → Registration → Verify Registration: OFF
+
+# 3. Run verification script after creating new users
+./scripts/verify_all_registrations.sh
+
+# 4. Add to user onboarding checklist:
+# - Create user in FusionAuth
+# - Assign roles to user
+# - Run verify_all_registrations.sh
+# - Test authentication
+```
+
+**Related Files:**
+- Verification report: `scripts/user_verification_report.sh`
+- Bulk verification: `scripts/verify_all_registrations.sh`
+- Single user fix: `scripts/verify_user_email.sh`
+- OAuth2-Proxy logs: `docker logs oauth2-proxy`
+
+**Current Status:**
+- ✅ Tenant email verification: **DISABLED** (`verifyEmail: false`)
+- ✅ Application registration verification: **DISABLED** (`verifyRegistration: false`)
+- ✅ All existing users: **VERIFIED** (4/4 users as of 2025-12-06)
+
+**Why This Happens:**
+Even with verification disabled at tenant and application levels, FusionAuth may create registrations with `verified = false` when users authenticate via OAuth providers (Google/GitHub/Twitter). This is likely a race condition or default behavior that needs manual cleanup.
+
+---
+
 ## MLflow Issues
 
 ### Container Won't Start
 
 **Symptoms:**
-- `docker compose up -d` fails
+- Service fails to start
 - Containers exit immediately
 - Port conflict errors
 
@@ -40,10 +335,9 @@ sudo netstat -tulpn | grep -E ':(80|5000|5432)'
 # Stop conflicts
 sudo systemctl stop nginx apache2 postgresql
 
-# Clean restart
-cd mlflow-server
-docker compose down
-docker compose up -d
+# Clean restart using the safe script
+./start_all_safe.sh stop mlflow
+./start_all_safe.sh start mlflow
 ```
 
 ### Database Connection Failed
@@ -56,7 +350,7 @@ docker compose up -d
 **Fix:**
 ```bash
 # Check PostgreSQL
-docker exec mlflow-postgres pg_isready
+docker exec shml-postgres pg_isready
 
 # Verify password
 cat ml-platform/mlflow-server/secrets/db_password.txt
@@ -227,6 +521,179 @@ docker logs fusionauth --tail 50
 # Restart
 docker restart fusionauth ray-compute-ui
 ```
+
+---
+
+### Ray UI 401/403 After OAuth Login (CRITICAL)
+
+**Symptoms:**
+- User successfully logs in via OAuth (FusionAuth/OAuth2-Proxy)
+- Ray UI loads briefly, then shows 401/403 errors
+- API calls to `/ray/api/*` fail with unauthorized
+- Browser shows cookies are set correctly
+- Traefik logs show OAuth2-Proxy forwardAuth succeeds
+- API logs show: `"Missing authorization - no cookie or token"`
+
+**Root Cause:**
+OAuth2-Proxy uses **session cookies** (like `_sfml_oauth2`) that work for browser navigation. But when Ray UI makes **fetch() API calls**, there's a mismatch:
+
+1. **OAuth2-Proxy authentication** validates the cookie → sets `X-Auth-Request-*` headers
+2. **Traefik forwardAuth** passes these headers to the backend
+3. **Ray API** looks for JWT token OR session cookie → finds neither (fetch doesn't auto-send cookies without credentials)
+4. **API rejects** the request with 401
+
+Unlike services that have no backend auth (MLflow), or services designed for proxy auth (Grafana with `GF_AUTH_PROXY_ENABLED`), Ray API requires explicit configuration to trust the forwarded headers.
+
+**Diagnosis:**
+```bash
+# 1. Check if OAuth2-Proxy is setting headers correctly
+curl -v -b "_sfml_oauth2=<session-cookie>" \
+  https://shml-platform.tail38b60a.ts.net/oauth2-proxy/auth
+# Should return 202 with X-Auth-Request-* headers
+
+# 2. Check what headers reach Ray API
+docker logs ray-compute-api --tail 50 | grep -i auth
+# Look for: "X-Auth-Request-User", "X-Auth-Request-Email"
+
+# 3. Test API directly with headers
+curl -H "X-Auth-Request-Email: user@example.com" \
+  http://localhost:8000/health
+# If API is configured correctly, should return 200
+```
+
+**Solution: Enable Proxy Auth Trust Mode**
+
+The fix is to configure Ray API to trust `X-Auth-Request-*` headers set by OAuth2-Proxy, similar to how Grafana's `GF_AUTH_PROXY_ENABLED=true` works.
+
+**Step 1: Update Ray API configuration**
+
+Add to `ray_compute/.env`:
+```bash
+# Trust OAuth2-Proxy forwarded headers for authentication
+PROXY_AUTH_ENABLED=true
+PROXY_AUTH_HEADER=X-Auth-Request-Email
+PROXY_AUTH_USER_HEADER=X-Auth-Request-User
+PROXY_AUTH_GROUPS_HEADER=X-Auth-Request-Groups
+```
+
+**Step 2: Update docker-compose to pass environment**
+
+In `ray_compute/docker-compose.yml`:
+```yaml
+ray-compute-api:
+  environment:
+    - PROXY_AUTH_ENABLED=${PROXY_AUTH_ENABLED:-false}
+    - PROXY_AUTH_HEADER=${PROXY_AUTH_HEADER:-X-Auth-Request-Email}
+    - PROXY_AUTH_USER_HEADER=${PROXY_AUTH_USER_HEADER:-X-Auth-Request-User}
+    - PROXY_AUTH_GROUPS_HEADER=${PROXY_AUTH_GROUPS_HEADER:-X-Auth-Request-Groups}
+```
+
+**Step 3: Implement proxy auth in API server**
+
+In `ray_compute/api/server_v2.py`, add dependency that extracts user from headers:
+```python
+async def get_current_user_from_proxy(request: Request) -> Optional[dict]:
+    """Extract user from OAuth2-Proxy forwarded headers."""
+    if not os.getenv("PROXY_AUTH_ENABLED", "false").lower() == "true":
+        return None
+
+    email = request.headers.get(os.getenv("PROXY_AUTH_HEADER", "X-Auth-Request-Email"))
+    user = request.headers.get(os.getenv("PROXY_AUTH_USER_HEADER", "X-Auth-Request-User"))
+    groups = request.headers.get(os.getenv("PROXY_AUTH_GROUPS_HEADER", "X-Auth-Request-Groups"), "")
+
+    if email:
+        return {
+            "email": email,
+            "user": user or email.split("@")[0],
+            "groups": groups.split(",") if groups else []
+        }
+    return None
+```
+
+**Step 4: Restart Ray API**
+```bash
+./start_all_safe.sh restart ray
+```
+
+**Verification:**
+```bash
+# 1. Check API health with proxy headers
+curl -H "X-Auth-Request-Email: test@example.com" \
+  http://localhost:8000/health
+# Should return 200
+
+# 2. Check through Traefik with session cookie
+curl -b "_sfml_oauth2=<session-cookie>" \
+  https://shml-platform.tail38b60a.ts.net/ray/api/health
+# Should return 200
+
+# 3. Open Ray UI in browser
+# Navigate to Jobs page
+# Check network tab - all API calls should return 200
+```
+
+**Why Different Services Need Different Auth Patterns:**
+
+| Service | Auth Pattern | Why |
+|---------|--------------|-----|
+| **MLflow UI** | No backend auth | Just a dashboard, all actions go through MLflow API |
+| **Grafana** | `GF_AUTH_PROXY_ENABLED` | Native support for proxy auth headers |
+| **Ray UI** | Custom proxy auth | API requires auth, must trust proxy headers |
+| **Homer** | No backend auth | Static dashboard, no sensitive data |
+
+**Key Insight:**
+- OAuth2-Proxy handles **user authentication** at the gateway
+- Backend APIs need to be told to **trust the gateway's auth decision**
+- Without explicit configuration, APIs will reject requests from authenticated users
+
+**Related Files:**
+- Ray API server: `ray_compute/api/server_v2.py`
+- Ray environment: `ray_compute/.env`
+- OAuth2-Proxy config: `docker-compose.infra.yml`
+- Traefik middlewares: `docker-compose.yml` (oauth2-auth forwardAuth)
+
+**Prevention:**
+- **ALWAYS** configure backend APIs to trust OAuth2-Proxy headers when using forwardAuth
+- Add `PROXY_AUTH_ENABLED=true` to any new API service behind OAuth2-Proxy
+- Test API auth with both browser navigation AND fetch() calls
+- Check API logs for auth failures after OAuth changes
+
+### MLflow Artifact Permission Denied in Ray Jobs
+
+**Symptoms:**
+- Training completes successfully but fails at end with `PermissionError: [Errno 13] Permission denied: '/mlflow'`
+- MLflow callback tries to log artifacts but can't write to `/mlflow/artifacts`
+- Error occurs during `mlflow.log_artifact()` in Ray training jobs
+
+**Root Cause:**
+Ray container runs as `ray` user (uid=1000) but doesn't have the mlflow-artifacts volume mounted, or the volume has wrong permissions.
+
+**Fix:**
+```bash
+# 1. Ensure mlflow-artifacts volume is mounted in ray_compute/docker-compose.yml
+# Add to ray-head volumes section:
+#   - mlflow-artifacts:/mlflow/artifacts
+# Add to volumes section at bottom:
+#   mlflow-artifacts:
+#     external: true
+
+# 2. Fix volume permissions
+sudo chown -R 1000:100 /var/lib/docker/volumes/mlflow-artifacts/_data
+
+# 3. Recreate Ray container to pick up volume mount
+cd ray_compute
+docker compose up -d ray-head
+
+# 4. Verify mount and permissions
+docker exec ray-head ls -la /mlflow/artifacts
+docker exec ray-head touch /mlflow/artifacts/test.txt && docker exec ray-head rm /mlflow/artifacts/test.txt
+```
+
+**Verification:**
+- `/mlflow/artifacts` directory exists in Ray container
+- Directory is owned by `ray` user (uid=1000, gid=100)
+- Ray can create and delete files in the directory
+- MLflow artifact logging succeeds in training jobs
 
 ### API 500 Errors
 

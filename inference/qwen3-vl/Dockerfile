@@ -1,5 +1,5 @@
 # Qwen3-VL Dockerfile - Optimized for RTX 2070 (8GB VRAM)
-FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive

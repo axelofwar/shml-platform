@@ -1,0 +1,869 @@
+{
+  "timestamp": "2025-12-13T07:53:26.767921",
+  "model": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_2_phase_2/weights/best.pt",
+  "stats": {
+    "total_images": 3222,
+    "total_gt_faces": 39112,
+    "total_detected": 32585,
+    "total_missed": 10317,
+    "images_with_misses": 958,
+    "perfect_recall_images": 2264
+  },
+  "failure_distribution": {
+    "tiny_faces": 868,
+    "small_faces": 40,
+    "large_faces": 21,
+    "medium_faces": 29
+  },
+  "worst_images": [
+    {
+      "image": "0--Parade_0_Parade_marchingband_1_356.jpg",
+      "category": "0--Parade",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.5891811744
+      ],
+      "avg_missed_size": 0.5891811744,
+      "img_size": [
+        1024,
+        1625
+      ]
+    },
+    {
+      "image": "14--Traffic_14_Traffic_Traffic_14_55.jpg",
+      "category": "14--Traffic",
+      "gt_faces": 29,
+      "detected": 0,
+      "missed": 29,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.0351757072,
+        0.032662965499999995,
+        0.0241212177,
+        0.0281420066,
+        0.023952511599999997,
+        0.013567579299999999,
+        0.0201013578,
+        0.0150757742,
+        0.0167516198,
+        0.008040110400000001,
+        0.014739681600000002,
+        0.0093803592,
+        0.0165830852,
+        0.013567579299999999,
+        0.012060265799999999,
+        0.032662965499999995,
+        0.023952511599999997,
+        0.023952511599999997,
+        0.030151815099999996,
+        0.014739681600000002,
+        0.0281420066,
+        0.0107196264,
+        0.0165830852,
+        0.0105529523,
+        0.0082079852,
+        0.0080397198,
+        0.0107196264,
+        0.0165830852,
+        0.013567579299999999
+      ],
+      "avg_missed_size": 0.018361964586206894,
+      "img_size": [
+        1024,
+        583
+      ]
+    },
+    {
+      "image": "18--Concerts_18_Concerts_Concerts_18_657.jpg",
+      "category": "18--Concerts",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        3.6675170411999996
+      ],
+      "avg_missed_size": 3.6675170411999996,
+      "img_size": [
+        1024,
+        769
+      ]
+    },
+    {
+      "image": "19--Couple_19_Couple_Couple_19_509.jpg",
+      "category": "19--Couple",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        63.87617168199999
+      ],
+      "avg_missed_size": 63.87617168199999,
+      "img_size": [
+        1024,
+        931
+      ]
+    },
+    {
+      "image": "21--Festival_21_Festival_Festival_21_741.jpg",
+      "category": "21--Festival",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.6656864623999998
+      ],
+      "avg_missed_size": 1.6656864623999998,
+      "img_size": [
+        1024,
+        1536
+      ]
+    },
+    {
+      "image": "23--Shoppers_23_Shoppers_Shoppers_23_514.jpg",
+      "category": "23--Shoppers",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.759237765
+      ],
+      "avg_missed_size": 0.759237765,
+      "img_size": [
+        1024,
+        639
+      ]
+    },
+    {
+      "image": "24--Soldier_Firing_24_Soldier_Firing_Soldier_Firing_24_281.jpg",
+      "category": "24--Soldier",
+      "gt_faces": 3,
+      "detected": 0,
+      "missed": 3,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.023054119999999997,
+        0.023054119999999997,
+        0.0319209216
+      ],
+      "avg_missed_size": 0.026009720533333332,
+      "img_size": [
+        1024,
+        826
+      ]
+    },
+    {
+      "image": "24--Soldier_Firing_24_Soldier_Firing_Soldier_Firing_24_812.jpg",
+      "category": "24--Soldier",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.8660134606000001
+      ],
+      "avg_missed_size": 0.8660134606000001,
+      "img_size": [
+        1024,
+        636
+      ]
+    },
+    {
+      "image": "24--Soldier_Firing_24_Soldier_Firing_Soldier_Firing_24_95.jpg",
+      "category": "24--Soldier",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.2829921875
+      ],
+      "avg_missed_size": 1.2829921875,
+      "img_size": [
+        1024,
+        682
+      ]
+    },
+    {
+      "image": "25--Soldier_Patrol_25_Soldier_Patrol_Soldier_Patrol_25_436.jpg",
+      "category": "25--Soldier",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        2.320308
+      ],
+      "avg_missed_size": 2.320308,
+      "img_size": [
+        1024,
+        500
+      ]
+    },
+    {
+      "image": "25--Soldier_Patrol_25_Soldier_Patrol_Soldier_Patrol_25_9.jpg",
+      "category": "25--Soldier",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.2999562627999999
+      ],
+      "avg_missed_size": 1.2999562627999999,
+      "img_size": [
+        1024,
+        732
+      ]
+    },
+    {
+      "image": "26--Soldier_Drilling_26_Soldier_Drilling_Soldiers_Drilling_26_390.jpg",
+      "category": "26--Soldier",
+      "gt_faces": 2,
+      "detected": 0,
+      "missed": 2,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.4668495808,
+        0.6073795446
+      ],
+      "avg_missed_size": 0.5371145627,
+      "img_size": [
+        1024,
+        656
+      ]
+    },
+    {
+      "image": "26--Soldier_Drilling_26_Soldier_Drilling_Soldiers_Drilling_26_893.jpg",
+      "category": "26--Soldier",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.2442711507
+      ],
+      "avg_missed_size": 0.2442711507,
+      "img_size": [
+        1024,
+        734
+      ]
+    },
+    {
+      "image": "27--Spa_27_Spa_Spa_27_728.jpg",
+      "category": "27--Spa",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        37.9850237312
+      ],
+      "avg_missed_size": 37.9850237312,
+      "img_size": [
+        1024,
+        782
+      ]
+    },
+    {
+      "image": "28--Sports_Fan_28_Sports_Fan_Sports_Fan_28_130.jpg",
+      "category": "28--Sports",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        73.5142328208
+      ],
+      "avg_missed_size": 73.5142328208,
+      "img_size": [
+        1024,
+        754
+      ]
+    },
+    {
+      "image": "28--Sports_Fan_28_Sports_Fan_Sports_Fan_28_697.jpg",
+      "category": "28--Sports",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.5740854932
+      ],
+      "avg_missed_size": 1.5740854932,
+      "img_size": [
+        1024,
+        1543
+      ]
+    },
+    {
+      "image": "3--Riot_3_Riot_Riot_3_166.jpg",
+      "category": "3--Riot",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.22745053099999996
+      ],
+      "avg_missed_size": 0.22745053099999996,
+      "img_size": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "31--Waiter_Waitress_31_Waiter_Waitress_Waiter_Waitress_31_212.jpg",
+      "category": "31--Waiter",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        2.1443688801999996
+      ],
+      "avg_missed_size": 2.1443688801999996,
+      "img_size": [
+        1024,
+        576
+      ]
+    },
+    {
+      "image": "36--Football_36_Football_americanfootball_ball_36_279.jpg",
+      "category": "36--Football",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.0753361759000002
+      ],
+      "avg_missed_size": 1.0753361759000002,
+      "img_size": [
+        1024,
+        1129
+      ]
+    },
+    {
+      "image": "36--Football_36_Football_americanfootball_ball_36_327.jpg",
+      "category": "36--Football",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.1078483952
+      ],
+      "avg_missed_size": 1.1078483952,
+      "img_size": [
+        1024,
+        665
+      ]
+    },
+    {
+      "image": "36--Football_36_Football_americanfootball_ball_36_647.jpg",
+      "category": "36--Football",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.7020070760000001
+      ],
+      "avg_missed_size": 1.7020070760000001,
+      "img_size": [
+        1024,
+        1043
+      ]
+    },
+    {
+      "image": "39--Ice_Skating_39_Ice_Skating_Ice_Skating_39_458.jpg",
+      "category": "39--Ice",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.8135851612
+      ],
+      "avg_missed_size": 0.8135851612,
+      "img_size": [
+        1024,
+        1477
+      ]
+    },
+    {
+      "image": "39--Ice_Skating_39_Ice_Skating_iceskiing_39_249.jpg",
+      "category": "39--Ice",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.31455886139999994
+      ],
+      "avg_missed_size": 0.31455886139999994,
+      "img_size": [
+        1024,
+        683
+      ]
+    },
+    {
+      "image": "39--Ice_Skating_39_Ice_Skating_iceskiing_39_354.jpg",
+      "category": "39--Ice",
+      "gt_faces": 3,
+      "detected": 0,
+      "missed": 3,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.004634469,
+        0.004634469,
+        0.006179292
+      ],
+      "avg_missed_size": 0.00514941,
+      "img_size": [
+        1024,
+        885
+      ]
+    },
+    {
+      "image": "39--Ice_Skating_39_Ice_Skating_iceskiing_39_869.jpg",
+      "category": "39--Ice",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.118862436
+      ],
+      "avg_missed_size": 0.118862436,
+      "img_size": [
+        1024,
+        769
+      ]
+    },
+    {
+      "image": "39--Ice_Skating_39_Ice_Skating_iceskiing_39_908.jpg",
+      "category": "39--Ice",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.5086310763999999
+      ],
+      "avg_missed_size": 0.5086310763999999,
+      "img_size": [
+        1024,
+        576
+      ]
+    },
+    {
+      "image": "4--Dancing_4_Dancing_Dancing_4_327.jpg",
+      "category": "4--Dancing",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.4240038208
+      ],
+      "avg_missed_size": 0.4240038208,
+      "img_size": [
+        1024,
+        1536
+      ]
+    },
+    {
+      "image": "40--Gymnastics_40_Gymnastics_Gymnastics_40_580.jpg",
+      "category": "40--Gymnastics",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.8081756836
+      ],
+      "avg_missed_size": 1.8081756836,
+      "img_size": [
+        1024,
+        768
+      ]
+    },
+    {
+      "image": "41--Swimming_41_Swimming_Swimmer_41_288.jpg",
+      "category": "41--Swimming",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        5.2517280816000005
+      ],
+      "avg_missed_size": 5.2517280816000005,
+      "img_size": [
+        1024,
+        684
+      ]
+    },
+    {
+      "image": "41--Swimming_41_Swimming_Swimmer_41_308.jpg",
+      "category": "41--Swimming",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.9664564296000001
+      ],
+      "avg_missed_size": 0.9664564296000001,
+      "img_size": [
+        1024,
+        696
+      ]
+    },
+    {
+      "image": "41--Swimming_41_Swimming_Swimmer_41_449.jpg",
+      "category": "41--Swimming",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.41943074760000004
+      ],
+      "avg_missed_size": 0.41943074760000004,
+      "img_size": [
+        1024,
+        678
+      ]
+    },
+    {
+      "image": "41--Swimming_41_Swimming_Swimming_41_26.jpg",
+      "category": "41--Swimming",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.9559142864000001
+      ],
+      "avg_missed_size": 0.9559142864000001,
+      "img_size": [
+        1024,
+        615
+      ]
+    },
+    {
+      "image": "41--Swimming_41_Swimming_Swimming_41_730.jpg",
+      "category": "41--Swimming",
+      "gt_faces": 3,
+      "detected": 0,
+      "missed": 3,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.7462208138,
+        0.874642601,
+        0.6810334128
+      ],
+      "avg_missed_size": 0.7672989425333334,
+      "img_size": [
+        1024,
+        803
+      ]
+    },
+    {
+      "image": "45--Balloonist_45_Balloonist_Balloonist_45_685.jpg",
+      "category": "45--Balloonist",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.26649155060000007
+      ],
+      "avg_missed_size": 0.26649155060000007,
+      "img_size": [
+        1024,
+        686
+      ]
+    },
+    {
+      "image": "46--Jockey_46_Jockey_Jockey_46_728.jpg",
+      "category": "46--Jockey",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        6.811537500000001
+      ],
+      "avg_missed_size": 6.811537500000001,
+      "img_size": [
+        1024,
+        640
+      ]
+    },
+    {
+      "image": "47--Matador_Bullfighter_47_Matador_Bullfighter_matadorbullfighting_47_354.jpg",
+      "category": "47--Matador",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.891640625
+      ],
+      "avg_missed_size": 0.891640625,
+      "img_size": [
+        1024,
+        736
+      ]
+    },
+    {
+      "image": "47--Matador_Bullfighter_47_Matador_Bullfighter_matadorbullfighting_47_405.jpg",
+      "category": "47--Matador",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.6622019316000001
+      ],
+      "avg_missed_size": 0.6622019316000001,
+      "img_size": [
+        1024,
+        653
+      ]
+    },
+    {
+      "image": "49--Greeting_49_Greeting_peoplegreeting_49_759.jpg",
+      "category": "49--Greeting",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        85.87845
+      ],
+      "avg_missed_size": 85.87845,
+      "img_size": [
+        1024,
+        1403
+      ]
+    },
+    {
+      "image": "5--Car_Accident_5_Car_Accident_Accident_5_576.jpg",
+      "category": "5--Car",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.7128625000000001
+      ],
+      "avg_missed_size": 0.7128625000000001,
+      "img_size": [
+        1024,
+        754
+      ]
+    },
+    {
+      "image": "52--Photographers_52_Photographers_photographertakingphoto_52_125.jpg",
+      "category": "52--Photographers",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        1.1679341855999998
+      ],
+      "avg_missed_size": 1.1679341855999998,
+      "img_size": [
+        1024,
+        594
+      ]
+    },
+    {
+      "image": "52--Photographers_52_Photographers_photographertakingphoto_52_130.jpg",
+      "category": "52--Photographers",
+      "gt_faces": 3,
+      "detected": 0,
+      "missed": 3,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.06432656249999999,
+        0.032032024,
+        0.0128389712
+      ],
+      "avg_missed_size": 0.03639918589999999,
+      "img_size": [
+        1024,
+        753
+      ]
+    },
+    {
+      "image": "52--Photographers_52_Photographers_photographertakingphoto_52_653.jpg",
+      "category": "52--Photographers",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        13.975011508000001
+      ],
+      "avg_missed_size": 13.975011508000001,
+      "img_size": [
+        1024,
+        683
+      ]
+    },
+    {
+      "image": "53--Raid_53_Raid_policeraid_53_207.jpg",
+      "category": "53--Raid",
+      "gt_faces": 12,
+      "detected": 0,
+      "missed": 12,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.15960112769999998,
+        0.0142168292,
+        0.0084627273,
+        0.0071081388,
+        0.0162466164,
+        0.0203088564,
+        0.0091388682,
+        0.015401508,
+        0.015401508,
+        0.0118474716,
+        0.0091388682,
+        0.0059240556
+      ],
+      "avg_missed_size": 0.02439971461666666,
+      "img_size": [
+        1024,
+        577
+      ]
+    },
+    {
+      "image": "53--Raid_53_Raid_policeraid_53_555.jpg",
+      "category": "53--Raid",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.5501918226
+      ],
+      "avg_missed_size": 0.5501918226,
+      "img_size": [
+        1024,
+        683
+      ]
+    },
+    {
+      "image": "54--Rescue_54_Rescue_rescuepeople_54_840.jpg",
+      "category": "54--Rescue",
+      "gt_faces": 2,
+      "detected": 0,
+      "missed": 2,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        2.0605522083,
+        1.8060033888000002
+      ],
+      "avg_missed_size": 1.93327779855,
+      "img_size": [
+        1024,
+        1540
+      ]
+    },
+    {
+      "image": "55--Sports_Coach_Trainer_55_Sports_Coach_Trainer_sportcoaching_55_414.jpg",
+      "category": "55--Sports",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.8383506394
+      ],
+      "avg_missed_size": 0.8383506394,
+      "img_size": [
+        1024,
+        862
+      ]
+    },
+    {
+      "image": "55--Sports_Coach_Trainer_55_Sports_Coach_Trainer_sportcoaching_55_640.jpg",
+      "category": "55--Sports",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.8624196672000002
+      ],
+      "avg_missed_size": 0.8624196672000002,
+      "img_size": [
+        1024,
+        770
+      ]
+    },
+    {
+      "image": "56--Voter_56_Voter_peoplevoting_56_777.jpg",
+      "category": "56--Voter",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.2479732852
+      ],
+      "avg_missed_size": 0.2479732852,
+      "img_size": [
+        1024,
+        790
+      ]
+    },
+    {
+      "image": "59--people--driving--car_59_peopledrivingcar_peopledrivingcar_59_1014.jpg",
+      "category": "59--people--driving--car",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        0.41015999999999997
+      ],
+      "avg_missed_size": 0.41015999999999997,
+      "img_size": [
+        1024,
+        640
+      ]
+    },
+    {
+      "image": "6--Funeral_6_Funeral_Funeral_6_280.jpg",
+      "category": "6--Funeral",
+      "gt_faces": 1,
+      "detected": 0,
+      "missed": 1,
+      "recall": 0.0,
+      "missed_face_sizes": [
+        10.248335663999999
+      ],
+      "avg_missed_size": 10.248335663999999,
+      "img_size": [
+        1024,
+        577
+      ]
+    }
+  ]
+}

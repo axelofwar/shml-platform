@@ -1,5 +1,5 @@
 # Inference Stack - Qwen3-VL + Z-Image + Gateway
-# Integrates with existing ml-platform network
+# Integrates with existing shml-platform network
 # RTX 2070 (cuda:0) = Qwen3-VL (always loaded)
 # RTX 3090 (cuda:1) = Z-Image (on-demand, yields to training)
 # NOTE: Uses shml-postgres from main docker-compose.yml (database: inference)
@@ -11,7 +11,9 @@ services:
   # ==========================================================================
 
   # ==========================================================================
-  # Qwen3-VL - LLM for Planning/Architecture (RTX 2070 - Always Available)
+  # Qwen3-VL - LLM for Planning/Architecture (RTX 3090 - Yields to Training)
+  # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
+  # MOVED TO RTX 3090 to free RTX 2070 for PII/Audio services
   # ==========================================================================
   qwen3-vl-api:
     build:
@@ -22,30 +24,34 @@ services:
     environment:
       - MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
       - QUANTIZATION=int4
+      # IMPORTANT: Use cuda:0 because container only sees one GPU via CUDA_VISIBLE_DEVICES
       - DEVICE=cuda:0
       - MAX_NEW_TOKENS=4096
       - HF_HOME=/models
       - TRANSFORMERS_OFFLINE=1
       - HF_HUB_OFFLINE=1
-      - UNLOAD_TIMEOUT_SECONDS=0
+      # GPU YIELDING: Unload after 5min idle to free memory for training
+      - UNLOAD_TIMEOUT_SECONDS=300
+      - YIELD_TO_TRAINING=true
+      - MAX_MEMORY_GB=8
     volumes:
       - model-cache:/models:ro
       - ./logs/qwen3-vl:/app/logs
     networks:
-      - ml-platform
+      - shml-platform
     expose:
       - "8000"
     deploy:
       resources:
         limits:
           cpus: "4.0"
-          memory: 12G
+          memory: 16G
         reservations:
           cpus: "2.0"
           memory: 8G
           devices:
             - driver: nvidia
-              device_ids: ["0"]
+              device_ids: ["0"]  # RTX 3090 Ti (24GB) - shares with Z-Image, Nemotron
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -66,6 +72,7 @@ services:
 
   # ==========================================================================
   # Z-Image - Image Generation (RTX 3090 - On-Demand, Yields to Training)
+  # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
   # ==========================================================================
   z-image-api:
     build:
@@ -75,7 +82,8 @@ services:
     restart: unless-stopped
     environment:
       - MODEL_ID=Tongyi-MAI/Z-Image-Turbo
-      - DEVICE=cuda:1
+      # IMPORTANT: Use cuda:0 because container only sees one GPU via CUDA_VISIBLE_DEVICES
+      - DEVICE=cuda:0
       - DTYPE=bfloat16
       - NUM_INFERENCE_STEPS=8
       - HF_HOME=/models
@@ -88,7 +96,7 @@ services:
       - z-image-outputs:/outputs
       - ./logs/z-image:/app/logs
     networks:
-      - ml-platform
+      - shml-platform
     expose:
       - "8000"
     deploy:
@@ -101,7 +109,7 @@ services:
           memory: 16G
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["0"]  # RTX 3090 Ti (24GB) - needed for image generation, yields to training
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -134,7 +142,7 @@ services:
     environment:
       - QWEN3_VL_URL=http://qwen3-vl-api:8000
       - Z_IMAGE_URL=http://z-image-api:8000
-      - REDIS_HOST=ml-platform-redis
+      - REDIS_HOST=shml-redis
       - REDIS_PORT=6379
       - REDIS_DB=2
       - POSTGRES_HOST=shml-postgres
@@ -152,7 +160,7 @@ services:
       - ./backups:/backups
       - ./logs/gateway:/app/logs
     networks:
-      - ml-platform
+      - shml-platform
     expose:
       - "8000"
     secrets:
@@ -186,15 +194,131 @@ services:
       z-image-api:
         condition: service_started
 
+  # ==========================================================================
+  # PII Face Blurring - YOLOv8l + SAM3 + ByteTrack (RTX 2070)
+  # ==========================================================================
+  pii-blur-api:
+    build:
+      context: ./pii-blur
+      dockerfile: Dockerfile
+    container_name: pii-blur-api
+    restart: unless-stopped
+    environment:
+      - DEVICE=cuda:0
+      - MAX_MEMORY_GB=6.0
+      - UNLOAD_TIMEOUT_SECONDS=300
+      - YOLO_MODEL_PATH=yolov8l.pt
+      - SAM3_MODEL_ID=segment-anything-model-vit-h
+      - HF_HOME=/models
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=3
+    volumes:
+      - model-cache:/models
+      - pii-blur-outputs:/outputs
+      - ./logs/pii-blur:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 12G
+        reservations:
+          cpus: "2.0"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]  # RTX 2070 (8GB) - freed up for PII services
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pii-blur.rule=PathPrefix(`/api/pii`)"
+      - "traefik.http.routers.pii-blur.priority=2147483647"
+      - "traefik.http.routers.pii-blur.entrypoints=web,websecure"
+      - "traefik.http.services.pii-blur.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.pii-blur-strip.stripprefix.prefixes=/api/pii"
+      - "traefik.http.routers.pii-blur.middlewares=oauth2-errors,oauth2-auth,pii-blur-strip"
+
+  # ==========================================================================
+  # Audio Copyright Detection & AI Replacement (CPU - No GPU needed)
+  # ==========================================================================
+  audio-copyright-api:
+    build:
+      context: ./audio-copyright
+      dockerfile: Dockerfile
+    container_name: audio-copyright-api
+    restart: unless-stopped
+    environment:
+      - MUSICGEN_MODEL=facebook/musicgen-small
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=4
+      - MUSIC_DB_PATH=/app/music_database
+    volumes:
+      - ./audio-copyright/music_database:/app/music_database
+      - audio-outputs:/outputs
+      - ./logs/audio-copyright:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audio-copyright.rule=PathPrefix(`/api/audio`)"
+      - "traefik.http.routers.audio-copyright.priority=2147483647"
+      - "traefik.http.routers.audio-copyright.entrypoints=web,websecure"
+      - "traefik.http.services.audio-copyright.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.audio-copyright-strip.stripprefix.prefixes=/api/audio"
+      - "traefik.http.routers.audio-copyright.middlewares=oauth2-errors,oauth2-auth,audio-copyright-strip"
+
 volumes:
   # inference-postgres-data removed - using shml-postgres
   model-cache:
     name: hf-model-cache
   z-image-outputs:
     name: z-image-outputs
+  pii-blur-outputs:
+    name: pii-blur-outputs
+  audio-outputs:
+    name: audio-outputs
 
 networks:
-  ml-platform:
+  shml-platform:
     external: true
 
 secrets:

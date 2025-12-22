@@ -78,9 +78,12 @@ class UserQuota(Base):
     max_storage_gb = Column(Integer, nullable=False, default=50)
     max_artifact_size_gb = Column(Integer, nullable=False, default=50)
     max_job_timeout_hours = Column(Integer, nullable=False, default=48)
+    max_gpu_fraction = Column(Numeric(3, 2), nullable=False, default=0.25)
     priority_weight = Column(Integer, nullable=False, default=1)
     can_use_custom_docker = Column(Boolean, default=False)
     can_skip_validation = Column(Boolean, default=False)
+    allow_no_timeout = Column(Boolean, default=False)
+    allow_exclusive_gpu = Column(Boolean, default=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -175,7 +178,12 @@ class JobQueue(Base):
     )
     user_id = Column(PGUUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     priority_score = Column(Numeric(10, 2), nullable=False, default=0.00)
-    enqueued_at = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(
+        String(50), nullable=False, default="QUEUED"
+    )  # QUEUED, RUNNING, COMPLETED, CANCELLED, FAILED
+    queued_at = Column(DateTime(timezone=True), server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
     estimated_start_time = Column(DateTime(timezone=True))
     position_in_queue = Column(Integer)
 
@@ -230,6 +238,50 @@ class AuditLog(Base):
     user_agent = Column(Text)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     success = Column(Boolean, default=True)
+
+
+class ApiKey(Base):
+    """API keys for programmatic access and service accounts"""
+
+    __tablename__ = "api_keys"
+
+    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Key identification
+    name = Column(String(100), nullable=False)
+    key_hash = Column(String(255), nullable=False, unique=True)  # SHA-256 hash
+    key_prefix = Column(
+        String(15), nullable=False
+    )  # First 12 chars for identification (shml_XXXXXXX)
+
+    # Ownership
+    user_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE")
+    )
+    service_account_type = Column(
+        String(50)
+    )  # admin, elevated_developer, developer, viewer
+
+    # Permissions
+    scopes = Column(ARRAY(Text), default=["jobs:submit", "jobs:read"])
+
+    # Lifecycle
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True))  # NULL = never expires
+    last_used_at = Column(DateTime(timezone=True))
+    revoked_at = Column(DateTime(timezone=True))
+    revoked_by = Column(PGUUID(as_uuid=True), ForeignKey("users.user_id"))
+
+    # Rotation support (24h grace period)
+    previous_key_hash = Column(String(255))
+    previous_key_valid_until = Column(DateTime(timezone=True))
+
+    # Metadata
+    description = Column(Text)
+    created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.user_id"))
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
 
 
 class SystemAlert(Base):

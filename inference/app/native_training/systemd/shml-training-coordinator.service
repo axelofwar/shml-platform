@@ -1,0 +1,55 @@
+[Unit]
+Description=SHML Native Training Coordinator
+Documentation=file:///home/axelofwar/Projects/shml-platform/inference/app/native_training/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+# Can run alongside inference
+Conflicts=
+
+[Service]
+Type=notify
+User=axelofwar
+Group=axelofwar
+
+# Working directory
+WorkingDirectory=/home/axelofwar/Projects/shml-platform/inference/app/native_training
+
+# Environment
+Environment=PYTHONPATH=/home/axelofwar/Projects/shml-platform/inference/app:/home/axelofwar/Projects/shml-platform/inference/training_library
+Environment=CUDA_VISIBLE_DEVICES=0
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=MLFLOW_TRACKING_URI=http://172.30.0.11:5000
+
+# Main process - coordinator daemon
+ExecStart=/usr/bin/python3 /home/axelofwar/Projects/shml-platform/inference/app/native_training/native_training_coordinator.py daemon
+
+# Reload configuration
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+WatchdogSec=120
+
+# Resource limits - leave room for system and inference
+MemoryMax=4G
+MemoryHigh=2G
+
+# Standard output and error
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shml-training-coordinator
+
+# Security hardening (coordinator is lightweight, doesn't need GPU)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/axelofwar/Projects/shml-platform/data
+ReadWritePaths=/home/axelofwar/Projects/shml-platform/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

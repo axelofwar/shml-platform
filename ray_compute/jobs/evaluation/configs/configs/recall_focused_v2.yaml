@@ -1,0 +1,244 @@
+# SHML Face Detection Training Configuration - Recall Focused v2
+# =================================================================
+# Optimized for maximum recall (>95%) at slight precision cost.
+# For privacy-focused applications where catching ALL faces is critical.
+#
+# Key Changes from Default (based on current training analysis):
+# - copy_paste: 0.0 → 0.3 (enable dense scene training)
+# - scale: 0.5 → 0.9 (more scale variation for small faces)
+# - box_loss_weight: 7.5 → 10.0 (better localization)
+# - cls_loss_weight: 0.5 → 0.3 (less penalty for FPs = more recall)
+# - conf_threshold: 0.25 → 0.15 (catch more faces)
+# - iou_threshold: 0.6 → 0.50 (looser NMS keeps more detections)
+# - Extended Phase 3 training (50% vs 35% of epochs)
+#
+# Usage:
+#   python face_detection_training.py --config configs/recall_focused_v2.yaml
+#
+# Created: 2025-12-11
+# Target: mAP50 > 94%, Recall > 95%, Precision > 90%
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  name: "yolov8l-face-lindevs.pt"  # Best accuracy YOLOv8l-face
+  variant: "face"
+  pretrained: true
+  single_cls: true
+  num_classes: 1
+
+# =============================================================================
+# Dataset Configuration
+# =============================================================================
+dataset:
+  name: "wider_face"
+  version: "v1.0"
+  data_dir: "/tmp/ray/data"
+  download_dataset: false  # Already downloaded from previous training
+
+# =============================================================================
+# Training Configuration - RECALL FOCUSED
+# =============================================================================
+training:
+  epochs: 100
+  batch_size: 4
+  gradient_accumulation_steps: 4  # Effective batch = 16
+
+  # Multi-Scale Training - Extended Phase 3 for fine detail recall
+  multiscale_enabled: true
+  multiscale_phases:
+    - name: "Phase 1"
+      imgsz: 640
+      epochs_ratio: 0.20  # 20% (reduced from 30%)
+      batch: 8
+      desc: "Basic patterns"
+    - name: "Phase 2"
+      imgsz: 960
+      epochs_ratio: 0.30  # 30%
+      batch: 4
+      desc: "Medium details"
+    - name: "Phase 3"
+      imgsz: 1280
+      epochs_ratio: 0.50  # 50% (increased from 35%) - more fine detail training
+      batch: 2
+      desc: "Fine details + extended recall focus"
+
+  start_phase: 1
+  resume_weights: null  # Set to checkpoint path to resume
+  imgsz: 640
+
+# =============================================================================
+# Optimizer (SOTA: AdamW + Cosine LR)
+# =============================================================================
+optimizer:
+  name: "AdamW"
+  lr0: 0.001
+  lrf: 0.01  # Final LR = lr0 * lrf
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 5.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  cos_lr: true
+
+# =============================================================================
+# Augmentation - RECALL FOCUSED
+# Key changes: copy_paste=0.3, scale=0.9, mixup=0.2
+# =============================================================================
+augmentation:
+  # Dense scene augmentation for better recall in crowded images
+  mosaic: 1.0
+  mixup: 0.2           # Slightly higher (was 0.15)
+  copy_paste: 0.3      # ENABLED - dense scene training (was 0.0)
+
+  # Scale variation for better small face detection
+  scale: 0.9           # More variation (was 0.5) - CRITICAL for recall
+  translate: 0.1
+
+  # Face-specific constraints (unchanged)
+  degrees: 0.0         # NO rotation - faces are upright
+  shear: 0.0           # NO shear
+  perspective: 0.0     # NO perspective warp
+  flipud: 0.0          # NO vertical flip
+  fliplr: 0.5          # Horizontal flip OK
+
+  # Color augmentation (unchanged)
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  erasing: 0.0
+
+# =============================================================================
+# Loss Weights - LOCALIZATION FOCUSED (better for recall)
+# =============================================================================
+loss:
+  box: 10.0            # Higher = better localization (was 7.5)
+  cls: 0.3             # Lower = less penalty for FPs (was 0.5)
+  dfl: 2.0             # Better box distribution (was 1.5)
+
+# =============================================================================
+# Detection Thresholds - RECALL FOCUSED
+# =============================================================================
+detection:
+  conf_threshold: 0.15  # Lower = catch more faces (was 0.25)
+  iou_threshold: 0.50   # Looser NMS keeps more detections (was 0.6)
+  max_det: 1500         # Higher max for crowded scenes (was 1000)
+
+# =============================================================================
+# SOTA Techniques
+# =============================================================================
+techniques:
+  label_smoothing: 0.1
+  close_mosaic: 15      # Disable mosaic last 15 epochs
+  patience: 30          # Early stopping patience
+
+  # Advantage Filtering - RELAXED for recall
+  advantage_filtering:
+    enabled: true
+    loss_threshold: 0.005  # Stricter "easy" definition (was 0.01)
+    skip_threshold: 0.2    # Fewer skips = more training (was 0.3)
+    use_soft_gating: true  # SAPO-style soft gating
+    temperature: 5.0
+    min_temperature: 1.0
+    temperature_decay: "linear"
+
+  # Curriculum Learning
+  curriculum:
+    enabled: true
+    stages:
+      - name: "Stage 1: Presence Detection"
+        epochs: 25
+        target_mAP50: 0.75
+        target_recall: 0.70
+      - name: "Stage 2: Localization"
+        epochs: 30
+        target_mAP50: 0.82
+        target_recall: 0.78
+      - name: "Stage 3: Occlusion Handling"
+        epochs: 25
+        target_mAP50: 0.88
+        target_recall: 0.85
+      - name: "Stage 4: Multi-Scale Mastery"
+        epochs: 30
+        target_mAP50: 0.92
+        target_recall: 0.92
+
+# =============================================================================
+# Hardware Configuration
+# =============================================================================
+hardware:
+  device: 0             # cuda:0 = RTX 3090 Ti
+  workers: 8
+  amp: true             # Mixed precision
+  cache: false          # Don't cache dataset in RAM
+
+# =============================================================================
+# Checkpointing & MLflow
+# =============================================================================
+output:
+  checkpoint_dir: "/tmp/ray/checkpoints/face_detection"
+  save_period: 5        # Save checkpoint every 5 epochs
+
+  mlflow:
+    experiment_name: "face_detection_recall_v2"
+    tracking_uri: "http://mlflow-nginx:80"
+    log_models: true
+    register_model: true
+    tags:
+      model_type: "face_detection"
+      architecture: "yolov8l"
+      dataset: "wider_face"
+      purpose: "privacy_protection"
+      optimization: "recall_focused_v2"
+      target_recall: ">95%"
+      target_mAP50: ">94%"
+
+# =============================================================================
+# Enhanced Multi-Scale Augmentation (SOTA)
+# =============================================================================
+enhanced_augmentation:
+  enabled: true
+  max_size: 1280
+  zoom_scale_range: [2.0, 4.0]  # Zoom in on small faces
+  small_face_threshold: 0.03    # <3% of image = small face
+  progressive_scale: true
+
+# =============================================================================
+# SAPO Learning Rate Adaptation
+# =============================================================================
+sapo:
+  enabled: true
+  reference_loss_weight: 0.1
+  warmup_ratio: 0.1
+  loss_window: 5
+
+# =============================================================================
+# Hard Negative Mining
+# =============================================================================
+hard_negative_mining:
+  enabled: true
+  pool_size: 5000
+  selection_rate: 0.3   # 30% hard negatives per batch
+  loss_threshold: 0.8   # Top 20% loss = hard
+
+# =============================================================================
+# NOTES FOR NEXT TRAINING
+# =============================================================================
+# 1. Current training (job-2a587dc74743) uses default config with:
+#    - copy_paste=0.0 (FIXED to 0.3 here)
+#    - scale=0.5 (FIXED to 0.9 here)
+#    - box=7.5, cls=0.5 (FIXED to box=10.0, cls=0.3 here)
+#
+# 2. Expected improvements from this config:
+#    - copy_paste: Better crowded scene detection (+2-5% recall)
+#    - scale=0.9: Better small face detection (+3-5% recall)
+#    - Loss weights: Better localization (+1-2% mAP50)
+#    - Lower thresholds: More detections at inference (+5-10% recall)
+#
+# 3. Resume from best checkpoint:
+#    resume_weights: "/tmp/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt"
+#
+# 4. Fine-tuning only (skip Phase 1-2):
+#    start_phase: 3
+#    resume_weights: "/path/to/checkpoint.pt"

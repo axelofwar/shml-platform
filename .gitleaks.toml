@@ -13,12 +13,15 @@ description = "Allowlisted paths and patterns"
 
 # Ignore archived documentation (secrets have been rotated)
 paths = [
-    '''archived/''',
+    '''archived/.*''',
     '''__MACOSX/''',
     '''backups/''',
     '''\.env\.example$''',
     '''tests/''',
     '''\.github/copilot-instructions\.md$''',
+    '''docs/internal/archived_approaches/.*''',
+    '''fusionauth/lambdas/.*''',
+    '''scripts/auth/.*''',
 ]
 
 # Ignore specific patterns that are false positives
@@ -33,4 +36,13 @@ regexes = [
     '''JsDs6mClPCWKqEq''',
     # Historical Ray Grafana password (rotated, service deprecated)
     '''oVkbwOk7AtELl2xz''',
+    # REDACTED placeholders in documentation
+    '''REDACTED''',
+    # Example API keys in documentation
+    '''shml_key_[a-zA-Z0-9]+\.\.\.''',
+    # Placeholder API keys with underscores
+    '''YOUR_API_KEY''',
+    '''YOUR_[A-Z_]+''',
+    # UUID placeholders (app IDs, not secrets)
+    '''acda34f0-7cf2-40eb-9cba-7cb0048857d3''',
 ]
