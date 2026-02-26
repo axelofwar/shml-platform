@@ -50,7 +50,7 @@ services:
       - "traefik.http.routers.embedding.entrypoints=web,websecure"
       - "traefik.http.services.embedding.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.embed-strip.stripprefix.prefixes=/api/embed"
-      - "traefik.http.routers.embedding.middlewares=embed-strip"
+      - "traefik.http.routers.embedding.middlewares=oauth2-errors,oauth2-auth,embed-strip"
 
 networks:
   platform:

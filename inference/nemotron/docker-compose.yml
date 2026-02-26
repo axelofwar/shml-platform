@@ -53,7 +53,7 @@ services:
       - "traefik.http.routers.nemotron.priority=2147483647"
       - "traefik.http.services.nemotron.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.nemotron-strip.stripprefix.prefixes=/api/coding"
-      - "traefik.http.routers.nemotron.middlewares=nemotron-strip"
+      - "traefik.http.routers.nemotron.middlewares=oauth2-errors,oauth2-auth,nemotron-strip"
 
     networks:
       - shml-platform
@@ -101,10 +101,10 @@ services:
       - "traefik.http.routers.nemotron-manager.priority=2147483646"
       - "traefik.http.services.nemotron-manager.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.nemotron-manager-strip.stripprefix.prefixes=/api/coding-manager"
-      - "traefik.http.routers.nemotron-manager.middlewares=nemotron-manager-strip"
+      - "traefik.http.routers.nemotron-manager.middlewares=oauth2-errors,oauth2-auth,nemotron-manager-strip"
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

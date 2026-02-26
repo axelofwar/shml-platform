@@ -271,3 +271,11 @@ https://x.com/allen_ai/status/2000616646042399047
 https://x.com/kmeanskaran/status/2000633897818956269
 
 https://x.com/latkins/status/2000637394828263866
+
+# 1/30/2026
+
+https://github.com/roboflow/rf-detr
+
+https://github.com/roboflow/trackers
+
+https://github.com/computer-vision-with-marco/yolo-training-template

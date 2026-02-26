@@ -400,6 +400,247 @@ async def status():
     )
 
 
+# =============================================================================
+# Coding Model Router - Smart GPU Yield Orchestration
+# =============================================================================
+
+PII_BLUR_URL = os.getenv("PII_BLUR_URL", "http://pii-blur-api:8000")
+CODING_FALLBACK_URL = os.getenv(
+    "CODING_FALLBACK_URL", "http://coding-model-fallback:8000"
+)
+
+
+class CodingRouteResponse(BaseModel):
+    """Response from coding route request."""
+
+    endpoint: str
+    model_name: str
+    gpu: str
+    yielded_service: Optional[str] = None
+    message: str
+
+
+@app.get("/coding/route")
+async def get_coding_route() -> CodingRouteResponse:
+    """
+    Get the best available coding model endpoint.
+
+    Priority:
+    1. Nemotron on RTX 3090 Ti (primary, best quality)
+    2. coding-model-fallback on RTX 2070 (after yielding pii-blur if needed)
+
+    This endpoint checks availability and yields resources if needed.
+    """
+    import httpx
+
+    # 1. Check if Nemotron is available (primary)
+    client = get_docker_client()
+    try:
+        container = client.containers.get(NEMOTRON_CONTAINER)
+        if container.status == "running":
+            # Verify it's actually healthy - internal Docker port is 8000
+            async with httpx.AsyncClient(timeout=3.0) as http_client:
+                try:
+                    resp = await http_client.get("http://nemotron-coding:8000/health")
+                    if resp.status_code == 200:
+                        return CodingRouteResponse(
+                            endpoint="http://nemotron-coding:8000/v1",  # Internal Docker port
+                            model_name="Nemotron-3-Nano-30B",
+                            gpu="RTX 3090 Ti (cuda:0)",
+                            message="Primary coding model available",
+                        )
+                except Exception:
+                    pass
+    except docker.errors.NotFound:
+        pass
+    except Exception as e:
+        logger.warning(f"Error checking Nemotron: {e}")
+
+    # 2. Nemotron unavailable - try to use fallback on RTX 2070
+    logger.info("Nemotron unavailable - checking RTX 2070 for coding fallback")
+
+    # Use unified yield endpoint with coding reason
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        try:
+            # Request yield from pii-blur using unified endpoint
+            resp = await http_client.post(
+                f"{PII_BLUR_URL}/api/v1/yield", params={"reason": "coding"}
+            )
+            yield_result = resp.json()
+            yield_status = yield_result.get("status")
+
+            if yield_status == "yielded":
+                logger.info("PII-blur yielded GPU - coding-model-fallback can start")
+
+                # Give coding-model-fallback time to start if not running
+                await asyncio.sleep(2)
+
+                return CodingRouteResponse(
+                    endpoint=f"{CODING_FALLBACK_URL}/v1",
+                    model_name="Qwen2.5-Coder-3B",
+                    gpu="RTX 2070 (cuda:1)",
+                    yielded_service="pii-blur-api",
+                    message="Using fallback coding model (PII-blur yielded GPU)",
+                )
+            elif yield_status == "already_yielded":
+                # PII models not loaded, GPU already free
+                return CodingRouteResponse(
+                    endpoint=f"{CODING_FALLBACK_URL}/v1",
+                    model_name="Qwen2.5-Coder-3B",
+                    gpu="RTX 2070 (cuda:1)",
+                    message="Using fallback coding model (RTX 2070 already available)",
+                )
+            else:
+                # Unexpected - yield said not_needed but Nemotron was unavailable
+                logger.warning(f"Unexpected yield status: {yield_status}")
+                return CodingRouteResponse(
+                    endpoint=f"{CODING_FALLBACK_URL}/v1",
+                    model_name="Qwen2.5-Coder-3B",
+                    gpu="RTX 2070 (cuda:1)",
+                    message=f"Using fallback coding model (yield status: {yield_status})",
+                )
+
+        except Exception as e:
+            logger.warning(f"Could not contact pii-blur for yield: {e}")
+            # Assume pii-blur is not running, fallback should be available
+            return CodingRouteResponse(
+                endpoint=f"{CODING_FALLBACK_URL}/v1",
+                model_name="Qwen2.5-Coder-3B",
+                gpu="RTX 2070 (cuda:1)",
+                message="Using fallback coding model (pii-blur unreachable)",
+            )
+
+
+@app.post("/coding/complete")
+async def coding_complete():
+    """
+    Signal that coding task is complete.
+
+    This allows pii-blur to reclaim the GPU when needed.
+    Currently a no-op since pii-blur auto-reloads on next request.
+    """
+    return {
+        "status": "acknowledged",
+        "message": "Coding complete. PII-blur will reload on next request.",
+    }
+
+
+# =============================================================================
+# Unified Yield Orchestration
+# =============================================================================
+
+
+class UnifiedYieldRequest(BaseModel):
+    """Request to yield GPU resources across services."""
+
+    reason: str = "training"  # "training" or "coding"
+    gpu_index: int = 0  # 0 = RTX 3090 Ti, 1 = RTX 2070
+    job_id: str = "unknown"
+    force: bool = False
+
+
+class UnifiedYieldResponse(BaseModel):
+    """Response from unified yield request."""
+
+    status: str  # "ready", "partial", "error"
+    yielded_services: list[str]
+    gpu_index: int
+    gpu_memory_freed_mb: Optional[int] = None
+    message: str
+
+
+@app.post("/yield", response_model=UnifiedYieldResponse)
+async def unified_yield_orchestration(
+    request: UnifiedYieldRequest,
+) -> UnifiedYieldResponse:
+    """
+    Orchestrate GPU yield across all inference services.
+
+    This is the master endpoint for GPU yield requests from:
+    - Ray training jobs (reason=training)
+    - Coding model needs (reason=coding)
+
+    For GPU 0 (RTX 3090 Ti):
+    - Stops Nemotron container if running
+
+    For GPU 1 (RTX 2070):
+    - Tells pii-blur to yield (unload models)
+    - Tells coding-model-fallback to yield if training needs it
+    """
+    import httpx
+
+    yielded_services = []
+    gpu_before = get_gpu_memory(request.gpu_index)
+    memory_before = gpu_before.get("memory_used_mb", 0)
+
+    if request.gpu_index == 0:
+        # RTX 3090 Ti - yield Nemotron
+        client = get_docker_client()
+        try:
+            container = client.containers.get(NEMOTRON_CONTAINER)
+            if container.status == "running":
+                logger.info(f"Stopping {NEMOTRON_CONTAINER} for {request.reason}...")
+                container.stop(timeout=30)
+                yielded_services.append("nemotron-coding")
+
+                # Wait for memory to free
+                await asyncio.sleep(5)
+        except docker.errors.NotFound:
+            logger.info("Nemotron container not found - GPU 0 available")
+        except Exception as e:
+            logger.error(f"Error yielding Nemotron: {e}")
+            return UnifiedYieldResponse(
+                status="error",
+                yielded_services=yielded_services,
+                gpu_index=request.gpu_index,
+                message=f"Error stopping Nemotron: {e}",
+            )
+
+    elif request.gpu_index == 1:
+        # RTX 2070 - yield pii-blur and/or coding-model-fallback
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            # Yield pii-blur
+            try:
+                resp = await http_client.post(
+                    f"{PII_BLUR_URL}/api/v1/yield",
+                    params={
+                        "reason": request.reason,
+                        "force": str(request.force).lower(),
+                    },
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get("status") in ["yielded", "already_yielded"]:
+                        yielded_services.append("pii-blur-api")
+            except Exception as e:
+                logger.warning(f"Could not yield pii-blur: {e}")
+
+            # If training, also yield coding-model-fallback
+            if request.reason == "training":
+                try:
+                    resp = await http_client.post(f"{CODING_FALLBACK_URL}/yield")
+                    if resp.status_code == 200:
+                        yielded_services.append("coding-model-fallback")
+                except Exception as e:
+                    logger.debug(f"coding-model-fallback yield skipped: {e}")
+
+    # Get memory after yield
+    await asyncio.sleep(2)
+    gpu_after = get_gpu_memory(request.gpu_index)
+    memory_after = gpu_after.get("memory_used_mb", 0)
+    memory_freed = max(0, memory_before - memory_after)
+
+    status = "ready" if yielded_services else "partial"
+
+    return UnifiedYieldResponse(
+        status=status,
+        yielded_services=yielded_services,
+        gpu_index=request.gpu_index,
+        gpu_memory_freed_mb=memory_freed if memory_freed > 0 else None,
+        message=f"Yielded {len(yielded_services)} service(s) for {request.reason}",
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
 

@@ -568,13 +568,24 @@ Be thorough and specific."""
             state["error_messages"].append(f"Vision analysis failed: {str(e)}")
             # Continue without vision context
 
-    # Retrieve relevant context from playbook
-    relevant_bullets = state["playbook"].retrieve_relevant(
+    # Build 3-tier context: session memory -> semantic retrieval -> curator lessons
+    tiered_context = state["playbook"].build_tiered_context(
         query=state["current_task"],
-        top_k=10,
-        min_utility=0.3,  # Filter low-utility bullets
+        session_id=state.get("session_id"),
+        budget_chars=12000,
+        recent_k=6,
+        semantic_k=8,
+        curator_k=4,
+        min_utility=0.3,
     )
-    context_str = state["playbook"].to_context_string(relevant_bullets)
+    context_str = tiered_context["context"]
+    logger.info(
+        "Tiered context built: "
+        f"tier1={tiered_context['tiers']['tier1_session']}, "
+        f"tier2={tiered_context['tiers']['tier2_semantic']}, "
+        f"tier3={tiered_context['tiers']['tier3_curator']}, "
+        f"chars={tiered_context['used_chars']}/{tiered_context['budget_chars']}"
+    )
 
     # Get active skill contexts
     skill_contexts = get_active_skills(state["current_task"])

@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PII Blurring Self-Hosted Research & Project Board Update** (2025-01-14)
+  - **KEY DISCOVERY**: YOLOv8-seg face segmentation model from HuggingFace (`jags/yolov8_model_segmentation-set`)
+  - Enables fully self-hosted face blurring WITHOUT external API dependencies (SAM3/Roboflow)
+  - Source: `computer-vision-with-marco/yolo-training-template` face_blurring.py script
+  - Updated Phase P4.1 in `docs/PLATFORM_IMPROVEMENTS_PROJECT_BOARD.md`:
+    - Changed architecture from SAM3 API to YOLOv8-seg self-hosted
+    - Added current implementation status table (detect ✅, blur ❌)
+    - Added comprehensive code patterns for YOLOv8-seg integration
+    - Updated Step 2 to reflect existing `inference/pii-blur/` service status
+  - Added new research section "🆕 Self-Hosted PII Segmentation Research (2025-01-14)"
+    - Links.md research findings table
+    - YOLOv8-seg vs SAM3 comparison (cost, latency, privacy)
+    - Budget allocation strategy (self-hosted vs API credits)
+  - Updated main status table with PII Content Creator progress
+  - **Self-Hosting Advantage**: YOLOv8-seg is ~10x faster, free, 100% on-premise vs SAM3 API
+
 - **Phase P8: OpenCode Hybrid Integration - 100% Self-Hosted** (2025-12-16)
   - **PRIVACY GUARANTEE**: All AI inference runs locally, zero external API calls
   - Created MCP (Model Context Protocol) server implementation in `inference/agent-service/app/mcp.py`
@@ -406,7 +422,7 @@ DRY_RUN=true ./scripts/launch_phase1_training.sh balanced
   - OAuth endpoints changed from `/application/o/` to `/oauth2/`
 - **Social Login Support**: Added OAuth providers
   - Google OAuth integration
-  - GitHub OAuth integration  
+  - GitHub OAuth integration
   - Twitter OAuth integration
 - **Public HTTPS Access**: Configured Tailscale Funnel
   - Public URL: `https://shml-platform.tail38b60a.ts.net/`
@@ -1295,37 +1311,37 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 
 #### Traefik Routing Priority (CRITICAL)
 
-**Problem**: Custom API routes at `/api/v1/*` returned 404  
-**Root Cause**: Traefik internal API uses PathPrefix(`/api`) with priority 2147483646  
-**Solution**: Set custom API router priority to 2147483647 (max int32)  
+**Problem**: Custom API routes at `/api/v1/*` returned 404
+**Root Cause**: Traefik internal API uses PathPrefix(`/api`) with priority 2147483646
+**Solution**: Set custom API router priority to 2147483647 (max int32)
 **Impact**: MLflow custom API now accessible with <10ms response time
 
 #### Ray Head Memory Allocation (CRITICAL)
 
-**Problem**: Ray head crashed with "memory available is less than -112%" error  
-**Root Cause**: Allocated 4GB object store + 2GB shm in 2GB container  
-**Solution**: Reduced object store to 1GB, increased container to 4GB  
+**Problem**: Ray head crashed with "memory available is less than -112%" error
+**Root Cause**: Allocated 4GB object store + 2GB shm in 2GB container
+**Solution**: Reduced object store to 1GB, increased container to 4GB
 **Impact**: Ray head starts successfully, all GPU jobs functional
 
 #### MLflow API Performance (CRITICAL)
 
-**Problem**: Health check endpoint took 97+ seconds, appearing as timeouts  
-**Root Cause**: Calling `client.search_experiments()` on every health check  
-**Solution**: Removed expensive MLflow query, return static response  
+**Problem**: Health check endpoint took 97+ seconds, appearing as timeouts
+**Root Cause**: Calling `client.search_experiments()` on every health check
+**Solution**: Removed expensive MLflow query, return static response
 **Impact**: Health check response time: 97,147ms → 10ms (9,700x improvement)
 
 #### Service Startup Dependencies
 
-**Problem**: Services failing to start due to race conditions  
-**Root Cause**: Docker Compose starting all services simultaneously  
-**Solution**: Phased startup script (infrastructure → core → APIs → monitoring)  
+**Problem**: Services failing to start due to race conditions
+**Root Cause**: Docker Compose starting all services simultaneously
+**Solution**: Phased startup script (infrastructure → core → APIs → monitoring)
 **Impact**: 100% successful startup, all 16 services healthy in ~90 seconds
 
 #### Orphaned Container Cleanup
 
-**Problem**: Manual `docker run` commands left containers blocking compose  
-**Root Cause**: docker-compose unaware of manually created containers  
-**Solution**: Detect and remove orphaned containers in start script  
+**Problem**: Manual `docker run` commands left containers blocking compose
+**Root Cause**: docker-compose unaware of manually created containers
+**Solution**: Detect and remove orphaned containers in start script
 **Impact**: Clean startup every time without manual intervention
 
 ---

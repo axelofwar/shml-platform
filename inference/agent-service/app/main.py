@@ -1,3 +1,5 @@
+import os
+
 """
 Agent Service FastAPI Application.
 
@@ -32,6 +34,13 @@ from .schemas import AgentRequest, AgentResponse, ApprovalRequest, ReflectionReq
 from .config import settings
 from .openai_compat import OpenAICompatibilityLayer, OpenAIChatCompletionRequest
 from .auth import get_current_user, AuthUser, require_min_role, UserRole
+from .conversation_history import (
+    ConversationTurn,
+    save_turns_batch,
+    load_history_for_context,
+    ensure_schema,
+)
+from .hybrid_router import get_hybrid_router
 from .analytics import (
     track_request,
     track_tokens,
@@ -128,12 +137,18 @@ async def lifespan(app: FastAPI):
     # Create database tables
     from .context import Base
     from .diary import Base as DiaryBase
+    from .conversation_history import ConversationTurn
 
     async with engine.begin() as conn:
+        # Ensure inference schema exists
+        await conn.execute(
+            __import__("sqlalchemy").text("CREATE SCHEMA IF NOT EXISTS inference")
+        )
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(DiaryBase.metadata.create_all)
+        await conn.run_sync(ConversationTurn.metadata.create_all)
 
-    logger.info("Database tables created")
+    logger.info("Database tables created (including conversation_turns)")
 
     # Initialize role quotas for analytics
     init_role_quotas()
@@ -155,7 +170,10 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS",
+        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+    ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -248,8 +266,8 @@ async def openai_chat_completions(request: dict):
         user_id = "openai-user"
         user_roles = ["user"]
 
-        # Initialize compatibility layer
-        # TODO: Pass actual model client
+        # Initialize compatibility layer (model_client no longer needed;
+        # routing handled internally via hybrid_router)
         compat_layer = OpenAICompatibilityLayer(model_client=None)
 
         # Handle streaming vs non-streaming
@@ -304,12 +322,36 @@ async def execute_agent(
         # Load user's playbook
         playbook = await load_playbook_from_db(db, request.user_id)
 
+        # Load conversation history for context
+        history = await load_history_for_context(
+            db, request.session_id, request.user_id
+        )
+        logger.info(
+            f"Loaded {len(history)} history turns for session={request.session_id}"
+        )
+
+        # Route via hybrid router
+        router = get_hybrid_router()
+        routing = router.route(
+            prompt=request.task,
+            request_id=request.session_id,
+        )
+        logger.info(f"Routed to {routing.model_type.value}: {routing.reasoning}")
+
+        # Persist the incoming user turn
+        await save_turns_batch(
+            db,
+            request.session_id,
+            request.user_id,
+            [{"role": "user", "content": request.task}],
+        )
+
         # Build agent workflow
         ace_agent = build_ace_agent()
 
         # Initialize state
         state: AgentState = {
-            "messages": [],
+            "messages": history,  # Inject conversation history
             "current_task": request.task,
             "task_category": request.category or "general",
             "user_id": request.user_id,
@@ -364,6 +406,19 @@ async def execute_agent(
             ),
             context_bullets_used=len(playbook.bullets),
         )
+
+        # Persist assistant response
+        final_answer = (
+            final_state.get("final_answer") or final_state.get("generator_output") or ""
+        )
+        if final_answer:
+            await save_turns_batch(
+                db,
+                request.session_id,
+                request.user_id,
+                [{"role": "assistant", "content": str(final_answer)}],
+            )
+        await db.commit()
 
         # Save updated playbook
         await save_playbook_to_db(db, playbook)
@@ -470,12 +525,35 @@ async def handle_agent_workflow(
         async with AsyncSessionLocal() as db:
             playbook = await load_playbook_from_db(db, user_id)
 
+            # Load conversation history for context
+            history = await load_history_for_context(db, request_session_id, user_id)
+            logger.info(
+                f"Loaded {len(history)} history turns for session={request_session_id}"
+            )
+
+            # Route via hybrid router
+            router = get_hybrid_router()
+            routing = router.route(
+                prompt=task,
+                attachments=attachments,
+                request_id=request_session_id,
+            )
+            logger.info(f"Routed to {routing.model_type.value}: {routing.reasoning}")
+
+            # Persist incoming user turn
+            await save_turns_batch(
+                db,
+                request_session_id,
+                user_id,
+                [{"role": "user", "content": task}],
+            )
+
             # Build agent workflow
             ace_agent = build_ace_agent()
 
             # Initial state with WebSocket manager
             initial_state = {
-                "messages": [],
+                "messages": history,  # Inject conversation history
                 "current_task": task,
                 "task_category": category,
                 "user_id": user_id,
@@ -532,6 +610,22 @@ async def handle_agent_workflow(
                 ),
                 context_bullets_used=len(playbook.bullets),
             )
+
+            # Persist assistant response
+            final_answer = (
+                final_state.get("final_answer")
+                or final_state.get("generator_output")
+                or ""
+            )
+            if final_answer:
+                await save_turns_batch(
+                    db,
+                    request_session_id,
+                    user_id,
+                    [{"role": "assistant", "content": str(final_answer)}],
+                )
+
+            await db.commit()
 
             # Save updated playbook
             await save_playbook_to_db(db, playbook)
@@ -889,6 +983,41 @@ async def update_bullet_feedback(
 # ============================================================================
 
 from .mcp import mcp_server, MCPToolResult
+
+
+@app.post("/api/v1/routing/preview")
+async def preview_routing(request: dict):
+    """Preview routing decision without executing.
+
+    Useful for debugging and testing routing logic.
+    """
+    router = get_hybrid_router()
+    prompt = request.get("prompt", "")
+    attachments = request.get("attachments")
+    selection = router.route(prompt, attachments, request_id="preview")
+    return {
+        "model_type": selection.model_type.value,
+        "model_name": selection.model_name,
+        "reasoning": selection.reasoning,
+        "gpu": selection.gpu,
+        "confidence": selection.confidence,
+    }
+
+
+@app.get("/api/v1/sessions/{session_id}/history")
+async def get_session_history(
+    session_id: str,
+    limit: int = 20,
+    db=Depends(get_db),
+):
+    """Get conversation history for a session.
+
+    Backward-compatible: returns standard message format.
+    """
+    from .conversation_history import load_history
+
+    messages = await load_history(db, session_id, limit=limit)
+    return {"session_id": session_id, "messages": messages, "count": len(messages)}
 
 
 @app.get("/mcp/health")

@@ -380,6 +380,113 @@ class AgentPlaybook:
 
         return "\n".join(lines)
 
+    def build_tiered_context(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+        budget_chars: int = 12000,
+        recent_k: int = 6,
+        semantic_k: int = 8,
+        curator_k: int = 4,
+        min_utility: float = 0.3,
+    ) -> Dict[str, Any]:
+        """Build 3-tier context for prompt construction.
+
+        Tiers:
+        1) Recent session memory (short-term continuity)
+        2) Semantic retrieval for current query (task relevance)
+        3) Curator lessons with high utility (long-term memory)
+        """
+        selected_ids = set()
+        section_lines: List[str] = []
+        used_chars = 0
+        dropped_count = 0
+
+        def append_line(line: str) -> bool:
+            nonlocal used_chars, dropped_count
+            line_len = len(line) + 1
+            if used_chars + line_len > budget_chars:
+                dropped_count += 1
+                return False
+            section_lines.append(line)
+            used_chars += line_len
+            return True
+
+        def append_tier(title: str, bullets: List[ContextBullet]) -> int:
+            if not bullets:
+                return 0
+
+            kept = 0
+            if append_line(title):
+                for bullet in bullets:
+                    utility = bullet.get_utility_score()
+                    avg_rubric = bullet.get_average_rubric_score()
+                    content = bullet.content.strip().replace("\n", " ")
+                    line = (
+                        f"- [{bullet.category}] {content} "
+                        f"(utility: {utility:.2f}, quality: {avg_rubric:.2f})"
+                    )
+                    if append_line(line):
+                        selected_ids.add(bullet.id)
+                        kept += 1
+                append_line("")
+            return kept
+
+        # Tier 1: recent same-session bullets
+        tier1_recent: List[ContextBullet] = []
+        if session_id:
+            tier1_recent = sorted(
+                [b for b in self.bullets if b.session_id == session_id],
+                key=lambda b: b.timestamp,
+                reverse=True,
+            )[:recent_k]
+            tier1_recent.reverse()  # preserve chronological order
+
+        # Tier 2: semantic retrieval
+        tier2_semantic = self.retrieve_relevant(
+            query=query,
+            top_k=semantic_k,
+            min_utility=min_utility,
+        )
+        tier2_semantic = [b for b in tier2_semantic if b.id not in selected_ids]
+
+        # Tier 3: high-utility curator lessons
+        tier3_curator = sorted(
+            [
+                b
+                for b in self.bullets
+                if b.category == "curator"
+                and b.get_utility_score() >= min_utility
+                and b.id not in selected_ids
+            ],
+            key=lambda b: (b.get_utility_score(), b.timestamp),
+            reverse=True,
+        )[:curator_k]
+
+        tier1_kept = append_tier("## Tier 1 — Session Memory", tier1_recent)
+        tier2_semantic = [b for b in tier2_semantic if b.id not in selected_ids]
+        tier2_kept = append_tier("## Tier 2 — Relevant Knowledge", tier2_semantic)
+        tier3_curator = [b for b in tier3_curator if b.id not in selected_ids]
+        tier3_kept = append_tier("## Tier 3 — Long-term Lessons", tier3_curator)
+
+        if not section_lines:
+            context_text = "No relevant context found."
+        else:
+            context_text = "\n".join(section_lines).rstrip()
+
+        return {
+            "context": context_text,
+            "tiers": {
+                "tier1_session": tier1_kept,
+                "tier2_semantic": tier2_kept,
+                "tier3_curator": tier3_kept,
+            },
+            "total_bullets": tier1_kept + tier2_kept + tier3_kept,
+            "used_chars": used_chars,
+            "budget_chars": budget_chars,
+            "dropped_count": dropped_count,
+        }
+
 
 # Persistence functions for PostgreSQL integration
 

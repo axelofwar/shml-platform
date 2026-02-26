@@ -1,3 +1,5 @@
+import os
+
 """Inference Gateway - Unified API with queue, history, and rate limiting."""
 
 import time
@@ -60,7 +62,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS",
+        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+    ).split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )

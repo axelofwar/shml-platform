@@ -250,6 +250,57 @@ class OpenAICompatibilityLayer:
             for msg in openai_messages
         ]
 
+    def _resolve_endpoint(
+        self, model_preference: str, prompt: str = ""
+    ) -> tuple[str, str]:
+        """Resolve model endpoint using hybrid router when available.
+
+        Falls back to hardcoded mapping if router unavailable.
+
+        Returns:
+            (endpoint_url, model_display_name)
+        """
+        try:
+            from .hybrid_router import get_hybrid_router
+
+            router = get_hybrid_router()
+            selection = router.route(
+                prompt=prompt, request_id=f"openai-compat-{uuid.uuid4().hex[:6]}"
+            )
+            # Map model_type to endpoint
+            model_type = selection.model_type.value
+            endpoint_map = {
+                "qwen-coder": "http://nemotron-coding:8000/v1/chat/completions",
+                "qwen3-vl": "http://qwen3-vl-api:8000/v1/chat/completions",
+                "z-image": "http://z-image-api:8000/v1/images/generations",
+            }
+            endpoint = endpoint_map.get(
+                model_type, "http://nemotron-coding:8000/v1/chat/completions"
+            )
+            logger.info(
+                f"Hybrid router resolved: {model_type} → {endpoint} "
+                f"(conf={selection.confidence:.2f})"
+            )
+            return endpoint, model_type
+        except Exception as e:
+            logger.warning(f"Hybrid router unavailable, using fallback: {e}")
+
+        # Fallback: hardcoded mapping
+        if "30b" in model_preference.lower() or "quality" in model_preference.lower():
+            return (
+                "http://nemotron-coding:8000/v1/chat/completions",
+                "nemotron-coding",
+            )
+        elif "vision" in model_preference.lower() or "vl" in model_preference.lower():
+            return (
+                "http://qwen3-vl-api:8000/v1/chat/completions",
+                "qwen3-vl",
+            )
+        return (
+            "http://nemotron-coding:8000/v1/chat/completions",
+            "nemotron-coding",
+        )
+
     async def _call_model(
         self,
         messages: List[Dict[str, Any]],
@@ -258,20 +309,22 @@ class OpenAICompatibilityLayer:
         model_preference: str,
     ) -> tuple[str, str]:
         """
-        Call inference model (non-streaming).
+        Call inference model (non-streaming) via hybrid router.
 
         Returns:
             (response_text, model_used)
         """
-        # Determine which model to use
-        if "30b" in model_preference.lower() or "quality" in model_preference.lower():
-            model_endpoint = "http://nemotron-coding:8000/v1/chat/completions"
-            model_name = "nemotron-coding"
-        else:
-            model_endpoint = "http://coding-model-fallback:8000/v1/chat/completions"
-            model_name = "qwen-coder-7b"
+        # Extract prompt for routing decision
+        prompt = ""
+        if messages:
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                "",
+            )
+            prompt = last_user if isinstance(last_user, str) else str(last_user)
 
-        # Use httpx for async HTTP (SOTA best practice)
+        model_endpoint, model_name = self._resolve_endpoint(model_preference, prompt)
+
         import httpx
 
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -328,13 +381,16 @@ class OpenAICompatibilityLayer:
         Yields:
             Chunks with content, model, finish_reason
         """
-        # Determine which model to use
-        if "30b" in model_preference.lower() or "quality" in model_preference.lower():
-            model_endpoint = "http://nemotron-coding:8000/v1/chat/completions"
-            model_name = "nemotron-coding"
-        else:
-            model_endpoint = "http://coding-model-fallback:8000/v1/chat/completions"
-            model_name = "qwen-coder-7b"
+        # Resolve endpoint via hybrid router
+        prompt = ""
+        if messages:
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                "",
+            )
+            prompt = last_user if isinstance(last_user, str) else str(last_user)
+
+        model_endpoint, model_name = self._resolve_endpoint(model_preference, prompt)
 
         import httpx
 

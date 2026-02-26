@@ -4,25 +4,35 @@ uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
 # Core dependencies - numpy installed separately in Dockerfile first
-scipy==1.11.4
+scipy>=1.11.4
 
 # Computer vision - pinned
-opencv-python-headless==4.9.0.80
-Pillow==10.2.0
+opencv-python-headless>=4.9.0.80
+Pillow>=10.2.0
 
-# PyTorch ecosystem - all pinned to same CUDA version
-torch==2.1.0
-torchvision==0.16.0
+# PyTorch - DO NOT PIN, use base image version (2.2.1)
+# torch and torchvision come from pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
 
 # YOLO - pin specific version to avoid iteration
-# YOLOv8m-Face model downloaded from HuggingFace at runtime
-ultralytics==8.1.0
+# YOLOv11m-Face model downloaded from HuggingFace at runtime
+ultralytics>=8.3.0
+
+# RF-DETR - SOTA transformer detection (DINOv2 backbone)
+# Used as fallback for hard cases (low confidence detections)
+rfdetr>=1.4.0
 
 # HuggingFace for model downloads
-huggingface_hub==0.20.3
+huggingface_hub>=0.20.3
+
+# SOTA Face Segmentation - SegFormer via transformers
+transformers>=4.37.0
+
+# SOTA Video Tracking - BoxMOT (includes BoT-SORT, ByteTrack, etc.)
+# Requires torch>=2.2.1 (satisfied by base image)
+boxmot>=10.0.0
 
 # ByteTrack for temporal consistency - use lapx (maintained fork with wheels)
-lapx==0.5.10.post1
+lapx>=0.5.10
 
 # Video processing - pinned
 moviepy==1.0.3

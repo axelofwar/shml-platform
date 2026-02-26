@@ -664,7 +664,7 @@ services:
       - "traefik.http.routers.pushgateway.entrypoints=web,websecure"
       - "traefik.http.services.pushgateway.loadbalancer.server.port=9091"
       - "traefik.http.middlewares.pushgateway-strip.stripprefix.prefixes=/pushgateway"
-      - "traefik.http.routers.pushgateway.middlewares=pushgateway-strip"
+      - "traefik.http.routers.pushgateway.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,pushgateway-strip"
       - "traefik.http.routers.pushgateway.priority=100"
 
   unified-grafana:

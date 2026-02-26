@@ -1449,10 +1449,10 @@ start_all_services() {
     # Phase 9c: Chat UI Service (Web interface for chat)
     # =========================================================================
     log_info "━━━ Phase 9c: Chat UI Service ━━━"
-    if [ -f "chat-ui/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
         echo "Starting: Chat UI (Web interface)..."
         ensure_network
-        docker compose --env-file .env -f chat-ui/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
 
         # Wait for Chat UI to be healthy
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT || log_warn "Chat UI may still be starting"
@@ -2115,9 +2115,9 @@ start_inference() {
     fi
 
     # Chat UI (Developer+ access)
-    if [ -f "chat-ui/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
         echo "Starting chat UI..."
-        docker compose --env-file .env -f chat-ui/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT
     fi
 
@@ -2287,7 +2287,7 @@ stop_inference() {
     docker compose --env-file .env -f inference/coding-model/docker-compose.yml stop 2>/dev/null || true
     docker compose --env-file .env -f inference/chat-api/docker-compose.yml stop 2>/dev/null || true
     docker compose --env-file .env -f inference/agent-service/docker-compose.yml stop 2>/dev/null || true
-    docker compose --env-file .env -f chat-ui/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f chat-ui-v2/docker-compose.yml stop 2>/dev/null || true
     log_success "Inference services stopped"
 }
 

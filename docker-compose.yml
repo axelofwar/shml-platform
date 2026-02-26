@@ -16,7 +16,7 @@
 #   ray_compute/docker-compose.yml     - Ray compute cluster
 #   inference/coding-model/docker-compose.yml - Coding models (30B + 3B)
 #   inference/chat-api/docker-compose.yml     - Chat API
-#   chat-ui/docker-compose.yml         - Chat UI
+#   chat-ui-v2/docker-compose.yml      - Chat UI
 #
 # Usage:
 #   ./start_all_safe.sh                # Full restart (recommended)

@@ -1,3 +1,5 @@
+import os
+
 """Z-Image FastAPI service - Photorealistic image generation."""
 
 import uuid
@@ -42,7 +44,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS",
+        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+    ).split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )

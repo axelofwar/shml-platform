@@ -149,8 +149,11 @@ export default function VideoStudio({ className }: VideoStudioProps) {
 
       // Handle drawing modes
       fabricCanvasRef.current.isDrawingMode = drawMode === 'freehand'
-      fabricCanvasRef.current.freeDrawingBrush.width = 5
-      fabricCanvasRef.current.freeDrawingBrush.color = 'rgba(255, 0, 0, 0.5)'
+      const brush = fabricCanvasRef.current.freeDrawingBrush
+      if (brush) {
+        brush.width = 5
+        brush.color = 'rgba(255, 0, 0, 0.5)'
+      }
     }
 
     return () => {
