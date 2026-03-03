@@ -396,10 +396,8 @@ jobs:
   fusionauth-live-tests:
     name: FusionAuth SDK Live Integration Tests
     runs-on: ubuntu-latest
-    # Only run if secrets are available and marked ready
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready-to-merge'))
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
