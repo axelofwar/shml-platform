@@ -803,17 +803,19 @@ def find_models():
         "yolov8l": "yolov8l.pt",
     }
 
-    # Alternative paths (host paths for direct execution)
+    # Alternative paths (configurable via CHECKPOINT_DIR env var)
+    _ckpt_base = os.environ.get("CHECKPOINT_DIR", "/tmp/ray/checkpoints/face_detection")
+    _data_base = os.environ.get("DATA_DIR", "/tmp/ray/data")
     alt_paths = {
-        # Phase 4 YOLOv8m-P2 (latest training, job-b76f7ec4973e)
-        "phase4_yolov8m_p2": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_4_yolov8m_p2_20251213_070739/weights/best.pt",
+        # Phase 4 YOLOv8m-P2 (latest training)
+        "phase4_yolov8m_p2": f"{_ckpt_base}/phase_4_yolov8m_p2_20251213_070739/weights/best.pt",
         # Previous curriculum phases
-        "phase3_curriculum": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt",
-        "phase2_curriculum": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_2_phase_2/weights/best.pt",
-        "phase1_curriculum": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_1_phase_1/weights/best.pt",
+        "phase3_curriculum": f"{_ckpt_base}/phase_3_phase_3/weights/best.pt",
+        "phase2_curriculum": f"{_ckpt_base}/phase_2_phase_2/weights/best.pt",
+        "phase1_curriculum": f"{_ckpt_base}/phase_1_phase_1/weights/best.pt",
         # Base models
-        "yolov8m": "/home/axelofwar/Projects/shml-platform/yolov8m.pt",
-        "yolov8l_face": "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/yolov8l-face.pt",
+        "yolov8m": f"{_data_base}/yolov8m.pt",
+        "yolov8l_face": f"{_data_base}/yolov8l-face.pt",
     }
 
     found_models = {}

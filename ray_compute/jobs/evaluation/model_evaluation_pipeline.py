@@ -513,7 +513,9 @@ def register_models_in_mlflow(
     logger.info(f"Using experiment ID: {experiment_id}")
 
     # Create registered model
-    registered_model_name = "face-detection-pii"
+    registered_model_name = os.environ.get(
+        "MLFLOW_REGISTRY_MODEL_NAME", "face-detection-yolov8l-p2"
+    )
     mlflow_client.get_or_create_registered_model(registered_model_name)
 
     run_ids = {}

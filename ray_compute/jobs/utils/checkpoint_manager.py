@@ -14,7 +14,7 @@ Usage:
 
     # After training
     manager.register_model(
-        model_name="face-detection-yolov8l",
+        model_name="face-detection-yolov8l-p2",
         model_version="phase1-v1",
         model_path=str(manager.local_dir / "best.pt")
     )

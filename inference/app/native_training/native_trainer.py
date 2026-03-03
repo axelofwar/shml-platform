@@ -39,6 +39,39 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import requests
 
+# ═══════════════════════════════════════════════════════════════════════════
+# GPU YIELD: Must be called BEFORE importing torch to free VRAM
+# ═══════════════════════════════════════════════════════════════════════════
+_gpu_yield_available = False
+try:
+    # Try multiple import paths (native env vs ray container vs relative)
+    _yield_paths = [
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "..", "ray_compute", "jobs"
+        ),
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "ray_compute", "jobs"
+        ),
+    ]
+    for _p in _yield_paths:
+        _p = os.path.abspath(_p)
+        if os.path.isdir(_p) and _p not in sys.path:
+            sys.path.insert(0, _p)
+    from utils.gpu_yield import yield_gpu_for_training, reclaim_gpu_after_training
+
+    _gpu_yield_available = True
+except ImportError:
+    pass
+
+if _gpu_yield_available:
+    _native_job_id = os.environ.get("RAY_JOB_ID", f"native-trainer-{os.getpid()}")
+    yield_gpu_for_training(gpu_id=0, job_id=_native_job_id, timeout=30)
+else:
+    _native_job_id = f"native-trainer-{os.getpid()}"
+    print(
+        "\u26a0\ufe0f  GPU yield not available — inference models may still be using VRAM"
+    )
+
 import torch
 import torch.cuda
 from torch.cuda.amp import autocast, GradScaler
@@ -669,6 +702,13 @@ class SOTATrainer:
             logger.info(f"Training complete! Best mAP: {self.state.best_map:.4f}")
             self.mlflow.end_run("FINISHED")
 
+            # Reclaim GPU for inference services
+            if _gpu_yield_available:
+                try:
+                    reclaim_gpu_after_training(gpu_id=0, job_id=_native_job_id)
+                except Exception as e:
+                    logger.warning(f"GPU reclaim failed: {e}")
+
         except SystemExit:
             # Graceful shutdown
             logger.info("Graceful shutdown - saving final checkpoint")
@@ -676,11 +716,23 @@ class SOTATrainer:
                 self.model, self.state, scaler=self.scaler
             )
             self.mlflow.end_run("KILLED")
+            # Reclaim GPU on shutdown
+            if _gpu_yield_available:
+                try:
+                    reclaim_gpu_after_training(gpu_id=0, job_id=_native_job_id)
+                except Exception:
+                    pass
             raise
 
         except Exception as e:
             logger.error(f"Training failed: {e}")
             self.mlflow.end_run("FAILED")
+            # Reclaim GPU on failure
+            if _gpu_yield_available:
+                try:
+                    reclaim_gpu_after_training(gpu_id=0, job_id=_native_job_id)
+                except Exception:
+                    pass
             raise
 
 

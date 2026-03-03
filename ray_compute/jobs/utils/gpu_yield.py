@@ -23,9 +23,18 @@ Usage:
     # At the end of training
     reclaim_gpu_after_training(gpu_id=0, job_id=job_id)
 
+    # --- OR use the context manager for guaranteed reclaim ---
+    from ray_compute.jobs.utils.gpu_yield import GPUTrainingSession
+
+    with GPUTrainingSession(gpu_id=0) as session:
+        import torch
+        # ... training code ...
+        # GPU is automatically reclaimed on exit (even on crash/exception)
+
 For context manager usage, see libs/training/gpu_manager.py
 """
 
+import atexit
 import os
 import sys
 import json as json_module
@@ -34,7 +43,12 @@ import urllib.error
 from typing import List, Optional, Dict, Any
 
 
-# Service endpoints
+# Service endpoints — unified GPU manager (preferred) + individual managers
+GPU_MANAGER_URLS = [
+    "http://gpu-manager:8000",  # Inside Docker network (unified)
+    "http://localhost:8012",  # Host access (unified)
+]
+
 NEMOTRON_MANAGER_URLS = [
     "http://nemotron-manager:8000",  # Inside Docker network
     "http://localhost:8011",  # Host access
@@ -44,6 +58,9 @@ Z_IMAGE_URLS = [
     "http://z-image-api:8000",  # Inside Docker network
     "http://localhost:8002",  # Host access
 ]
+
+# Track active yields for atexit safety net
+_active_yields: Dict[int, str] = {}  # gpu_id -> job_id
 
 
 def yield_gpu_for_training(
@@ -56,9 +73,11 @@ def yield_gpu_for_training(
     """
     Request inference services to yield GPU for training.
 
-    This function contacts nemotron-manager and optionally z-image to
-    unload their models and free GPU VRAM. Call this BEFORE importing
-    torch to ensure GPU memory is available.
+    This function contacts the unified GPU manager (preferred) or
+    individual service managers to unload models and free GPU VRAM.
+    Call this BEFORE importing torch to ensure GPU memory is available.
+
+    Registers an atexit handler to guarantee GPU reclaim even on crash.
 
     Args:
         gpu_id: GPU device ID (default 0 = RTX 3090 Ti)
@@ -83,6 +102,7 @@ def yield_gpu_for_training(
             "priority": 10,
             "wait_for_yield": True,
             "timeout_seconds": timeout,
+            "activate_fallback": True,
             "metadata": {
                 "script": os.path.basename(sys.argv[0]) if sys.argv else "unknown"
             },
@@ -94,8 +114,8 @@ def yield_gpu_for_training(
         print(f"🔄 Requesting GPU {gpu_id} yield for training job: {job_id}")
         print(f"═══════════════════════════════════════════════════════════════")
 
-    # 1. Yield Nemotron (LLM on RTX 3090)
-    for base_url in NEMOTRON_MANAGER_URLS:
+    # 1. Try unified GPU manager first (handles all services atomically)
+    for base_url in GPU_MANAGER_URLS:
         try:
             url = f"{base_url}/training/start"
             req = urllib.request.Request(
@@ -106,39 +126,84 @@ def yield_gpu_for_training(
             )
 
             if verbose:
-                print(f"  → Requesting Nemotron yield from {base_url}...")
+                print(f"  → Requesting yield from unified GPU manager ({base_url})...")
 
             with urllib.request.urlopen(req, timeout=timeout + 5) as response:
                 result = json_module.loads(response.read().decode("utf-8"))
 
                 if result.get("status") == "ready":
+                    stopped = result.get("services_stopped", [])
+                    started = result.get("services_started", [])
                     if verbose:
-                        print(f"    ✓ Nemotron yielded successfully")
-                        if result.get("gpu_memory_before_mb") and result.get(
-                            "gpu_memory_after_mb"
-                        ):
-                            freed_mb = (
-                                result["gpu_memory_before_mb"]
-                                - result["gpu_memory_after_mb"]
-                            )
-                            print(f"    VRAM freed: {freed_mb}MB")
+                        print(f"    ✓ GPU manager yielded successfully")
+                        if stopped:
+                            print(f"    Stopped: {', '.join(stopped)}")
+                        if started:
+                            print(f"    Started: {', '.join(started)}")
+                        freed = result.get("gpu_0_memory_freed_mb")
+                        if freed:
+                            print(f"    VRAM freed: {freed}MB")
                     success = True
                     break
                 else:
                     if verbose:
-                        print(f"    ⚠ Response: {result}")
-                    success = result.get("model_yielded", False)
-                    if success:
-                        break
+                        print(
+                            f"    ⚠ Response: {result.get('message', result.get('status'))}"
+                        )
 
         except urllib.error.URLError as e:
             if verbose:
-                print(f"    Could not reach {base_url}: {e}")
+                print(f"    GPU manager not reachable at {base_url}: {e}")
         except Exception as e:
             if verbose:
-                print(f"    Error with {base_url}: {e}")
+                print(f"    GPU manager error at {base_url}: {e}")
 
-    # 2. Optionally yield Z-Image (image gen on RTX 3090)
+    # 2. Fall back to individual Nemotron manager if unified not available
+    if not success:
+        for base_url in NEMOTRON_MANAGER_URLS:
+            try:
+                url = f"{base_url}/training/start"
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+
+                if verbose:
+                    print(f"  → Requesting Nemotron yield from {base_url}...")
+
+                with urllib.request.urlopen(req, timeout=timeout + 5) as response:
+                    result = json_module.loads(response.read().decode("utf-8"))
+
+                    if result.get("status") == "ready":
+                        if verbose:
+                            print(f"    ✓ Nemotron yielded successfully")
+                            if result.get("gpu_memory_before_mb") and result.get(
+                                "gpu_memory_after_mb"
+                            ):
+                                freed_mb = (
+                                    result["gpu_memory_before_mb"]
+                                    - result["gpu_memory_after_mb"]
+                                )
+                                print(f"    VRAM freed: {freed_mb}MB")
+                        success = True
+                        break
+                    else:
+                        if verbose:
+                            print(f"    ⚠ Response: {result}")
+                        success = result.get("model_yielded", False)
+                        if success:
+                            break
+
+            except urllib.error.URLError as e:
+                if verbose:
+                    print(f"    Could not reach {base_url}: {e}")
+            except Exception as e:
+                if verbose:
+                    print(f"    Error with {base_url}: {e}")
+
+    # 3. Optionally yield Z-Image (image gen on RTX 3090)
     if yield_z_image and gpu_id == 0:
         for base_url in Z_IMAGE_URLS:
             try:
@@ -177,7 +242,21 @@ def yield_gpu_for_training(
                 f"   If you see OOM errors, manually run: ./inference/scripts/yield_to_training.sh"
             )
 
+    # Register atexit safety net — guarantees reclaim even on unhandled exceptions
+    if success:
+        _active_yields[gpu_id] = job_id
+        atexit.register(_atexit_reclaim, gpu_id, job_id)
+
     return success
+
+
+def _atexit_reclaim(gpu_id: int, job_id: str):
+    """Safety net: reclaim GPU on process exit if not already reclaimed."""
+    if gpu_id in _active_yields:
+        print(
+            f"\n⚠️  [atexit] GPU {gpu_id} not reclaimed — auto-reclaiming for job {job_id}"
+        )
+        reclaim_gpu_after_training(gpu_id=gpu_id, job_id=job_id, verbose=True)
 
 
 def reclaim_gpu_after_training(
@@ -200,6 +279,9 @@ def reclaim_gpu_after_training(
     if job_id is None:
         job_id = os.environ.get("RAY_JOB_ID", f"training-{os.getpid()}")
 
+    # Remove from active yields (prevents atexit double-reclaim)
+    _active_yields.pop(gpu_id, None)
+
     if verbose:
         print(f"═══════════════════════════════════════════════════════════════")
         print(f"🏁 Training complete - reclaiming GPU {gpu_id} for job: {job_id}")
@@ -208,8 +290,8 @@ def reclaim_gpu_after_training(
     payload = json_module.dumps({"job_id": job_id}).encode("utf-8")
     success = False
 
-    # Notify Nemotron Manager
-    for base_url in NEMOTRON_MANAGER_URLS:
+    # 1. Try unified GPU manager first
+    for base_url in GPU_MANAGER_URLS:
         try:
             url = f"{base_url}/training/end"
             req = urllib.request.Request(
@@ -220,30 +302,67 @@ def reclaim_gpu_after_training(
             )
 
             if verbose:
-                print(f"  → Notifying Nemotron at {base_url}...")
+                print(f"  → Notifying unified GPU manager at {base_url}...")
 
             with urllib.request.urlopen(req, timeout=120) as response:
                 result = json_module.loads(response.read().decode("utf-8"))
 
-                if result.get("status") in ["started", "running"]:
+                if result.get("status") in ["restored", "started", "running"]:
+                    started = result.get("services_started", [])
                     if verbose:
                         print(
-                            f"    ✓ Nemotron restarting: {result.get('message', 'ok')}"
+                            f"    ✓ GPU manager restored services: {', '.join(started) if started else 'ok'}"
                         )
                     success = True
                     break
                 else:
                     if verbose:
-                        print(f"    Response: {result}")
+                        print(f"    Response: {result.get('message', result)}")
 
         except urllib.error.URLError as e:
             if verbose:
-                print(f"    Could not reach {base_url}: {e}")
+                print(f"    GPU manager not reachable at {base_url}: {e}")
         except Exception as e:
             if verbose:
-                print(f"    Error with {base_url}: {e}")
+                print(f"    GPU manager error at {base_url}: {e}")
 
-    # Notify Z-Image (it will auto-reload on next request)
+    # 2. Fall back to individual Nemotron Manager
+    if not success:
+        for base_url in NEMOTRON_MANAGER_URLS:
+            try:
+                url = f"{base_url}/training/end"
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+
+                if verbose:
+                    print(f"  → Notifying Nemotron at {base_url}...")
+
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    result = json_module.loads(response.read().decode("utf-8"))
+
+                    if result.get("status") in ["started", "running"]:
+                        if verbose:
+                            print(
+                                f"    ✓ Nemotron restarting: {result.get('message', 'ok')}"
+                            )
+                        success = True
+                        break
+                    else:
+                        if verbose:
+                            print(f"    Response: {result}")
+
+            except urllib.error.URLError as e:
+                if verbose:
+                    print(f"    Could not reach {base_url}: {e}")
+            except Exception as e:
+                if verbose:
+                    print(f"    Error with {base_url}: {e}")
+
+    # 3. Notify Z-Image (it will auto-reload on next request)
     for base_url in Z_IMAGE_URLS:
         try:
             url = f"{base_url}/reclaim-from-training"
@@ -275,15 +394,83 @@ def reclaim_gpu_after_training(
     return success
 
 
+class GPUTrainingSession:
+    """
+    Context manager for GPU yield/reclaim with guaranteed cleanup.
+
+    Usage:
+        with GPUTrainingSession(gpu_id=0) as session:
+            import torch
+            # ... training code ...
+            # GPU is automatically reclaimed on exit (even on crash)
+
+    The atexit handler provides a secondary safety net, but this context
+    manager is more explicit and handles exceptions cleanly.
+    """
+
+    def __init__(
+        self,
+        gpu_id: int = 0,
+        job_id: Optional[str] = None,
+        timeout: int = 60,
+        yield_z_image: bool = True,
+        verbose: bool = True,
+    ):
+        self.gpu_id = gpu_id
+        self.job_id = job_id or os.environ.get("RAY_JOB_ID", f"training-{os.getpid()}")
+        self.timeout = timeout
+        self.yield_z_image = yield_z_image
+        self.verbose = verbose
+        self.yielded = False
+
+    def __enter__(self):
+        self.yielded = yield_gpu_for_training(
+            gpu_id=self.gpu_id,
+            job_id=self.job_id,
+            timeout=self.timeout,
+            yield_z_image=self.yield_z_image,
+            verbose=self.verbose,
+        )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.verbose and exc_type is not None:
+            print(f"\n⚠️  Training exited with {exc_type.__name__}: {exc_val}")
+        reclaim_gpu_after_training(
+            gpu_id=self.gpu_id,
+            job_id=self.job_id,
+            verbose=self.verbose,
+        )
+        return False  # Don't suppress exceptions
+
+
 def check_gpu_status(gpu_id: int = 0) -> Dict[str, Any]:
     """
     Check GPU status from inference services.
+
+    Tries unified GPU manager first, falls back to individual managers.
 
     Returns:
         Dict with service statuses
     """
     status = {"gpu_id": gpu_id, "services": {}}
 
+    # Try unified GPU manager first
+    for base_url in GPU_MANAGER_URLS:
+        try:
+            url = f"{base_url}/status"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as response:
+                result = json_module.loads(response.read().decode("utf-8"))
+                status["services"]["gpu_manager"] = {
+                    "reachable": True,
+                    "status": result,
+                }
+                return status  # Unified manager has everything
+        except Exception as e:
+            status["services"]["gpu_manager"] = {"reachable": False, "error": str(e)}
+
+    # Fall back to individual services
     # Check Nemotron
     for base_url in NEMOTRON_MANAGER_URLS:
         try:
@@ -321,5 +508,6 @@ if os.environ.get("SHML_AUTO_GPU_YIELD", "").lower() == "true":
 __all__ = [
     "yield_gpu_for_training",
     "reclaim_gpu_after_training",
+    "GPUTrainingSession",
     "check_gpu_status",
 ]
