@@ -80,12 +80,12 @@ jobs:
       - name: Run Chat API tests
         run: |
           if [ -d "tests/chat-api" ]; then
-            # Check if inference module is available (only in Docker context)
-            if python -c "import sys; sys.path.insert(0,'inference/chat-api'); import app" 2>/dev/null; then
+            # Check if inference.chat_api module is importable (only in Docker context)
+            if python -c "from inference.chat_api.app import auth" 2>/dev/null; then
               pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py \
                 tests/chat-api/test_security_config.py -v --tb=short
             else
-              echo "⚠️ Chat API app module not available in CI - running config-only tests"
+              echo "⚠️ inference.chat_api not available in CI - running config-only tests"
               EXIT_CODE=0
               pytest tests/chat-api/test_security_config.py -v --tb=short \
                 -k "not chat_ui and not all_chat_interfaces and not coding_model_primary and not compose_valid and not non_admin" \
