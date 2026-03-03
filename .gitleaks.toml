@@ -13,12 +13,14 @@ description = "Allowlisted paths and patterns"
 
 # Ignore archived documentation (secrets have been rotated)
 paths = [
-    '''archived/''',
+    '''archived/.*''',
     '''__MACOSX/''',
     '''backups/''',
     '''\.env\.example$''',
     '''tests/''',
     '''\.github/copilot-instructions\.md$''',
+    '''docs/internal/archived_approaches/.*''',
+    '''fusionauth/lambdas/.*''',
 ]
 
 # Ignore specific patterns that are false positives
@@ -30,7 +32,19 @@ regexes = [
     '''<[A-Z_]+>''',
     '''\$\{[A-Z_]+\}''',
     '''sk-1234567890''',
-    '''JsDs6mClPCWKqEq''',
-    # Historical Ray Grafana password (rotated, service deprecated)
-    '''oVkbwOk7AtELl2xz''',
+    # REDACTED placeholders in documentation
+    '''REDACTED''',
+    # Example API keys in documentation
+    '''shml_key_[a-zA-Z0-9]+\.\.\.''',
+    # Placeholder API keys with underscores
+    '''YOUR_API_KEY''',
+    '''YOUR_[A-Z_]+''',
+    # UUID placeholders (app IDs, not secrets)
+    '''acda34f0-7cf2-40eb-9cba-7cb0048857d3''',
+]
+
+# Allowlist specific commits/findings (false positives in git history)
+commits = [
+    # UI_VERIFICATION_AND_FIXES.md: redacted password in docs (password was reset)
+    '''2a77ee51708ae1414a972eb1cfee1f65fe6a00db''',
 ]

@@ -197,7 +197,7 @@ fi
 
 echo ""
 echo -e "${BLUE}Production containers (should still be running):${NC}"
-prod_after=$(sg docker -c "docker ps --format '{{.Names}}'" | grep -v "dev" | grep -E "mlflow-server|ray-head|shared-postgres|ml-platform" | head -5 || true)
+prod_after=$(sg docker -c "docker ps --format '{{.Names}}'" | grep -v "dev" | grep -E "mlflow-server|ray-head|shml-postgres|ml-platform" | head -5 || true)
 if [ -n "$prod_after" ]; then
     echo "$prod_after" | while read container; do
         echo -e "  ${GREEN}●${NC} $container"

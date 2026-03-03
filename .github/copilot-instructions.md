@@ -1,10 +1,62 @@
 ````instructions
 # GitHub Copilot Instructions - ML Platform (Root)
 
-**Last Updated:** 2025-11-23
+**Last Updated:** 2025-12-09
 **Version:** 0.1.0
 **License:** MIT
 **Project:** Unified ML Platform (MLflow + Ray Compute + Traefik)
+
+---
+
+## 🚨 CRITICAL RULE #1: ALWAYS USE start_all_safe.sh FOR SERVICE MANAGEMENT
+
+### ✅ MANDATORY: Use start_all_safe.sh for ALL service restarts
+
+**ALWAYS use the start_all_safe.sh script:**
+```bash
+# Restart specific service stack
+./start_all_safe.sh restart ray       # Restart Ray services only
+./start_all_safe.sh restart mlflow    # Restart MLflow services only
+./start_all_safe.sh restart infra     # Restart infrastructure only
+./start_all_safe.sh restart inference # Restart inference services only
+
+# Start specific service stack
+./start_all_safe.sh start ray
+./start_all_safe.sh start mlflow
+
+# Stop specific service stack
+./start_all_safe.sh stop ray
+./start_all_safe.sh stop mlflow
+
+# Check platform status
+./start_all_safe.sh status
+```
+
+**WHY use start_all_safe.sh:**
+- ✅ Handles database migrations automatically
+- ✅ Ensures proper startup order (dependencies)
+- ✅ Cleans up orphaned containers
+- ✅ Validates service health before proceeding
+- ✅ Prevents race conditions and corruption
+- ✅ Provides clear status feedback
+
+### ❌ NEVER use these commands directly:
+```bash
+# ❌ WRONG - skips migrations, wrong order, orphaned containers
+docker-compose -f ray_compute/docker-compose.yml restart ray-compute-ui
+docker compose up -d --build ray-compute-ui
+docker-compose down
+
+# ❌ WRONG - kills ALL services including active jobs
+./stop_all.sh  # Only use if explicitly requested by user
+```
+
+**CRITICAL:** Restarting services without start_all_safe.sh kills:
+- Active Ray training jobs (hours of GPU compute lost)
+- MLflow logging connections (corrupts experiment tracking)
+- Loaded inference models (RTX 2070/3090 VRAM states)
+- WebSocket sessions and active workflows
+- Database migrations are skipped (data corruption risk)
 
 ---
 
@@ -428,6 +480,52 @@ docker-compose down --remove-orphans
 # Phase 4: Monitoring
 ```
 
+### 5. OAuth2-Proxy Auth Header Trust (CRITICAL for APIs)
+
+**Problem:** Backend APIs return 401/403 even after user authenticates via OAuth2-Proxy
+**Root Cause:** OAuth2-Proxy sets headers (X-Auth-Request-Email, etc.) but backend APIs don't know to trust them
+
+**Solution:** Configure backend APIs to trust OAuth2-Proxy forwarded headers
+
+**Pattern:** (Similar to Grafana's `GF_AUTH_PROXY_ENABLED=true`)
+
+```bash
+# In .env:
+PROXY_AUTH_ENABLED=true
+PROXY_AUTH_HEADER=X-Auth-Request-Email
+PROXY_AUTH_USER_HEADER=X-Auth-Request-User
+PROXY_AUTH_GROUPS_HEADER=X-Auth-Request-Groups
+```
+
+```python
+# In FastAPI:
+async def get_current_user_from_proxy(request: Request) -> Optional[dict]:
+    if os.getenv("PROXY_AUTH_ENABLED", "false").lower() != "true":
+        return None
+    email = request.headers.get("X-Auth-Request-Email")
+    if email:
+        return {"email": email, "user": email.split("@")[0]}
+    return None
+```
+
+**When to apply:**
+- ✅ Any FastAPI/Flask API behind OAuth2-Proxy forwardAuth
+- ✅ APIs that need user identity (not just "authenticated")
+- ❌ Static sites (no backend auth needed)
+- ❌ Services with native proxy auth (Grafana already has `GF_AUTH_PROXY_ENABLED`)
+
+**Auth Pattern Reference:**
+
+| Service | Auth Type | Configuration |
+|---------|-----------|---------------|
+| MLflow UI | No backend auth | N/A |
+| Grafana | Native proxy auth | `GF_AUTH_PROXY_ENABLED=true` |
+| Ray UI/API | Custom proxy auth | `PROXY_AUTH_ENABLED=true` |
+| Homer | No backend auth | N/A |
+| Custom APIs | Custom proxy auth | Implement header extraction |
+
+**See TROUBLESHOOTING.md "Ray UI 401/403 After OAuth Login" for full details.**
+
 **See LESSONS_LEARNED.md for complete patterns**
 
 ---
@@ -436,20 +534,39 @@ docker-compose down --remove-orphans
 
 ### Platform Management
 
+**✅ ALWAYS use start_all_safe.sh for service management:**
+
 ```bash
-# Start entire platform
-./start_all.sh
+# Restart specific service stack (CORRECT METHOD)
+./start_all_safe.sh restart ray       # Restart Ray services
+./start_all_safe.sh restart mlflow    # Restart MLflow services
+./start_all_safe.sh restart infra     # Restart Traefik/OAuth/FusionAuth
+./start_all_safe.sh restart inference # Restart inference services
 
-# Stop entire platform
-./stop_all.sh
-
-# Check all services
+# Check all services status (read-only, always safe)
+./start_all_safe.sh status
 ./check_platform_status.sh
 
-# View specific service logs
+# View specific service logs (read-only, always safe)
 docker logs mlflow-server -f
 docker logs ray-compute-api -f
+docker logs oauth2-proxy -f
+
+# ONLY if user EXPLICITLY requests stopping ALL services:
+./stop_all.sh  # ⚠️ STOPS ALL SERVICES including active training jobs
 ```
+
+**⚠️ WARNING:** Restarting services interrupts:
+- Active Ray training jobs (hours of GPU time lost)
+- MLflow logging connections
+- Inference model loading states
+- WebSocket connections
+
+**start_all_safe.sh ensures:**
+- Database migrations run before services start
+- Proper dependency ordering (postgres → app → ui)
+- Orphaned containers are cleaned up
+- Health checks validate services before proceeding
 
 ### Documentation Updates
 

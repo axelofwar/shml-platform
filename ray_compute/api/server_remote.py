@@ -49,7 +49,10 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS",
+        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+    ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,7 +60,7 @@ app.add_middleware(
 
 # Configuration
 RAY_ADDRESS = os.getenv("RAY_ADDRESS", "http://127.0.0.1:8265")
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:8080")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80")
 JOB_WORKSPACE = os.getenv("JOB_WORKSPACE", "/opt/ray/job_workspaces")
 ARTIFACT_RETENTION_HOURS = int(os.getenv("ARTIFACT_RETENTION_HOURS", "24"))
 API_KEY_ENABLED = os.getenv("API_KEY_ENABLED", "false").lower() == "true"

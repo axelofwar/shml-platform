@@ -29,12 +29,14 @@ All test scripts and files for the ML Platform.
 - **unit/inference/test_config.py** - Configuration unit tests
 - **unit/inference/test_schemas.py** - Schema validation tests
 - **unit/inference/test_utils.py** - Utility function tests
+- **unit/ray_compute/test_benchmarking_regression.py** - Benchmark regression threshold logic
+- **unit/ray_compute/test_mlflow_artifact_policy.py** - MLflow artifact-only source policy
 
 ## Running Tests
 
 ### All Services Health Check
 ```bash
-cd /home/axelofwar/Projects/shml-platform/shml-platform
+cd $PROJECT_ROOT  # Your shml-platform directory
 ./tests/test_all_services.sh
 ```
 

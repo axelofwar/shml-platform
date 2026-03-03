@@ -58,10 +58,10 @@ export default function Error({
             Try again
           </button>
           <button
-            onClick={() => window.location.href = '/login'}
+            onClick={() => window.location.href = '/ray/ui'}
             className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
           >
-            Go to Login
+            Go to Dashboard
           </button>
         </div>
       </div>

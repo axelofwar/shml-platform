@@ -59,8 +59,8 @@ echo ""
 
 echo -e "${CYAN}━━━ Phase 5: Monitoring & Infrastructure ━━━${NC}"
 sudo docker compose -f docker-compose.infra.yml stop unified-grafana global-prometheus 2>&1 | grep -v "WARNING:" || true
-sudo docker compose -f docker-compose.infra.yml stop ml-platform-cadvisor ml-platform-node-exporter 2>&1 | grep -v "WARNING:" || true
-sudo docker compose -f docker-compose.infra.yml stop ml-platform-traefik ml-platform-redis shared-postgres 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f docker-compose.infra.yml stop cadvisor node-exporter 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f docker-compose.infra.yml stop traefik redis postgres 2>&1 | grep -v "WARNING:" || true
 echo -e "${GREEN}✓ Infrastructure stopped${NC}"
 echo ""
 

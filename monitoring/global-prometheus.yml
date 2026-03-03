@@ -9,6 +9,16 @@ global:
     cluster: 'ml-platform'
     service: 'global'
 
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Load alert rules
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
 # Federate from service-specific Prometheus instances
 scrape_configs:
   # MLflow Prometheus Federation
@@ -54,11 +64,25 @@ scrape_configs:
         labels:
           component: 'node-exporter'
 
+  # cAdvisor Container Metrics - with container name extraction
+  # cAdvisor reports metrics with id=/system.slice/docker-{container_id}.scope
+  # We extract the short container ID and use file_sd to map to friendly names
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
         labels:
           component: 'cadvisor'
+    metric_relabel_configs:
+      # Extract short container ID (first 12 chars) from cgroup path
+      # Format: /system.slice/docker-{64char_id}.scope -> first 12 chars of id
+      - source_labels: [id]
+        target_label: container_short_id
+        regex: '/system.slice/docker-([a-f0-9]{12})[a-f0-9]*\.scope'
+        replacement: '${1}'
+      # Keep Docker container metrics and root "/" for host-level network stats
+      - source_labels: [id]
+        regex: '(/system.slice/docker-.*\.scope|^/$)'
+        action: keep
 
   - job_name: 'traefik'
     static_configs:
@@ -66,17 +90,31 @@ scrape_configs:
         labels:
           component: 'traefik'
 
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['ml-platform-redis:6379']
-        labels:
-          component: 'redis'
+  # NOTE: PostgreSQL and Redis don't expose Prometheus metrics natively.
+  # To monitor them, add postgres_exporter and redis_exporter services.
+  # See: https://github.com/prometheus-community/postgres_exporter
+  # See: https://github.com/oliver006/redis_exporter
+  # For now, these are commented out to avoid "target down" errors.
+  #
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+  #       labels:
+  #         component: 'redis'
+  #
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+  #       labels:
+  #         component: 'postgres'
 
-  - job_name: 'postgres'
+  # Pushgateway - for batch job metrics (training jobs push here)
+  - job_name: 'pushgateway'
+    honor_labels: true  # Preserve job/instance labels from pushed metrics
     static_configs:
-      - targets: ['shared-postgres:5432']
+      - targets: ['shml-pushgateway:9091']
         labels:
-          component: 'postgres'
+          component: 'pushgateway'
 
   # DCGM Exporter - NVIDIA GPU Metrics
   - job_name: 'dcgm-exporter'
@@ -85,3 +123,20 @@ scrape_configs:
         labels:
           component: 'dcgm-exporter'
           instance: 'ml-platform-gpus'
+
+  # ML SLO Exporter - model freshness, training success, error budgets
+  - job_name: 'ml-slo-exporter'
+    scrape_interval: 60s
+    static_configs:
+      - targets: ['shml-ml-slo-exporter:9092']
+        labels:
+          component: 'ml-slo-exporter'
+
+  # Nessie Catalog - Iceberg version control metrics
+  - job_name: 'nessie'
+    scrape_interval: 30s
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ['shml-nessie:9000']
+        labels:
+          component: 'nessie-catalog'

@@ -1,0 +1,13 @@
+# Embedding Service - CPU-based sentence-transformers
+
+# FastAPI
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Sentence Transformers (CPU)
+sentence-transformers>=2.2.2
+torch>=2.0.0  # CPU version
+
+# Utilities
+numpy>=1.24.0
+pydantic>=2.5.0

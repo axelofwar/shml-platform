@@ -1,0 +1,86 @@
+version: '3.8'
+
+# OpenTelemetry Distributed Tracing Stack
+# Collects traces from Ray jobs for performance analysis
+# Accessible via Grafana at http://localhost/grafana/
+
+services:
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: ${PLATFORM_PREFIX:-shml}-tempo
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - ./monitoring/tempo/data:/tmp/tempo
+    # SECURITY: No direct port exposure - internal only
+    # ports:
+    #   - "3200:3200"   # REMOVED: Tempo HTTP
+    #   - "4317:4317"   # REMOVED: OTLP gRPC
+    #   - "4318:4318"   # REMOVED: OTLP HTTP
+    #   - "9411:9411"   # REMOVED: Zipkin
+    expose:
+      - "3200"
+      - "4317"
+      - "4318"
+      - "9411"
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=false"  # Internal service, access via Grafana datasource
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: ${PLATFORM_PREFIX:-shml}-otel-collector
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./monitoring/tempo/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    # SECURITY: No direct port exposure - internal only
+    # ports:
+    #   - "4315:4317"   # REMOVED: OTLP gRPC
+    #   - "4316:4318"   # REMOVED: OTLP HTTP
+    #   - "8889:8888"   # REMOVED: Prometheus metrics
+    #   - "13133:13133" # REMOVED: Health check
+    expose:
+      - "4317"
+      - "4318"
+      - "8888"
+      - "13133"
+    networks:
+      - platform
+    depends_on:
+      - tempo
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

@@ -1,0 +1,23 @@
+{
+  "webhook": {
+    "connectTimeout": 3000,
+    "description": "User registration notification webhook — sends Telegram alerts when new users register",
+    "eventsEnabled": {
+      "user.create": true,
+      "user.registration.create": true,
+      "user.update": false,
+      "user.delete": false,
+      "user.loginSuccess": false,
+      "user.loginFailed": false
+    },
+    "global": true,
+    "headers": {
+      "X-FusionAuth-Webhook-Secret": "${FUSIONAUTH_WEBHOOK_SECRET}"
+    },
+    "httpAuthenticationPassword": null,
+    "httpAuthenticationUsername": null,
+    "readTimeout": 5000,
+    "sslCertificate": null,
+    "url": "http://webhook-deployer:9000/webhook/fusionauth-user-registration"
+  }
+}

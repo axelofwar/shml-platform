@@ -6,8 +6,9 @@ services:
   dev-redis:
     image: redis:7-alpine
     container_name: dev-redis
+    # SECURITY: Bind dev Redis to localhost only
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -23,12 +24,13 @@ services:
     container_name: dev-postgres
     environment:
       POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev_password
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-dev_password}
       POSTGRES_DB: dev_db
     volumes:
       - dev-postgres-data:/var/lib/postgresql/data
+    # SECURITY: Bind dev Postgres to localhost only
     ports:
-      - "5434:5432"  # Different port from prod (5432) and mlflow-dev (5433)
+      - "127.0.0.1:5434:5432"  # Different port from prod (5432) and mlflow-dev (5433)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dev -d dev_db"]
       interval: 10s

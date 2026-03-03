@@ -1,0 +1,58 @@
+# Embedding Service - CPU-based sentence-transformers for RAG/codebase indexing
+# =============================================================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start inference
+# Stop:   ./start_all_safe.sh stop inference
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks created by docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
+#
+# Uses sentence-transformers/all-MiniLM-L6-v2:
+# - 384 dimensions
+# - ~90MB model size
+# - Fast CPU inference (~5ms per embedding)
+# - Good quality for code and text
+
+services:
+  embedding-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-embedding-service:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-embedding-service
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=INFO
+    networks:
+      - platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 2G
+        reservations:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Model loading takes time
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.embedding.rule=PathPrefix(`/api/embed`)"
+      - "traefik.http.routers.embedding.priority=240"
+      - "traefik.http.routers.embedding.entrypoints=web,websecure"
+      - "traefik.http.services.embedding.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.embed-strip.stripprefix.prefixes=/api/embed"
+      - "traefik.http.routers.embedding.middlewares=oauth2-errors,oauth2-auth,embed-strip"
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

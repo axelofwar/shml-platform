@@ -136,9 +136,10 @@
             "type": "basic"
           },
           "roles": [
-            {"name": "admin", "isDefault": false, "isSuperRole": true},
-            {"name": "user", "isDefault": false, "isSuperRole": false},
-            {"name": "viewer", "isDefault": true, "isSuperRole": false}
+            {"name": "admin", "isDefault": false, "isSuperRole": true, "description": "Full platform access, host control, unlimited resources"},
+            {"name": "elevated-developer", "isDefault": false, "isSuperRole": false, "description": "GitHub actions, model pulls, agent tools with limits"},
+            {"name": "developer", "isDefault": false, "isSuperRole": false, "description": "Standard dev access with rate limits"},
+            {"name": "viewer", "isDefault": true, "isSuperRole": false, "description": "Read-only access, basic chat with rate limits"}
           ]
         }
       }
@@ -151,10 +152,80 @@
           "type": "Google",
           "name": "Google",
           "enabled": true,
-          "client_id": "#{ENV.GOOGLE_CLIENT_ID}",
-          "client_secret": "#{ENV.GOOGLE_CLIENT_SECRET}",
+          "client_id": "#{ENV.GOOGLE_OAUTH_CLIENT_ID}",
+          "client_secret": "#{ENV.GOOGLE_OAUTH_CLIENT_SECRET}",
           "buttonText": "Sign in with Google",
           "scope": "openid email profile",
+          "linkingStrategy": "LinkByEmail",
+          "applicationConfiguration": {
+            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+              "enabled": true,
+              "createRegistration": true
+            },
+            "e9fdb985-9173-4e01-9d73-ac2d60d1dc8e": {
+              "enabled": true,
+              "createRegistration": false
+            },
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+              "enabled": true,
+              "createRegistration": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/identity-provider/3e7aa44f-f1da-4805-bc67-86587dd446a5",
+      "body": {
+        "identityProvider": {
+          "type": "ExternalJWT",
+          "name": "GitHub",
+          "enabled": true,
+          "oauth2": {
+            "authorization_endpoint": "https://github.com/login/oauth/authorize",
+            "token_endpoint": "https://github.com/login/oauth/access_token",
+            "userinfo_endpoint": "https://api.github.com/user"
+          },
+          "client_id": "#{ENV.GITHUB_OAUTH_CLIENT_ID}",
+          "client_secret": "#{ENV.GITHUB_OAUTH_CLIENT_SECRET}",
+          "buttonText": "Sign in with GitHub",
+          "scope": "user:email",
+          "linkingStrategy": "LinkByEmail",
+          "applicationConfiguration": {
+            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+              "enabled": true,
+              "createRegistration": true
+            },
+            "e9fdb985-9173-4e01-9d73-ac2d60d1dc8e": {
+              "enabled": true,
+              "createRegistration": false
+            },
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+              "enabled": true,
+              "createRegistration": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/identity-provider/45bb233c-0901-4236-b5ca-ac46e2e0a5a5",
+      "body": {
+        "identityProvider": {
+          "type": "ExternalJWT",
+          "name": "Twitter",
+          "enabled": true,
+          "oauth2": {
+            "authorization_endpoint": "https://twitter.com/i/oauth2/authorize",
+            "token_endpoint": "https://api.twitter.com/2/oauth2/token",
+            "userinfo_endpoint": "https://api.twitter.com/2/users/me"
+          },
+          "client_id": "#{ENV.TWITTER_OAUTH_CLIENT_ID}",
+          "client_secret": "#{ENV.TWITTER_OAUTH_CLIENT_SECRET}",
+          "buttonText": "Sign in with Twitter",
+          "scope": "users.read tweet.read offline.access",
           "linkingStrategy": "LinkByEmail",
           "applicationConfiguration": {
             "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {

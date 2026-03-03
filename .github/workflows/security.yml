@@ -28,11 +28,22 @@ jobs:
         with:
           fetch-depth: 0  # Full history for better detection
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: false
+      - name: Install Gitleaks
+        run: |
+          wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf gitleaks_8.24.3_linux_x64.tar.gz
+          chmod +x gitleaks
+
+      - name: Run Gitleaks (scan current branch)
+        run: |
+          # Scan commits between base and head, with fallback for force-pushed branches
+          if git rev-parse "${{ github.event.pull_request.base.sha }}" >/dev/null 2>&1; then
+            ./gitleaks detect --source . --redact -v --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          else
+            # Fallback: scan last 50 commits or all commits on branch
+            echo "Base SHA not found (likely force-pushed), scanning recent commits..."
+            ./gitleaks detect --source . --redact -v --log-opts="-50"
+          fi
 
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main
@@ -59,10 +70,20 @@ jobs:
 
       - name: Find and audit requirements files
         run: |
-          find . -name "requirements*.txt" -type f | while read req; do
+          set +e  # Don't exit on first failure - audit all files
+          FAILED_FILES=""
+          while IFS= read -r req; do
             echo "Auditing: $req"
-            pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012 || true
-          done
+            if ! pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012; then
+              echo "::warning::Vulnerabilities found in $req"
+              FAILED_FILES="$FAILED_FILES $req"
+            fi
+          done < <(find . -name "requirements*.txt" -type f)
+          if [ -n "$FAILED_FILES" ]; then
+            echo ""
+            echo "::warning::Dependency vulnerabilities found in:$FAILED_FILES"
+            echo "These are tracked for remediation in future PRs"
+          fi
 
   # Scan Dockerfiles and images
   container-scan:

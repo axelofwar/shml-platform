@@ -290,14 +290,15 @@ def main():
 """
     )
 
-    print("4. Transition model stages:")
+    print("4. Set model alias (replaces deprecated stage transitions):")
     print(
         """
-   client.transition_model_version_stage(
+   client.set_registered_model_alias(
        name="my-awesome-model",
-       version=1,
-       stage="Production"
+       alias="champion",
+       version=1
    )
+   # Load via: models:/my-awesome-model@champion
 """
     )
 

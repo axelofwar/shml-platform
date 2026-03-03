@@ -127,6 +127,7 @@ dmypy.json
 
 # Dependencies
 node_modules/
+package-lock.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -178,6 +179,7 @@ ray_dashboard/
 *.h5
 *.hdf5
 *.pb
+*.pt
 *.pth
 *.ckpt
 *.safetensors
@@ -192,6 +194,10 @@ data/processed/
 data/train/
 data/test/
 data/val/
+data/models/
+
+# Wget artifacts
+wget-log*
 
 # Datasets
 *.csv
@@ -367,3 +373,41 @@ monitoring/homer/logo2_transparent.png
 # Large research files (store separately or use Git LFS)
 docs/research/*.pdf
 assets/logo/Gemini_Generated_Image_*.png
+
+# Archived backups (not tracked)
+backups/platform/repo_backup_*
+
+# Training data (large datasets)
+ray_compute/data/wider_face_data/
+ray_compute/data/yfcc100m/
+data/yfcc100m/
+data/models/
+*.zip
+*.tar.gz
+
+# Next.js build artifacts
+.next/
+ray_compute/web_ui/.next/
+chat-ui-v2/.next/
+
+# Loki data
+monitoring/loki/data/
+
+# Job workspaces with training data
+ray_compute/data/job_workspaces/
+
+# All ray compute data
+ray_compute/data/
+# Monitoring data directories
+monitoring/tempo/data/
+monitoring/loki/data/
+site/
+
+# Archived code (preserved in git history)
+archived/
+docs/internal/archived_originals/
+docs/internal/archived_approaches/
+monitoring/grafana/dashboards/archived/
+
+# Generated outputs (not source code)
+ray_compute/evaluation_results/

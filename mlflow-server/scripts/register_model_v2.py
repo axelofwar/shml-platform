@@ -193,21 +193,24 @@ def register_model_local(
 
         print(f"✓ Model version registered: {model_version.version}")
 
-        # Set stage if specified
+        # Set alias (migrated from deprecated transition_model_version_stage)
         if stage and stage != "None":
-            client.transition_model_version_stage(
-                name=model_name,
-                version=model_version.version,
-                stage=stage,
+            alias = {"Production": "champion", "Staging": "challenger"}.get(
+                stage, stage.lower()
             )
-            print(f"✓ Model stage set to: {stage}")
+            client.set_registered_model_alias(
+                name=model_name,
+                alias=alias,
+                version=model_version.version,
+            )
+            print(f"✓ Model alias set to: @{alias}")
 
         run_info = mlflow.active_run().info
         print("\n" + "=" * 70)
         print("Registration Complete (Local Mode)")
         print("=" * 70)
         print(f"Model: {model_name} v{model_version.version}")
-        print(f"Stage: {stage or 'None'}")
+        print(f"Alias: @{alias if stage and stage != 'None' else 'none'}")
         print(f"Run: {run_info.experiment_id}/{run_id}")
         print(f"Artifacts: Local references only")
         print("=" * 70)
@@ -348,22 +351,25 @@ def register_model_remote(
 
         print(f"✓ Model version registered: {model_version.version}")
 
-        # Set stage if specified
+        # Set alias (migrated from deprecated transition_model_version_stage)
         if stage and stage != "None":
             client = MlflowClient()
-            client.transition_model_version_stage(
-                name=model_name,
-                version=model_version.version,
-                stage=stage,
+            alias = {"Production": "champion", "Staging": "challenger"}.get(
+                stage, stage.lower()
             )
-            print(f"✓ Model stage set to: {stage}")
+            client.set_registered_model_alias(
+                name=model_name,
+                alias=alias,
+                version=model_version.version,
+            )
+            print(f"✓ Model alias set to: @{alias}")
 
         run_info = mlflow.active_run().info
         print("\n" + "=" * 70)
         print("Registration Complete (Remote Mode)")
         print("=" * 70)
         print(f"Model: {model_name} v{model_version.version}")
-        print(f"Stage: {stage or 'None'}")
+        print(f"Alias: @{alias if stage and stage != 'None' else 'none'}")
         print(f"Run: {run_info.experiment_id}/{run_id}")
         print(
             f"View: {mlflow.get_tracking_uri()}/#/experiments/{run_info.experiment_id}/runs/{run_id}"

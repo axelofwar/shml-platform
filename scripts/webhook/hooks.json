@@ -37,6 +37,30 @@
     "response-message": "Deployment triggered"
   },
   {
+    "id": "fusionauth-user-registration",
+    "execute-command": "/scripts/webhook/notify_user_registration.sh",
+    "command-working-directory": "/opt/shml-platform",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "event.user.email" },
+      { "source": "payload", "name": "event.user.username" },
+      { "source": "payload", "name": "event.user.id" },
+      { "source": "payload", "name": "event.registration.applicationId" },
+      { "source": "payload", "name": "event.type" }
+    ],
+    "trigger-rule": {
+      "match": {
+        "type": "value",
+        "value": "{{ getenv \"FUSIONAUTH_WEBHOOK_SECRET\" }}",
+        "parameter": {
+          "source": "header",
+          "name": "X-FusionAuth-Webhook-Secret"
+        }
+      }
+    },
+    "include-command-output-in-response": false,
+    "response-message": "User registration notification processed"
+  },
+  {
     "id": "health",
     "execute-command": "/bin/echo",
     "pass-arguments-to-command": [

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'premium', 'user')),
+    role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'premium', 'user', 'viewer')),
     oauth_sub VARCHAR(255) UNIQUE,  -- OAuth subject ID from Authentik
     api_key_hash VARCHAR(255),      -- Fallback API key (hashed)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -96,75 +96,71 @@ CREATE TABLE IF NOT EXISTS jobs (
     cancellation_reason TEXT
 );
 
--- Job queue table (for scheduling)
+-- Job queue table (for scheduling, matches SQLAlchemy model)
 CREATE TABLE IF NOT EXISTS job_queue (
     queue_id SERIAL PRIMARY KEY,
-    job_id VARCHAR(255) UNIQUE NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+    job_id VARCHAR(255) NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(user_id),
-    priority_score DECIMAL(10, 2) NOT NULL,  -- Calculated: role weight + user priority + age
-    estimated_vram_gb DECIMAL(5, 2),
-    estimated_runtime_minutes INTEGER,
-    can_backfill BOOLEAN DEFAULT FALSE,  -- Small jobs that can jump queue
-    added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    attempts INTEGER DEFAULT 0,
-    last_attempt_at TIMESTAMP WITH TIME ZONE
+    priority_score DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    enqueued_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    estimated_start_time TIMESTAMP WITH TIME ZONE,
+    position_in_queue INTEGER
 );
 
--- Artifact versions table
+-- Artifact versions table (SERIAL primary key for SQLAlchemy compatibility)
 CREATE TABLE IF NOT EXISTS artifact_versions (
-    version_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    artifact_id SERIAL PRIMARY KEY,
     job_id VARCHAR(255) NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
-    version_number INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
     artifact_path TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
-    compressed_size_bytes BIGINT,
-    compression_algorithm VARCHAR(50) DEFAULT 'zstd',
+    checksum VARCHAR(64),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    accessed_at TIMESTAMP WITH TIME ZONE,
-    access_count INTEGER DEFAULT 0,
-    is_latest BOOLEAN DEFAULT TRUE,
-    UNIQUE(job_id, version_number)
+    expires_at TIMESTAMP WITH TIME ZONE,
+    downloaded_count INTEGER DEFAULT 0,
+    last_accessed TIMESTAMP WITH TIME ZONE,
+    is_deleted BOOLEAN DEFAULT FALSE
 );
 
--- Resource usage tracking (for billing/analytics)
+-- Resource usage tracking (SERIAL primary key for SQLAlchemy compatibility)
 CREATE TABLE IF NOT EXISTS resource_usage_daily (
-    usage_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    usage_id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(user_id),
-    date DATE NOT NULL,
+    usage_date TIMESTAMP WITH TIME ZONE NOT NULL,
     cpu_hours DECIMAL(10, 2) DEFAULT 0,
     gpu_hours DECIMAL(10, 2) DEFAULT 0,
-    storage_gb_hours DECIMAL(10, 2) DEFAULT 0,  -- For billing
-    jobs_submitted INTEGER DEFAULT 0,
+    storage_gb DECIMAL(10, 2) DEFAULT 0,
     jobs_completed INTEGER DEFAULT 0,
-    jobs_failed INTEGER DEFAULT 0,
-    UNIQUE(user_id, date)
+    jobs_failed INTEGER DEFAULT 0
 );
 
--- Audit log
+-- Audit log (SERIAL primary key for SQLAlchemy compatibility)
 CREATE TABLE IF NOT EXISTS audit_log (
-    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    log_id SERIAL PRIMARY KEY,
     user_id UUID REFERENCES users(user_id),
     action VARCHAR(100) NOT NULL,
     resource_type VARCHAR(50),
     resource_id VARCHAR(255),
-    details JSONB,
+    details TEXT,
     ip_address INET,
-    user_agent TEXT
+    user_agent TEXT,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    success BOOLEAN DEFAULT TRUE
 );
 
--- System alerts table
+-- System alerts table (SERIAL primary key for SQLAlchemy compatibility)
 CREATE TABLE IF NOT EXISTS system_alerts (
-    alert_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    alert_type VARCHAR(50) NOT NULL,
-    severity VARCHAR(20) NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
-    title VARCHAR(255) NOT NULL,
+    alert_id SERIAL PRIMARY KEY,
+    severity VARCHAR(50) NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    alert_type VARCHAR(100) NOT NULL,
     message TEXT NOT NULL,
-    details JSONB,
+    details TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     resolved_at TIMESTAMP WITH TIME ZONE,
     resolved_by UUID REFERENCES users(user_id),
-    notified_users UUID[]
+    is_acknowledged BOOLEAN DEFAULT FALSE,
+    acknowledged_by UUID REFERENCES users(user_id),
+    acknowledged_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Indexes for performance

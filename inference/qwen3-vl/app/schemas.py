@@ -1,15 +1,45 @@
 """Pydantic schemas for Qwen3-VL API - OpenAI compatible."""
 
-from typing import List, Optional, Literal
+from typing import Annotated, List, Optional, Literal, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
 
 
+class TextContent(BaseModel):
+    """Text content part."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageURL(BaseModel):
+    """Image URL details."""
+
+    url: str  # Can be base64 data URI or HTTP(S) URL
+
+
+class ImageContent(BaseModel):
+    """Image content part."""
+
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageURL
+
+
+# Use discriminated union for efficient type detection (SOTA approach)
+# This allows Pydantic to use the 'type' field to determine which model to validate
+ContentPart = Annotated[Union[TextContent, ImageContent], Field(discriminator="type")]
+
+
 class Message(BaseModel):
-    """Chat message format."""
+    """Chat message format with multimodal support.
+
+    Supports both text-only and multimodal content:
+    - Text-only: content="Hello"
+    - Multimodal: content=[{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+    """
 
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: Union[str, List[ContentPart]]
 
 
 class ChatCompletionRequest(BaseModel):

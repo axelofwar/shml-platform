@@ -2,6 +2,8 @@
 const nextConfig = {
   output: 'standalone',
   reactStrictMode: false,
+  basePath: '/ray/ui',
+  assetPrefix: '/ray/ui',
   experimental: {
     appDir: true,
   },

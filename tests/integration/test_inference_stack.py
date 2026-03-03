@@ -355,9 +355,6 @@ class TestDockerComposeValidation:
         # Try relative paths
         possible_paths = [
             compose_path,
-            Path(
-                "/home/axelofwar/Desktop/Projects/ml-platform/inference/docker-compose.inference.yml"
-            ),
             Path.cwd() / "inference" / "docker-compose.inference.yml",
         ]
 

@@ -4,10 +4,14 @@ import gc
 import time
 import threading
 import logging
-from typing import Optional, List
+import base64
+import io
+from typing import Optional, List, Union
 from datetime import datetime
 
 import torch
+from PIL import Image
+import httpx
 
 from .config import (
     MODEL_ID,
@@ -18,7 +22,7 @@ from .config import (
     UNLOAD_TIMEOUT_SECONDS,
     YIELD_TO_TRAINING,
 )
-from .schemas import Message
+from .schemas import Message, ContentPart, TextContent, ImageContent
 
 logger = logging.getLogger(__name__)
 
@@ -138,15 +142,23 @@ class Qwen3VLModel:
         start_time = time.time()
 
         try:
-            # Format messages for Qwen
-            formatted = self._format_messages(messages)
+            # Extract text and images from messages
+            formatted_text, images = self._format_messages(messages)
 
-            # Tokenize
-            inputs = self.processor(
-                text=formatted,
-                return_tensors="pt",
-                padding=True,
-            ).to(self.model.device)
+            # Tokenize with images if present
+            if images:
+                inputs = self.processor(
+                    text=formatted_text,
+                    images=images,
+                    return_tensors="pt",
+                    padding=True,
+                ).to(self.model.device)
+            else:
+                inputs = self.processor(
+                    text=formatted_text,
+                    return_tensors="pt",
+                    padding=True,
+                ).to(self.model.device)
 
             prompt_tokens = inputs.input_ids.shape[1]
 
@@ -184,18 +196,73 @@ class Qwen3VLModel:
             logger.error(f"Generation failed: {e}")
             raise
 
-    def _format_messages(self, messages: List[Message]) -> str:
-        """Format messages for Qwen chat template."""
+    def _format_messages(
+        self, messages: List[Message]
+    ) -> tuple[str, Optional[List[Image.Image]]]:
+        """Format messages for Qwen chat template. Returns (formatted_text, images)."""
         formatted = ""
+        images = []
+
         for msg in messages:
+            # Handle content - can be string or list of parts
+            text_content = ""
+
+            if isinstance(msg.content, str):
+                text_content = msg.content
+            else:
+                # Process content parts
+                for part in msg.content:
+                    if isinstance(part, str):
+                        text_content += part
+                    elif isinstance(part, dict):
+                        # Handle dict format from API
+                        if part.get("type") == "text":
+                            text_content += part.get("text", "")
+                        elif part.get("type") == "image_url":
+                            image_url = part.get("image_url", {}).get("url", "")
+                            if image_url:
+                                try:
+                                    img = self._load_image(image_url)
+                                    images.append(img)
+                                except Exception as e:
+                                    logger.error(f"Failed to load image: {e}")
+                    else:
+                        # Handle Pydantic models
+                        if hasattr(part, "type"):
+                            if part.type == "text":
+                                text_content += part.text
+                            elif part.type == "image_url":
+                                try:
+                                    img = self._load_image(part.image_url.url)
+                                    images.append(img)
+                                except Exception as e:
+                                    logger.error(f"Failed to load image: {e}")
+
+            # Format with chat template
             if msg.role == "system":
-                formatted += f"<|im_start|>system\n{msg.content}<|im_end|>\n"
+                formatted += f"<|im_start|>system\n{text_content}<|im_end|>\n"
             elif msg.role == "user":
-                formatted += f"<|im_start|>user\n{msg.content}<|im_end|>\n"
+                formatted += f"<|im_start|>user\n{text_content}<|im_end|>\n"
             elif msg.role == "assistant":
-                formatted += f"<|im_start|>assistant\n{msg.content}<|im_end|>\n"
+                formatted += f"<|im_start|>assistant\n{text_content}<|im_end|>\n"
+
         formatted += "<|im_start|>assistant\n"
-        return formatted
+        return formatted, images if images else None
+
+    def _load_image(self, image_url: str) -> Image.Image:
+        """Load image from data URI or HTTP(S) URL."""
+        if image_url.startswith("data:image"):
+            # Base64 data URI
+            base64_data = image_url.split(",")[1]
+            image_data = base64.b64decode(base64_data)
+            return Image.open(io.BytesIO(image_data))
+        elif image_url.startswith("http"):
+            # HTTP(S) URL
+            response = httpx.get(image_url, timeout=10.0)
+            response.raise_for_status()
+            return Image.open(io.BytesIO(response.content))
+        else:
+            raise ValueError(f"Unsupported image URL format: {image_url}")
 
     def _reset_unload_timer(self):
         """Reset the auto-unload timer."""

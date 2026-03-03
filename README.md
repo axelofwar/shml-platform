@@ -1,442 +1,247 @@
-# ML Platform - Production Ready
+# SHML Platform
 
-## Overview
+> Self-Hosted ML Platform — GPU-optimized training, experiment tracking,
+> model registry, and agentic development on your own hardware.
 
-A production-ready ML platform with MLflow experiment tracking, Ray distributed compute, and comprehensive monitoring. Designed for GPU workloads with security, observability, and remote access.
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://shml-platform.github.io/docs)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Docker Engine 24+ with Compose V2
+- NVIDIA Container Toolkit (`nvidia-ctk`)
+- NVIDIA GPU with 24GB+ VRAM (training)
+- 16GB+ RAM, 100GB+ disk
+
+### Install & Launch
+
+```bash
+git clone https://github.com/yourusername/shml-platform.git
+cd shml-platform
+
+# One-time setup: installs deps, creates network, generates secrets
+sudo ./setup.sh
+
+# Start all services (with health checks)
+./start_all_safe.sh
+
+# Install SDK
+pip install -e sdk/
+
+# Verify
+shml platform status
+```
+
+---
+
+## SDK & CLI
+
+The `shml` CLI is the primary interface for training, job management, and GPU control.
+
+### Training
+
+```bash
+# List available training profiles
+shml config list-profiles
+
+# Dry-run to preview configuration
+shml train --profile balanced --dry-run
+
+# Launch training
+shml train --profile balanced --epochs 10
+
+# Monitor
+shml status <job_id>
+shml logs <job_id>
+```
+
+### Python SDK
+
+```python
+from shml import Client, TrainingConfig
+
+with Client() as c:
+    # Submit training from a built-in profile
+    job = c.submit_training("balanced", epochs=10)
+
+    # Wait for completion
+    result = c.wait_for_job(job.job_id)
+    print(f"mAP50: {result.metrics.get('mAP50')}")
+
+    # Access integrations
+    runs = c.mlflow.list_runs("face-detection")
+    c.nessie.create_branch("experiment-v2")
+```
+
+### Training Profiles
+
+| Profile | Epochs | Batch | ImgSz | Est. Duration |
+|---------|--------|-------|-------|---------------|
+| `quick-test` | 2 | 8 | 640 | ~10 min |
+| `balanced` | 10 | 4 | 1280 | ~2.5 hr |
+| `full-finetune` | 50 | 4 | 1280 | ~12 hr |
+| `foundation` | 100 | 4 | 1280 | ~24 hr |
+
+Profiles live in `config/profiles/*.yaml` — create custom ones following the same format.
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Traefik API Gateway                       │
-│                         Port 80                              │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-       ┌───────────┴────────────┬─────────────┐
-       │                        │             │
-       ▼                        ▼             ▼
-┌──────────────┐      ┌─────────────┐   ┌────────────┐
-│   MLflow     │      │ Ray Compute │   │ Monitoring │
-│              │      │             │   │            │
-│ • Tracking   │      │ • Head Node │   │ • Grafana  │
-│ • Registry   │      │ • API       │   │ • 3x Prom  │
-│ • API        │      │ • Workers   │   │ • DCGM     │
-│ • PostgreSQL │      │ • PostgreSQL│   │ • cAdvisor │
-└──────────────┘      └─────────────┘   └────────────┘
-       │                        │             │
-       └────────────┬───────────┴─────────────┘
-                    ▼
-        ml-platform network (172.30.0.0/16)
+┌──────────────────────────────────────────────────────────┐
+│               Traefik API Gateway (:80)                  │
+│           OAuth2-Proxy + FusionAuth RBAC                 │
+└─────┬──────────┬──────────┬──────────┬───────────────────┘
+      │          │          │          │
+      ▼          ▼          ▼          ▼
+┌──────────┐ ┌────────┐ ┌────────┐ ┌──────────────┐
+│  MLflow  │ │  Ray   │ │Grafana │ │  Data Stack  │
+│ Tracking │ │Compute │ │  Prom  │ │ Nessie/FO/FS │
+│ Registry │ │  Jobs  │ │  Loki  │ │ Spark/Iceberg│
+│ Artifacts│ │  GPUs  │ │  SLOs  │ │              │
+└──────────┘ └────────┘ └────────┘ └──────────────┘
+      │          │          │          │
+      └──────────┴──────────┴──────────┘
+            PostgreSQL + Redis + MongoDB
 ```
 
-## Quick Start
+**Compose Files:**
 
-### Initial Setup (One-time)
+| File | Services |
+|------|----------|
+| `docker-compose.infra.yml` | Traefik, PostgreSQL, Redis, FusionAuth, OAuth2-Proxy, Prometheus, Grafana, Homer |
+| `mlflow-server/docker-compose.yml` | MLflow server + Nginx proxy |
+| `ray_compute/docker-compose.yml` | Ray head + workers |
+| `docker-compose.secrets.yml` | Secrets manager overlay |
+| `docker-compose.tracing.yml` | Distributed tracing |
+| `docker-compose.logging.yml` | Loki log aggregation |
+| `inference/*/docker-compose.yml` | Coding models, Chat API, Chat UI |
+
+> **Note:** Always use `./start_all_safe.sh` — never `docker compose up` directly.
+
+---
+
+## Services
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| MLflow | `http://localhost/mlflow/` | Experiment tracking & model registry |
+| Ray Dashboard | `http://localhost/ray/` | Job monitoring & cluster status |
+| Grafana | `http://localhost/grafana/` | Metrics dashboards & alerting |
+| FusionAuth | `http://localhost:9011/` | User management & OAuth |
+| Homer | `http://localhost/` | Service dashboard |
+| Traefik | `http://localhost:8090/` | Routing dashboard |
+| Pushgateway | `http://localhost:9091/` | Training metrics ingestion |
+| Prometheus | `http://localhost:9090/` | Metrics store |
+
+**Remote access** via Tailscale VPN — see [Remote Access Guide](docs/guides/remote-access.md).
+
+---
+
+## GPU Management
 
 ```bash
-# Clone and navigate to platform
-cd /home/axelofwar/Projects/shml-platform/shml-platform
+# Check GPU status (VRAM, utilization, temperature)
+shml gpu status
 
-# Run unified setup script
-sudo ./setup.sh
+# Yield GPU for other tasks (graceful)
+shml gpu yield
+
+# Reclaim GPU for training
+shml gpu reclaim
 ```
 
-The setup script will:
-1. ✓ Install dependencies (Docker, NVIDIA toolkit, etc.)
-2. ✓ Create network and generate passwords
-3. ✓ Build .env files and secrets
-4. ✓ Provision Grafana dashboards
-5. ✓ Start all services in correct order
-6. ✓ Run health checks and validation
+**Hardware:** Ryzen 9 3900X · RTX 3090 Ti (24GB) · RTX 2070 (8GB)
 
-**Time:** ~5-10 minutes for fresh install
+---
 
-### Start/Stop Services
+## Monitoring
+
+Grafana dashboards at `http://localhost/grafana/`:
+
+- **Unified Training** — epoch progress, loss curves, mAP metrics
+- **Platform Overview** — CPU, RAM, disk, network
+- **GPU Metrics** — DCGM monitoring for both GPUs
+- **ML SLOs** — availability, latency, error budget
+- **Ray Cluster** — task throughput, node resources
+
+Training jobs auto-report metrics to Prometheus via the SDK's Pushgateway integration.
+
+---
+
+## User Roles
+
+| Role | Capabilities |
+|------|-------------|
+| `viewer` | Read dashboards, view experiments |
+| `developer` | Submit jobs, manage own experiments |
+| `elevated-developer` | GPU management, model registry |
+| `admin` | Platform management, user admin |
+
+Authentication: FusionAuth → OAuth2-Proxy → Traefik role-auth middleware.
+
+---
+
+## Service Management
 
 ```bash
-# Start all services (safe phased startup)
-./start_all_safe.sh
-
-# Stop all services (optional backup)
-./stop_all.sh
-./stop_all.sh --backup  # Create backup before stopping
-
-# Check platform status
-./check_platform_status.sh
+./start_all_safe.sh                  # Start everything (with health checks)
+./start_all_safe.sh start mlflow     # Start specific service group
+./start_all_safe.sh stop             # Stop all services
+./start_all_safe.sh status           # Detailed health status
+./check_platform_status.sh           # Quick health overview
 ```
 
-```bash
-# Check status
-sudo systemctl status shml-platform
-
-# Start manually
-sudo systemctl start shml-platform
-
-# Stop
-sudo systemctl stop shml-platform
-
-# Restart
-sudo systemctl restart shml-platform
-
-# View logs
-sudo journalctl -u shml-platform -f
-
-# Disable auto-start
-sudo systemctl disable shml-platform
-```
-
-## Service Access
-
-All services accessible via Traefik routing:
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **MLflow UI** | http://localhost/mlflow/ | None (open) |
-| **Ray Dashboard** | http://localhost/ray/ | None (open) |
-| **Grafana** | http://localhost/grafana/ | admin / (from secrets/) |
-| **FusionAuth** | http://localhost:9011/admin/ | Email-based login |
-| **Traefik** | http://localhost:8090/ | Dashboard |
-
-### Remote Access (Tailscale)
-
-```bash
-# Get Tailscale IP
-tailscale ip -4
-
-# Access from any device on your tailnet
-http://<tailscale-ip>/mlflow/
-http://<tailscale-ip>/grafana/
-```
-
-## Python Client Usage
-
-### MLflow Tracking
-
-```python
-import mlflow
-
-# Local access
-mlflow.set_tracking_uri("http://localhost/mlflow")
-
-# Remote access (Tailscale)
-mlflow.set_tracking_uri("http://<tailscale-ip>/mlflow")
-
-# Log experiments
-with mlflow.start_run():
-    mlflow.log_param("learning_rate", 0.01)
-    mlflow.log_metric("accuracy", 0.95)
-```
-
-### Ray Remote Jobs
-
-```python
-import ray
-
-# Connect to Ray cluster
-ray.init(address="ray://localhost:10001")
-
-# Or remote via Tailscale
-ray.init(address="ray://<tailscale-ip>:10001")
-
-# Submit tasks
-@ray.remote
-def train_model(data):
-    # Your training code
-    return model
-
-result = ray.get(train_model.remote(data))
-```
-
-## Monitoring Dashboards
-
-Access via Grafana: `http://localhost/grafana/`
-
-**Platform Dashboards:**
-- **System Metrics**: CPU, RAM, disk, network
-- **Container Metrics**: Resource usage by container with ID reference
-- **GPU Metrics**: DCGM monitoring (5 panels, both GPUs)
-
-**MLflow Dashboards:**
-- Request rates, latency, error rates
-- Database connections, experiment metrics
-
-**Ray Dashboards:**
-- Cluster overview, node resources
-- Task/actor metrics, GPU utilization
-
-## Platform Management
-
-### Service Health
-
-```bash
-# Check all services
-./check_platform_status.sh
-
-# View specific service logs
-sudo docker logs mlflow-server
-sudo docker logs ray-head
-sudo docker logs unified-grafana
-
-# Follow logs in real-time
-sudo docker logs -f <service-name>
-```
-
-### Update Dashboards
-
-```bash
-# Regenerate container ID reference table
-cd scripts
-sudo ./update_container_dashboard.sh
-```
-
-### Run Tests
-
-```bash
-# Test all services
-cd tests
-./test_all_services.sh
-
-# Test Ray job submission
-./test_job_submission.py
-
-# Test remote compute
-./test_remote_compute.py
-```
-
-### Fresh Install
-
-```bash
-# Complete cleanup and reinstall
-sudo ./setup.sh --full-reset
-```
-
-## File Structure
-
-```
-shml-platform/
-├── setup.sh                        # 🔥 Main setup script (use this!)
-├── start_all_safe.sh               # Safe startup with health checks
-├── stop_all.sh                     # Safe shutdown
-├── check_platform_status.sh        # Status checker
-│
-├── docker-compose.yml              # Main services (MLflow, Ray, FusionAuth)
-├── docker-compose.infra.yml        # Infrastructure (Traefik, PostgreSQL, Redis)
-│
-├── monitoring/
-│   ├── global-prometheus.yml       # Global metrics (15s scrape)
-│   ├── grafana/
-│   │   ├── datasources.yml         # 3 Prometheus sources
-│   │   └── dashboards/
-│   │       ├── platform/           # System, Container, GPU
-│   │       ├── mlflow/             # MLflow metrics
-│   │       └── ray/                # Ray cluster metrics
-│
-├── mlflow-server/
-│   ├── docker-compose.mlflow.yml   # MLflow-specific config
-│   ├── monitoring/                 # MLflow Prometheus
-│   └── secrets/                    # Grafana passwords
-│
-├── ray_compute/
-│   ├── docker-compose.ray.yml      # Ray-specific config
-│   ├── monitoring/                 # Ray Prometheus
-│   └── .env                        # Ray environment
-│
-├── fusionauth/                     # OAuth/SSO config
-├── secrets/                        # Generated passwords
-├── scripts/                        # Utility scripts
-├── tests/                          # All test scripts (unit, integration)
-└── archived/                       # Obsolete files
-```
-
-## Hardware Requirements
-
-**Minimum:**
-- 8GB RAM
-- 50GB disk space
-- NVIDIA GPU (for GPU workloads)
-
-**Recommended (current setup):**
-- 16GB+ RAM
-- RTX 3090 Ti (24GB) + RTX 2070 (8GB)
-- Ryzen 9 3900X (12C/24T)
-- 100GB+ disk space
-
-## Troubleshooting
-
-### Services not starting
-
-```bash
-# Check Docker status
-sudo systemctl status docker
-
-# Check logs
-./check_platform_status.sh
-sudo docker logs <service-name>
-
-# Restart specific service
-sudo docker-compose restart <service-name>
-```
-
-### Dashboards showing "No Data"
-
-```bash
-# Check Prometheus is scraping
-curl http://localhost:9090/api/v1/targets
-
-# Wait ~90 seconds for metrics (15s scrape interval)
-# Dashboards auto-refresh every 5 seconds
-```
-
-### GPU not detected
-
-```bash
-# Verify NVIDIA runtime
-sudo docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
-
-# Check DCGM exporter
-sudo docker logs dcgm-exporter
-```
-
-### Network issues
-
-```bash
-# Verify ml-platform network exists
-sudo docker network inspect ml-platform
-
-# Recreate if needed (services must be stopped)
-sudo docker network rm ml-platform
-sudo docker network create --subnet=172.30.0.0/16 ml-platform
-```
-
-### Tailscale Reset / TPM Lockout Recovery
-
-If Tailscale is reset (e.g., TPM lockout requiring `tailscale logout`), several services may break:
-- OAuth2 authentication loops
-- MLflow "Invalid Host header" errors
-- Services unable to resolve Tailscale domain
-
-**Quick Recovery:**
-```bash
-# Run the automated recovery script
-./scripts/recover-tailscale.sh
-
-# Or manually update the Tailscale IP
-tailscale ip -4  # Get new IP
-# Update TAILSCALE_IP in .env files
-```
-
-**See:** `docs/TAILSCALE_RECOVERY.md` for full troubleshooting guide.
+---
 
 ## Documentation
 
-- `ARCHITECTURE.md` - Detailed architecture overview
-- `INTEGRATION_GUIDE.md` - Integration examples
-- `TROUBLESHOOTING.md` - Common issues and solutions
-- `API_REFERENCE.md` - API documentation
-- `REMOTE_ACCESS_NEW.md` - Remote access guide
-- `REMOTE_JOB_SUBMISSION.md` - Ray job submission
-- `RAY_GPU_TESTING_SUMMARY.md` - GPU testing results
-- `docs/TAILSCALE_RECOVERY.md` - Tailscale reset/TPM recovery guide
+| Resource | Description |
+|----------|-------------|
+| [Full Documentation](docs/index.md) | Complete platform docs (MkDocs) |
+| [SDK Reference](docs/sdk/index.md) | Client, Config, Training Runner |
+| [CLI Reference](docs/cli/index.md) | All CLI commands |
+| [Architecture](docs/architecture/index.md) | System design & service topology |
+| [Training Guide](docs/guides/training-walkthrough.md) | End-to-end training walkthrough |
+| [Remote Access](docs/guides/remote-access.md) | Tailscale VPN setup & remote jobs |
+| [Monitoring](docs/guides/monitoring.md) | Grafana, Prometheus, SLOs |
+| [MLflow Guide](docs/guides/mlflow.md) | Experiments, model registry, artifacts |
+| [Troubleshooting](docs/guides/troubleshooting.md) | Common issues & solutions |
+
+---
 
 ## Security
 
-### Security Features
-
-- ✅ **Pre-commit secret scanning** - ggshield + Gitleaks block secrets before commit
-- ✅ **CI/CD security scanning** - GitGuardian, Trivy, pip-audit on all PRs
-- ✅ **No privileged containers** - NVIDIA CDI mode for GPU access
-- ✅ **Scoped device access** - Only required devices mounted
-- ✅ **OAuth/SSO ready** - FusionAuth with social logins (Google, GitHub, Twitter)
-- ✅ **Secrets management** - All credentials in gitignored `secrets/` directory
-- ✅ **Secure remote access** - Tailscale VPN for encrypted connections
-- ✅ **No hardcoded secrets** - All credentials loaded from environment
-- ✅ **Git history cleaned** - BFG Repo-Cleaner removes any leaked secrets
-
-### Developer Setup (REQUIRED)
-
-**Install pre-commit hooks to prevent accidental secret commits:**
+- Pre-commit secret scanning (ggshield + Gitleaks)
+- No privileged containers — NVIDIA CDI mode
+- OAuth/SSO via FusionAuth with 4-tier RBAC
+- All credentials in gitignored `secrets/` directory
+- Tailscale VPN for encrypted remote access
 
 ```bash
-# Install tools
+# Required developer setup
 pip install pre-commit ggshield
-
-# Install hooks
 pre-commit install
 pre-commit install --hook-type pre-push
-
-# Authenticate GitGuardian (one-time)
-ggshield auth login
-
-# Verify setup
-pre-commit run --all-files
 ```
 
-> ⚠️ **All developers must run this setup.** Commits with secrets will be blocked.
+---
 
-### Secrets Management
+## Hardware Requirements
 
-All sensitive credentials are stored in `secrets/` (gitignored):
+| Tier | CPU | RAM | GPU | Disk |
+|------|-----|-----|-----|------|
+| Minimum | 4C/8T | 8 GB | 8GB VRAM | 50 GB |
+| Recommended | 8C/16T | 16 GB | 24GB VRAM | 100 GB |
+| Current Setup | Ryzen 9 3900X | 64 GB | 3090 Ti + 2070 | 2 TB NVMe |
 
-```bash
-secrets/
-├── shared_db_password.txt     # PostgreSQL password
-├── grafana_password.txt       # Grafana admin password
-├── fusionauth_api_key.txt     # FusionAuth API key
-├── authentik_db_password.txt  # Authentik database password
-└── authentik_bootstrap_password.txt  # Initial admin password
-```
+---
 
-**Generate secrets:**
-```bash
-# Automatic (via setup)
-sudo ./setup.sh
+## License
 
-# Manual generation
-openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32 > secrets/shared_db_password.txt
-chmod 600 secrets/*.txt
-```
-
-**View credentials:**
-```bash
-cat secrets/grafana_password.txt  # Grafana login
-cat secrets/authentik_bootstrap_password.txt  # Authentik login
-```
-
-See `secrets/README.md` for complete documentation.
-
-### Environment Configuration
-
-Copy the example environment file and customize:
-
-```bash
-cp .env.example .env
-# Edit .env with your values (or let setup.sh generate them)
-```
-
-**Important:** Never commit `.env` files - they are gitignored by default.
-
-### Security Checklist
-
-Before deploying to production:
-
-- [ ] Pre-commit hooks installed (`pre-commit install`)
-- [ ] All secrets generated with `openssl rand`
-- [ ] `.env` and `secrets/` not in version control
-- [ ] Tailscale or VPN configured for remote access
-- [ ] OAuth enabled if exposing to network
-- [ ] Regular secret rotation scheduled
-- [ ] Backup encryption configured
-
-## Support
-
-**Issues?** Check these in order:
-1. `./check_platform_status.sh` - Service health
-2. `sudo docker logs <service>` - Service logs
-3. `TROUBLESHOOTING.md` - Common issues
-4. Grafana dashboards - Metrics and monitoring
-5. Traefik dashboard (`http://localhost:8090`) - Routing
-
-**Need to re-run setup?**
-```bash
-sudo ./setup.sh --full-reset
-```
+[MIT](LICENSE)

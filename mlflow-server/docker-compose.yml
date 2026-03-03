@@ -1,7 +1,13 @@
 # MLflow Server - Experiment Tracking & Model Registry
-# Depends on: shared infrastructure (shared-postgres, ml-platform-redis, traefik)
-# Can be started standalone: docker compose -f mlflow-server/docker-compose.yml up
-# Or via main: docker compose up (includes this file)
+# =====================================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start mlflow
+# Stop:   ./start_all_safe.sh stop mlflow
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks/volumes created by docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
 
 services:
   # ==========================================================================
@@ -16,16 +22,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 717M
+          cpus: '2.0'
+          memory: 2560M
         reservations:
           cpus: '0.5'
-          memory: 512M
+          memory: 1280M
     expose:
       - "5000"
     environment:
-      # Database (uses shared-postgres from infra)
-      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@shared-postgres:5432/mlflow_db"
+      # Database (uses postgres from infra)
+      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@postgres:5432/mlflow_db"
       MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
       MLFLOW_ARTIFACTS_DESTINATION: "/mlflow/artifacts"
       # Server Configuration
@@ -37,8 +43,8 @@ services:
       # MLflow 3.x - Static prefix for remote access (ensures correct asset paths)
       MLFLOW_STATIC_PREFIX: "/mlflow"
       # MLflow 3.x Security Settings - allow internal Docker network hosts AND Tailscale domain
-      # IMPORTANT: PUBLIC_DOMAIN must be included or MLflow returns 403 Forbidden
-      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-nginx,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+      # IMPORTANT: Include both hostname AND hostname:port variants (MLflow 3.x is strict about exact Host header match)
+      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-server:5000,mlflow-nginx,mlflow-nginx:80,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
       # Schema & Validation
       MLFLOW_SCHEMA_VALIDATION: "true"
       MLFLOW_REQUIRE_METADATA: "true"
@@ -47,8 +53,8 @@ services:
       MLFLOW_COMPRESSION_FORMAT: "zstd"
       MLFLOW_ALLOW_REFERENCE_PATHS: "true"
       MLFLOW_SCAN_SENSITIVE_DATA: "true"
-      # Cache (uses ml-platform-redis from infra)
-      REDIS_HOST: "ml-platform-redis"
+      # Cache (uses redis from infra)
+      REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_DB: "0"
     volumes:
@@ -67,7 +73,7 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - ml-platform
+      - platform
 
   # ==========================================================================
   # MLFLOW NGINX REVERSE PROXY
@@ -101,7 +107,7 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.mlflow.loadbalancer.server.port=80"
@@ -181,7 +187,7 @@ services:
       retries: 3
       start_period: 15s
     networks:
-      - ml-platform
+      - platform
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
@@ -226,7 +232,7 @@ services:
     expose:
       - "9090"
     networks:
-      - ml-platform
+      - platform
     depends_on:
       - mlflow-server
     healthcheck:
@@ -241,6 +247,13 @@ secrets:
 
 volumes:
   mlflow-mlruns:
-    name: mlflow-mlruns
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-mlruns
+    external: true
   mlflow-prometheus-data:
-    name: mlflow-prometheus-data
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-prometheus-data
+    external: true
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

@@ -54,14 +54,57 @@
 #    - OAuth2 Proxy exchanges code for token and sets session cookie
 #    - User is redirected back to original page
 #
+# 7. NVIDIA MPS Daemon vs Docker GPU Access (December 2025):
+#    - NVIDIA MPS (Multi-Process Service) enables GPU sharing between processes
+#    - CRITICAL: MPS daemon at 100% thread allocation BLOCKS ALL new CUDA contexts
+#    - This includes Docker containers trying to access GPUs!
+#    - Symptom: torch.cuda.is_available() hangs indefinitely in Ray container
+#    - Root cause: CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps in container env
+#    - Solution: REMOVED MPS config from ray_compute/docker-compose.yml
+#    - The host MPS daemon must be STOPPED for Ray containers to access GPUs
+#    - This script now auto-stops MPS before starting Ray services
+#    - To restart MPS later: sudo nvidia-cuda-mps-control -d
+#    - Check MPS status: ps aux | grep nvidia-cuda-mps
+#    - Trade-off: Ray gets exclusive GPU access (no MPS sharing during training)
+#    - Future: Investigate K8s + KubeRay + Kueue for true GPU pooling
+#
+# 8. MLflow 3.x API Changes (December 2025):
+#    - MLflow 3.x uses --static-prefix /mlflow for URL routing
+#    - API endpoint format changed to /mlflow/ajax-api/2.0/mlflow/...
+#    - MLFLOW_ALLOWED_HOSTS must include hostname:port variants (strict matching)
+#    - Example: mlflow-server,mlflow-server:5000,mlflow-nginx,mlflow-nginx:80
+#    - The Python MLflow client auto-handles the prefix when using MLFLOW_TRACKING_URI
+#
+# 9. Docker Compose Include vs Explicit Files (December 2025):
+#    - Docker Compose `include:` directive CONFLICTS with network definitions
+#    - If included file has `networks: platform: external: true`, it conflicts with
+#      the parent's definition even though they refer to the same network
+#    - Solution: This script is the ONLY entry point for starting services
+#    - Individual compose files have `external: true` for network (standalone capable)
+#    - Script ensures network exists before starting services
+#    - DO NOT use `docker compose up` with the main docker-compose.yml directly
+#    - Always use: ./start_all_safe.sh [command] [service]
+#
 # Usage:
-#   ./start_all_safe.sh          # Full restart (stop + cleanup + start)
-#   ./start_all_safe.sh start    # Start only (assumes clean state)
-#   ./start_all_safe.sh stop     # Stop all services
-#   ./start_all_safe.sh restart  # Full restart (default)
-#   ./start_all_safe.sh status   # Show service status
-#   ./start_all_safe.sh diagnose # Verify auth protection and middleware
-#   ./start_all_safe.sh fix-oauth # Fix FusionAuth OAuth redirect URLs
+#   ./start_all_safe.sh                    # Full restart (stop + cleanup + start all)
+#   ./start_all_safe.sh start              # Start all services (assumes clean state)
+#   ./start_all_safe.sh stop               # Stop all services
+#   ./start_all_safe.sh restart            # Full restart (default)
+#   ./start_all_safe.sh status             # Show service status
+#   ./start_all_safe.sh diagnose           # Verify auth protection and middleware
+#   ./start_all_safe.sh fix-oauth          # Fix FusionAuth OAuth redirect URLs
+#
+# Individual Service Commands:
+#   ./start_all_safe.sh start infra        # Start only infrastructure
+#   ./start_all_safe.sh start auth         # Start FusionAuth + OAuth2 Proxy
+#   ./start_all_safe.sh start mlflow       # Start MLflow services
+#   ./start_all_safe.sh start ray          # Start Ray compute services
+#   ./start_all_safe.sh start inference    # Start coding models + chat API
+#   ./start_all_safe.sh start monitoring   # Start Prometheus + Grafana
+#   ./start_all_safe.sh start sba-portal   # Start SBA Resource Portal (Gemini AI)
+#   ./start_all_safe.sh stop inference     # Stop only inference services
+#   ./start_all_safe.sh restart ray        # Restart only Ray services
+#   ./start_all_safe.sh restart sba-portal # Restart SBA Resource Portal
 
 set -e
 
@@ -95,6 +138,56 @@ log_info() { echo -e "${CYAN}$1${NC}"; }
 log_success() { echo -e "${GREEN}✓ $1${NC}"; }
 log_warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
 log_error() { echo -e "${RED}✗ $1${NC}"; }
+
+# Platform network name (consistent across all compose files)
+PLATFORM_NETWORK="${PLATFORM_PREFIX:-shml}-platform"
+
+# Ensure platform network exists (required before starting any service)
+ensure_network() {
+    if ! docker network inspect "$PLATFORM_NETWORK" >/dev/null 2>&1; then
+        log_info "Creating platform network: $PLATFORM_NETWORK"
+        docker network create "$PLATFORM_NETWORK" \
+            --driver bridge \
+            --subnet 172.30.0.0/16 \
+            2>/dev/null || true
+        log_success "Network created"
+    fi
+}
+
+# Compose command wrapper - ensures network exists and uses correct env file
+# Usage: dc_up <compose_file> <services...>
+dc_up() {
+    local compose_file="$1"
+    shift
+    ensure_network
+    docker compose --env-file .env -f "$compose_file" up -d "$@" 2>&1 | grep -v "orphan" || true
+}
+
+# Compose command for stopping services
+# Usage: dc_stop <compose_file> <services...>
+dc_stop() {
+    local compose_file="$1"
+    shift
+    docker compose --env-file .env -f "$compose_file" stop "$@" 2>/dev/null || true
+}
+
+# Compose command for main infra (uses include-based main compose)
+# This works because infra defines the network
+dc_infra() {
+    local action="$1"
+    shift
+    case "$action" in
+        up)
+            docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate "$@" 2>&1 | grep -v "orphan" || true
+            ;;
+        stop)
+            docker compose --env-file .env -f docker-compose.infra.yml stop "$@" 2>/dev/null || true
+            ;;
+        down)
+            docker compose --env-file .env -f docker-compose.infra.yml down "$@" 2>/dev/null || true
+            ;;
+    esac
+}
 
 # Wait for container health with configurable timeout
 wait_for_health() {
@@ -187,6 +280,74 @@ wait_for_middleware() {
     return 1
 }
 
+# =============================================================================
+# NVIDIA MPS Daemon Management
+# MPS at 100% thread allocation blocks Docker containers from accessing GPUs
+# We stop MPS before starting Ray to ensure GPU access works
+# =============================================================================
+
+check_mps_status() {
+    # Check if MPS control daemon is running (via systemd or standalone)
+    if systemctl is-active --quiet nvidia-mps 2>/dev/null; then
+        return 0  # MPS is running via systemd
+    fi
+    if pgrep -f "nvidia-cuda-mps-control" >/dev/null 2>&1; then
+        return 0  # MPS is running standalone
+    fi
+    return 1  # MPS is not running
+}
+
+stop_mps_daemon() {
+    if ! check_mps_status; then
+        return 0  # Already stopped
+    fi
+
+    log_info "━━━ Stopping NVIDIA MPS Daemon ━━━"
+    echo "MPS daemon blocks Docker GPU access - stopping for Ray containers..."
+
+    # Try systemctl first (most reliable if MPS is managed by systemd)
+    if systemctl is-active --quiet nvidia-mps 2>/dev/null; then
+        echo -n "  Stopping nvidia-mps.service..."
+        if sudo systemctl stop nvidia-mps 2>/dev/null; then
+            echo -e " ${GREEN}✓${NC}"
+            log_success "MPS service stopped"
+            echo ""
+            return 0
+        fi
+        echo -e " ${YELLOW}⚠${NC}"
+    fi
+
+    # Force kill any remaining MPS processes (don't try graceful - it hangs)
+    echo -n "  Force killing MPS processes..."
+    sudo pkill -9 nvidia-cuda-mps 2>/dev/null || true
+    sleep 2
+
+    # Verify stopped
+    if ! pgrep -f "nvidia-cuda-mps-control" >/dev/null 2>&1; then
+        echo -e " ${GREEN}✓${NC}"
+        log_success "MPS daemon stopped"
+    else
+        echo -e " ${YELLOW}⚠${NC}"
+        log_warn "MPS daemon may still be running (check systemd)"
+    fi
+    echo ""
+}
+
+verify_gpu_access() {
+    # Quick check that GPUs are accessible (no MPS blocking)
+    echo -n "  Verifying GPU access..."
+
+    # Use nvidia-smi as a quick test
+    if nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | grep -q "NVIDIA"; then
+        local gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+        echo -e " ${GREEN}✓${NC} ($gpu_count GPU(s) accessible)"
+        return 0
+    else
+        echo -e " ${YELLOW}⚠${NC} (nvidia-smi failed)"
+        return 1
+    fi
+}
+
 # Stop a container gracefully
 stop_container() {
     local container=$1
@@ -194,6 +355,273 @@ stop_container() {
         echo -n "  Stopping $container..."
         docker stop "$container" -t 10 >/dev/null 2>&1 && echo -e " ${GREEN}✓${NC}" || echo -e " ${YELLOW}⚠${NC}"
     fi
+}
+
+# =============================================================================
+# Database Backup Restoration
+# Automatically restores databases from backups if they appear empty
+# Uses the largest backup from the last 25 hours for data integrity
+# =============================================================================
+
+BACKUP_DIR="${SCRIPT_DIR}/backups/postgres"
+BACKUP_MAX_AGE_HOURS=${BACKUP_MAX_AGE_HOURS:-25}
+
+# Find the best backup file for a database (largest from last N hours)
+find_best_backup() {
+    local db_name=$1
+    local max_age_hours=${2:-$BACKUP_MAX_AGE_HOURS}
+    local best_backup=""
+    local best_size=0
+
+    # Search in all backup locations
+    local backup_dirs=(
+        "${BACKUP_DIR}/daily"
+        "${BACKUP_DIR}/last"
+        "${BACKUP_DIR}/weekly"
+        "${BACKUP_DIR}"
+    )
+
+    local cutoff_time=$(date -d "${max_age_hours} hours ago" +%s 2>/dev/null || date -v-${max_age_hours}H +%s 2>/dev/null)
+
+    for dir in "${backup_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            # Find backup files for this database
+            for backup_file in "$dir"/${db_name}*.sql.gz "$dir"/${db_name}*.sql; do
+                if [ -f "$backup_file" ] && [ ! -L "$backup_file" ]; then
+                    local file_time=$(stat -c %Y "$backup_file" 2>/dev/null || stat -f %m "$backup_file" 2>/dev/null)
+                    local file_size=$(stat -c %s "$backup_file" 2>/dev/null || stat -f %z "$backup_file" 2>/dev/null)
+
+                    # Check if within time window and larger than current best
+                    if [ -n "$file_time" ] && [ "$file_time" -ge "$cutoff_time" ] && [ "$file_size" -gt "$best_size" ]; then
+                        best_backup="$backup_file"
+                        best_size="$file_size"
+                    fi
+                fi
+            done
+        fi
+    done
+
+    echo "$best_backup"
+}
+
+# Check if a database appears to be empty/fresh
+is_database_empty() {
+    local db_name=$1
+    local db_user=$2
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    # For FusionAuth, check user count (should be > 0 if configured)
+    if [ "$db_name" = "fusionauth" ]; then
+        local user_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM users;" 2>/dev/null | tr -d ' ')
+        [ "${user_count:-0}" -eq 0 ]
+        return $?
+    fi
+
+    # For MLflow, check if any experiments exist beyond default
+    if [ "$db_name" = "mlflow_db" ]; then
+        local exp_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM experiments WHERE experiment_id > 0;" 2>/dev/null | tr -d ' ')
+        [ "${exp_count:-0}" -eq 0 ]
+        return $?
+    fi
+
+    # For Ray, check if any jobs exist
+    if [ "$db_name" = "ray_compute" ]; then
+        local table_exists=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'jobs');" 2>/dev/null | tr -d ' ')
+        if [ "$table_exists" = "t" ]; then
+            local job_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM jobs;" 2>/dev/null | tr -d ' ')
+            [ "${job_count:-0}" -eq 0 ]
+            return $?
+        fi
+        return 0  # No jobs table means empty
+    fi
+
+    # Default: assume not empty
+    return 1
+}
+
+# Restore a database from backup
+restore_database_from_backup() {
+    local db_name=$1
+    local db_user=$2
+    local backup_file=$3
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    if [ ! -f "$backup_file" ]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+
+    local file_type=$(file -b "$backup_file" 2>/dev/null)
+    local backup_size=$(du -h "$backup_file" | cut -f1)
+
+    echo "    Restoring $db_name from backup ($backup_size)..."
+
+    # Drop and recreate database
+    docker exec "$postgres_container" psql -U postgres -c "DROP DATABASE IF EXISTS ${db_name};" >/dev/null 2>&1
+    docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1
+
+    # Restore based on file type
+    if [[ "$file_type" == *"PostgreSQL custom database dump"* ]]; then
+        # pg_dump custom format - use pg_restore
+        cat "$backup_file" | docker exec -i "$postgres_container" pg_restore -U "$db_user" -d "$db_name" --no-owner --no-privileges 2>/dev/null
+    elif [[ "$backup_file" == *.gz ]]; then
+        # Gzipped SQL
+        gunzip -c "$backup_file" | docker exec -i "$postgres_container" psql -U "$db_user" -d "$db_name" >/dev/null 2>&1
+    else
+        # Plain SQL
+        cat "$backup_file" | docker exec -i "$postgres_container" psql -U "$db_user" -d "$db_name" >/dev/null 2>&1
+    fi
+
+    if [ $? -eq 0 ]; then
+        log_success "  Restored $db_name successfully"
+
+        # Post-restore migrations for FusionAuth (sfml → shml platform name change)
+        if [ "$db_name" = "fusionauth" ]; then
+            echo "    Applying FusionAuth migrations (sfml → shml)..."
+            docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -c \
+                "UPDATE tenants SET data = REPLACE(data::text, 'sfml-platform', 'shml-platform')::text WHERE data LIKE '%sfml-platform%';" >/dev/null 2>&1
+            docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -c \
+                "UPDATE applications SET data = REPLACE(data::text, 'sfml-platform', 'shml-platform')::text WHERE data LIKE '%sfml-platform%';" >/dev/null 2>&1
+            log_success "  FusionAuth issuer URLs updated"
+        fi
+
+        return 0
+    else
+        log_warn "  Restore may have had warnings (check data)"
+        return 0  # Non-fatal - some warnings are OK
+    fi
+}
+
+# Main function to check and restore all databases
+check_and_restore_databases() {
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+
+    log_info "━━━ Checking Database Integrity ━━━"
+    echo "Looking for backups from the last ${BACKUP_MAX_AGE_HOURS} hours..."
+
+    # Database configurations: name, user, critical (requires restore)
+    local databases=(
+        "fusionauth:fusionauth:true"
+        "mlflow_db:mlflow:false"
+        "ray_compute:ray_compute:false"
+        "inference:inference:false"
+        "chat_api:chat_api:false"
+    )
+
+    local restored_count=0
+
+    for db_config in "${databases[@]}"; do
+        local db_name=$(echo "$db_config" | cut -d: -f1)
+        local db_user=$(echo "$db_config" | cut -d: -f2)
+        local is_critical=$(echo "$db_config" | cut -d: -f3)
+
+        # Check if database exists
+        local db_exists=$(docker exec "$postgres_container" psql -U postgres -t -c "SELECT 1 FROM pg_database WHERE datname='${db_name}';" 2>/dev/null | tr -d ' ')
+
+        if [ "$db_exists" != "1" ]; then
+            echo "  Database $db_name does not exist, will create from backup..."
+            local backup_file=$(find_best_backup "$db_name")
+            if [ -n "$backup_file" ]; then
+                # Create database first
+                docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1 || true
+                restore_database_from_backup "$db_name" "$db_user" "$backup_file"
+                restored_count=$((restored_count + 1))
+            elif [ "$is_critical" = "true" ]; then
+                log_warn "  No backup found for critical database $db_name!"
+            fi
+            continue
+        fi
+
+        # Check if database appears empty
+        if is_database_empty "$db_name" "$db_user"; then
+            echo "  Database $db_name appears empty, looking for backup..."
+            local backup_file=$(find_best_backup "$db_name")
+
+            if [ -n "$backup_file" ]; then
+                local backup_age=$(( ($(date +%s) - $(stat -c %Y "$backup_file" 2>/dev/null || stat -f %m "$backup_file")) / 3600 ))
+                echo "    Found backup: $(basename "$backup_file") (${backup_age}h old)"
+                restore_database_from_backup "$db_name" "$db_user" "$backup_file"
+                restored_count=$((restored_count + 1))
+            else
+                if [ "$is_critical" = "true" ]; then
+                    log_warn "  No recent backup found for critical database $db_name"
+                else
+                    echo "    No recent backup found for $db_name (non-critical)"
+                fi
+            fi
+        else
+            log_success "$db_name has existing data"
+        fi
+    done
+
+    if [ $restored_count -gt 0 ]; then
+        log_success "Restored $restored_count database(s) from backup"
+    else
+        log_success "All databases have existing data"
+    fi
+    echo ""
+}
+
+# =============================================================================
+# Pre-Restart Backup
+# Creates a backup before stopping services to ensure data safety
+# =============================================================================
+
+create_pre_restart_backup() {
+    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+    local backup_dir="${SCRIPT_DIR}/backups/postgres/pre-restart"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+
+    # Check if postgres is running
+    if ! docker ps -q -f "name=$postgres_container" | grep -q .; then
+        log_warn "PostgreSQL not running, skipping pre-restart backup"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║         Creating Pre-Restart Backup                    ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Create backup directory
+    mkdir -p "$backup_dir"
+
+    # List of databases to backup
+    local databases=("fusionauth" "mlflow_db" "ray_compute" "inference" "chat_api")
+    local backed_up=0
+
+    for db in "${databases[@]}"; do
+        # Check if database exists
+        if docker exec "$postgres_container" psql -U postgres -lqt | cut -d \| -f 1 | grep -qw "$db"; then
+            local backup_file="${backup_dir}/${db}_${timestamp}.sql.gz"
+            echo -n "  Backing up $db..."
+
+            if docker exec "$postgres_container" pg_dump -U postgres -Fc "$db" 2>/dev/null | gzip > "$backup_file"; then
+                local size=$(du -h "$backup_file" | cut -f1)
+                echo -e " ${GREEN}✓${NC} ($size)"
+                backed_up=$((backed_up + 1))
+            else
+                echo -e " ${YELLOW}⚠${NC} (failed)"
+                rm -f "$backup_file" 2>/dev/null
+            fi
+        fi
+    done
+
+    # Cleanup old pre-restart backups (keep last 5)
+    if [ -d "$backup_dir" ]; then
+        for db in "${databases[@]}"; do
+            ls -t "$backup_dir"/${db}_*.sql.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+        done
+    fi
+
+    echo ""
+    if [ $backed_up -gt 0 ]; then
+        log_success "Created $backed_up pre-restart backup(s) in $backup_dir"
+    else
+        log_warn "No databases backed up"
+    fi
+    echo ""
 }
 
 # =============================================================================
@@ -215,34 +643,61 @@ stop_all_services() {
     fi
     echo ""
 
-    # Phase 2: Stop Ray Services
+    # Phase 2: Stop Inference Services
+    log_info "━━━ Stopping Inference Services ━━━"
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml stop 2>/dev/null || true
+    fi
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml stop 2>/dev/null || true
+    fi
+    log_success "Inference services stopped"
+    echo ""
+
+    # Phase 3: Stop Ray Services
     log_info "━━━ Stopping Ray Services ━━━"
-    docker compose stop ray-compute-api ray-head ray-prometheus 2>/dev/null || true
+    docker compose --env-file .env -f ray_compute/docker-compose.yml stop ray-compute-api ray-head ray-prometheus 2>/dev/null || true
     log_success "Ray services stopped"
     echo ""
 
-    # Phase 3: Stop MLflow Services
+    # Phase 4: Stop MLflow Services
     log_info "━━━ Stopping MLflow Services ━━━"
-    docker compose stop mlflow-api mlflow-nginx mlflow-server mlflow-prometheus 2>/dev/null || true
+    docker compose --env-file .env -f mlflow-server/docker-compose.yml stop mlflow-api mlflow-nginx mlflow-server mlflow-prometheus 2>/dev/null || true
     log_success "MLflow services stopped"
     echo ""
 
-    # Phase 4: Stop Monitoring (Grafana/Prometheus)
+    # Phase 4.5: Stop Data Platform (FiftyOne, Nessie)
+    log_info "━━━ Stopping Data Platform ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop fiftyone fiftyone-mongodb nessie 2>/dev/null || true
+    log_success "Data platform stopped"
+    echo ""
+
+    # Phase 5: Stop Monitoring (Grafana/Prometheus/Pushgateway/SLO Exporter/DCGM)
     log_info "━━━ Stopping Monitoring ━━━"
-    docker compose stop unified-grafana global-prometheus 2>/dev/null || true
-    docker compose stop cadvisor node-exporter 2>/dev/null || true
+    docker compose --env-file .env -f docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway ml-slo-exporter 2>/dev/null || true
+    docker compose --env-file .env -f docker-compose.infra.yml stop cadvisor node-exporter 2>/dev/null || true
+    # Stop DCGM exporter (GPU metrics)
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml stop 2>/dev/null || true
+    fi
     log_success "Monitoring stopped"
     echo ""
 
-    # Phase 5: Stop Auth Services
+    # Phase 6: Stop Auth Services
     log_info "━━━ Stopping Auth Services ━━━"
-    docker compose stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
+    docker compose --env-file .env -f docker-compose.infra.yml stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
     log_success "Auth services stopped"
     echo ""
 
-    # Phase 6: Stop Infrastructure
+    # Phase 7: Stop Infrastructure
     log_info "━━━ Stopping Infrastructure ━━━"
-    docker compose stop traefik ml-platform-redis shared-postgres 2>/dev/null || true
+
+    # Stop Infisical if it exists
+    if [ -f "docker-compose.secrets.yml" ]; then
+        docker compose -f docker-compose.secrets.yml stop 2>/dev/null || true
+    fi
+
+    docker compose --env-file .env -f docker-compose.infra.yml stop traefik redis postgres 2>/dev/null || true
     log_success "Infrastructure stopped"
     echo ""
 
@@ -250,23 +705,55 @@ stop_all_services() {
 }
 
 # =============================================================================
-# Cleanup Orphaned/Dangling Containers
+# Cleanup Orphaned/Dangling Containers AND Networks
 # =============================================================================
 
 cleanup_containers() {
     echo ""
-    log_info "━━━ Cleaning up containers ━━━"
+    log_info "━━━ Cleaning up ALL platform containers and networks ━━━"
 
-    # List of all known containers that might be orphaned
+    # Stop all containers from compose files first
+    log_info "Stopping all compose services..."
+    docker compose --env-file .env -f docker-compose.infra.yml down --remove-orphans 2>/dev/null || true
+    if [ -f "docker-compose.secrets.yml" ]; then
+        docker compose -f docker-compose.secrets.yml down --remove-orphans 2>/dev/null || true
+    fi
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    fi
+
+    # List of all known containers (both old and new naming schemes)
     local containers=(
+        # Ray
         "ray-compute-api" "ray-head" "ray-prometheus"
+        # MLflow
         "mlflow-api" "mlflow-nginx" "mlflow-server" "mlflow-prometheus"
-        "oauth2-proxy" "fusionauth" "role-auth"
-        "unified-grafana" "global-prometheus"
+        # Auth
+        "oauth2-proxy" "fusionauth" "role-auth" "${PLATFORM_PREFIX:-shml}-role-auth"
+        # Monitoring
+        "unified-grafana" "global-prometheus" "dcgm-exporter" "${PLATFORM_PREFIX:-shml}-pushgateway"
+        # Infrastructure - old naming
         "ml-platform-cadvisor" "ml-platform-node-exporter"
-        "ml-platform-traefik" "ml-platform-redis" "shared-postgres"
+        "ml-platform-traefik" "ml-platform-redis" "shml-postgres"
+        # Infrastructure - new naming with prefix
+        "${PLATFORM_PREFIX:-shml}-cadvisor" "${PLATFORM_PREFIX:-shml}-node-exporter"
+        "${PLATFORM_PREFIX:-shml}-traefik" "${PLATFORM_PREFIX:-shml}-redis" "${PLATFORM_PREFIX:-shml}-postgres"
+        # UI
+        "homer" "dozzle" "postgres-backup" "webhook-deployer"
+        # Data Platform
+        "${PLATFORM_PREFIX:-shml}-nessie" "${PLATFORM_PREFIX:-shml}-fiftyone" "${PLATFORM_PREFIX:-shml}-fiftyone-mongodb"
+        "${PLATFORM_PREFIX:-shml}-ml-slo-exporter"
+        # Inference
+        "coding-model-primary" "coding-model-fallback"
+        "${PLATFORM_PREFIX:-shml}-chat-api"
+        # Dev
         "dev-postgres" "dev-redis" "dev-test"
-        "dcgm-exporter"
     )
 
     local cleaned=0
@@ -278,19 +765,40 @@ cleanup_containers() {
         fi
     done
 
-    # Clean any containers with ml-platform or sfml prefix
-    local orphans=$(docker ps -aq --filter "name=ml-platform" --filter "name=sfml" --filter "name=mlflow" --filter "name=ray" 2>/dev/null)
+    # Clean any remaining containers with platform-related names
+    local orphans=$(docker ps -aq --filter "name=ml-platform" --filter "name=sfml" --filter "name=shml" --filter "name=mlflow" --filter "name=ray" --filter "name=coding-model" 2>/dev/null)
     if [ -n "$orphans" ]; then
-        echo "  Removing orphaned containers..."
+        echo "  Removing additional orphaned containers..."
         echo "$orphans" | xargs docker rm -f >/dev/null 2>&1 || true
         cleaned=$((cleaned + 1))
     fi
 
+    # =========================================================================
+    # Network Cleanup - CRITICAL for preventing "Pool overlaps" errors
+    # Both old (ml-platform) and new (shml-platform) network names must be removed
+    # to allow recreation with potentially different subnet configurations
+    # =========================================================================
+    log_info "Cleaning up platform networks..."
+    local networks=(
+        "ml-platform"
+        "shml-platform"
+        "${PLATFORM_PREFIX:-shml}-platform"
+        "sfml-platform"
+    )
+
+    for network in "${networks[@]}"; do
+        if docker network ls --format '{{.Name}}' | grep -q "^${network}$"; then
+            echo -n "  Removing network $network..."
+            docker network rm "$network" >/dev/null 2>&1 && echo -e " ${GREEN}✓${NC}" || echo -e " ${YELLOW}⚠${NC}"
+        fi
+    done
+
     if [ $cleaned -eq 0 ]; then
-        log_success "No cleanup needed"
+        log_success "No container cleanup needed"
     else
-        log_success "Cleanup complete"
+        log_success "Cleanup complete ($cleaned containers removed)"
     fi
+    log_success "Network cleanup complete"
     echo ""
 }
 
@@ -310,7 +818,7 @@ rebuild_images() {
 
     # MLflow server (has security middleware changes)
     echo -n "  Building mlflow-server..."
-    if docker compose build mlflow-server >/dev/null 2>&1; then
+    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-server >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -319,7 +827,7 @@ rebuild_images() {
 
     # MLflow API
     echo -n "  Building mlflow-api..."
-    if docker compose build mlflow-api >/dev/null 2>&1; then
+    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-api >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -328,7 +836,7 @@ rebuild_images() {
 
     # Ray head (if custom Dockerfile exists)
     echo -n "  Building ray-head..."
-    if docker compose build ray-head >/dev/null 2>&1; then
+    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-head >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -337,7 +845,7 @@ rebuild_images() {
 
     # Ray compute API
     echo -n "  Building ray-compute-api..."
-    if docker compose build ray-compute-api >/dev/null 2>&1; then
+    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-compute-api >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -346,7 +854,7 @@ rebuild_images() {
 
     # Role Auth (RBAC middleware)
     echo -n "  Building role-auth..."
-    if docker compose build role-auth >/dev/null 2>&1; then
+    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build role-auth >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -421,25 +929,52 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 1: Core Infrastructure ━━━"
     echo "Starting: Traefik, PostgreSQL, Redis..."
-    docker compose up -d \
-        traefik shared-postgres ml-platform-redis \
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        traefik postgres redis \
         node-exporter cadvisor 2>&1 | grep -v "orphan" || true
 
-    wait_for_health "shared-postgres" $POSTGRES_TIMEOUT || { log_error "PostgreSQL failed to start"; exit 1; }
-    wait_for_health "ml-platform-traefik" $TRAEFIK_TIMEOUT || { log_error "Traefik failed to start"; exit 1; }
-    wait_for_health "ml-platform-redis" $DEFAULT_TIMEOUT || log_warn "Redis may still be initializing"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-postgres" $POSTGRES_TIMEOUT || { log_error "PostgreSQL failed to start"; exit 1; }
+    wait_for_health "${PLATFORM_PREFIX:-shml}-traefik" $TRAEFIK_TIMEOUT || { log_error "Traefik failed to start"; exit 1; }
+    wait_for_health "${PLATFORM_PREFIX:-shml}-redis" $DEFAULT_TIMEOUT || log_warn "Redis may still be initializing"
 
     # Verify Traefik API is accessible
     wait_for_http "http://localhost:8090/api/overview" 30 || log_warn "Traefik API not yet accessible"
+
+    # Nessie Iceberg catalog (depends on PostgreSQL)
+    echo "Starting: Nessie (Iceberg catalog)..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        nessie 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-nessie" $DEFAULT_TIMEOUT || log_warn "Nessie may still be starting"
+
     log_success "Infrastructure ready"
     echo ""
+
+    # =========================================================================
+    # Phase 1.5: Database Integrity Check & Auto-Restore
+    # Checks if databases appear empty (e.g., after volume reset) and restores
+    # from the largest backup within the last 25 hours for data continuity
+    # =========================================================================
+    check_and_restore_databases
+
+    # =========================================================================
+    # Phase 1.6: Infisical Secrets Manager (Needs PostgreSQL, Redis)
+    # =========================================================================
+    if [ -f "docker-compose.secrets.yml" ]; then
+        log_info "━━━ Phase 1.6: Infisical Secrets Manager ━━━"
+        echo "Starting: Infisical (secrets manager for API keys, GitHub tokens)..."
+        docker compose -f docker-compose.secrets.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        wait_for_health "${PLATFORM_PREFIX:-shml}-infisical" $DEFAULT_TIMEOUT || log_warn "Infisical may still be initializing"
+        log_success "Infisical secrets manager ready"
+        echo ""
+    fi
 
     # =========================================================================
     # Phase 2: FusionAuth (Needs PostgreSQL)
     # =========================================================================
     log_info "━━━ Phase 2: FusionAuth (OAuth Provider) ━━━"
     echo "Starting: FusionAuth OAuth/SSO server..."
-    docker compose up -d fusionauth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT || log_warn "FusionAuth may need initial setup wizard"
     log_success "FusionAuth ready"
@@ -596,7 +1131,7 @@ start_all_services() {
     log_info "━━━ Phase 4: OAuth2 Proxy (Auth Middleware) ━━━"
     echo "Starting: OAuth2 Proxy (provides forwardAuth middleware)..."
     echo "  Note: Using /oauth2-proxy/* prefix (FusionAuth uses /oauth2/*)"
-    docker compose up -d oauth2-proxy 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
 
     # OAuth2 Proxy healthcheck is DISABLED (scratch image has no wget/curl)
     # So we wait for container to be running, then verify it's working
@@ -618,7 +1153,7 @@ start_all_services() {
             echo -e "${RED}║       healthcheck:                                             ║${NC}"
             echo -e "${RED}║         disable: true                                          ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  Then restart: docker compose up -d --force-recreate oauth2-proxy${NC}"
+            echo -e "${RED}║  Then restart: docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy${NC}"
             echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
             echo ""
         fi
@@ -666,8 +1201,9 @@ start_all_services() {
 
             # Wait for OIDC endpoint
             local oidc_retry=0
+            local check_domain="${PUBLIC_DOMAIN:-$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo 'localhost')}"
             while [ $oidc_retry -lt 30 ]; do
-                local oidc_status=$(curl -skI "https://shml-platform.tail38b60a.ts.net/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
+                local oidc_status=$(curl -skI "https://${check_domain}/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
                 if [ "$oidc_status" = "200" ]; then
                     log_success "OIDC endpoint accessible"
                     break
@@ -679,7 +1215,7 @@ start_all_services() {
 
             # Restart oauth2-proxy
             echo "  Restarting OAuth2 Proxy..."
-            docker compose up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+            docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
             sleep 10
         fi
     fi
@@ -703,7 +1239,7 @@ start_all_services() {
 
         # Final recovery attempt: restart oauth2-proxy
         echo "  Final recovery attempt..."
-        docker compose up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
         sleep 15
 
         wait_for_middleware "oauth2-auth" 30 || {
@@ -732,7 +1268,7 @@ start_all_services() {
     log_info "━━━ Phase 4b: Role Auth Service (RBAC Middleware) ━━━"
     echo "Starting: Role Auth checker (provides role-based access control)..."
     echo "  Note: Validates X-Auth-Request-Groups header for developer/admin roles"
-    docker compose up -d --build role-auth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "role-auth" $DEFAULT_TIMEOUT || log_warn "Role Auth may still be starting"
 
@@ -747,13 +1283,21 @@ start_all_services() {
     # Phase 5: Protected Monitoring Services (Need OAuth2 Middleware)
     # =========================================================================
     log_info "━━━ Phase 5: Monitoring (Protected by OAuth2) ━━━"
-    echo "Starting: Global Prometheus, Unified Grafana..."
-    docker compose up -d \
-        global-prometheus unified-grafana 2>&1 | grep -v "orphan" || true
+    echo "Starting: Global Prometheus, Pushgateway, Unified Grafana..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        global-prometheus pushgateway unified-grafana 2>&1 | grep -v "orphan" || true
 
     wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT || log_warn "Prometheus may still be loading data"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-pushgateway" $DEFAULT_TIMEOUT || log_warn "Pushgateway may still be starting"
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT || log_warn "Grafana may still be initializing"
-    log_success "Monitoring ready"
+
+    # ML SLO Exporter (depends on MLflow/Ray APIs existing on network)
+    echo "Starting: ML SLO Exporter..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        ml-slo-exporter 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-ml-slo-exporter" $DEFAULT_TIMEOUT || log_warn "ML SLO Exporter may still be starting"
+
+    log_success "Monitoring ready (Prometheus, Pushgateway, Grafana, SLO Exporter)"
     echo ""
 
     # =========================================================================
@@ -761,12 +1305,13 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 6: MLflow Services (Protected by OAuth2) ━━━"
     echo "Starting: MLflow server, Nginx, API, Prometheus..."
-    docker compose up -d \
+    ensure_network
+    docker compose --env-file .env -f mlflow-server/docker-compose.yml up -d --force-recreate \
         mlflow-server mlflow-prometheus 2>&1 | grep -v "orphan" || true
 
     wait_for_health "mlflow-server" $MLFLOW_TIMEOUT || log_warn "MLflow server may still be initializing"
 
-    docker compose up -d \
+    docker compose --env-file .env -f mlflow-server/docker-compose.yml up -d --force-recreate \
         mlflow-nginx mlflow-api 2>&1 | grep -v "orphan" || true
 
     wait_for_health "mlflow-nginx" $DEFAULT_TIMEOUT || log_warn "MLflow nginx may still be starting"
@@ -775,15 +1320,41 @@ start_all_services() {
 
     # =========================================================================
     # Phase 7: Ray Compute (Protected by OAuth2)
+    # IMPORTANT: MPS daemon must be stopped before Ray starts, otherwise
+    # torch.cuda.is_available() will hang indefinitely in the container.
+    # See LESSONS LEARNED #7 above for details.
     # =========================================================================
     log_info "━━━ Phase 7: Ray Compute (Protected by OAuth2) ━━━"
+
+    # Stop MPS daemon if running (blocks Docker GPU access)
+    if check_mps_status; then
+        stop_mps_daemon
+    fi
+
+    # Verify GPU access before starting Ray
+    verify_gpu_access || log_warn "GPU access check failed - Ray may not have GPU access"
+
+    # Run database migration before starting Ray API
+    migrate_ray_database || log_warn "Database migration skipped"
+
     echo "Starting: Ray head, API, Prometheus..."
-    docker compose up -d \
+    ensure_network
+    docker compose --env-file .env -f ray_compute/docker-compose.yml up -d --force-recreate \
         ray-head ray-prometheus 2>&1 | grep -v "orphan" || true
 
     wait_for_health "ray-head" $RAY_TIMEOUT || log_warn "Ray head may still be initializing"
 
-    docker compose up -d \
+    # Verify Ray has GPU access
+    echo -n "  Verifying Ray GPU access..."
+    if timeout 30 docker exec ray-head python3 -c "import torch; assert torch.cuda.is_available(), 'No GPU'" 2>/dev/null; then
+        local ray_gpus=$(docker exec ray-head python3 -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo "?")
+        echo -e " ${GREEN}✓${NC} ($ray_gpus GPU(s))"
+    else
+        echo -e " ${YELLOW}⚠${NC} (Ray may not have GPU access)"
+        log_warn "Ray GPU access failed - check if MPS daemon is still running"
+    fi
+
+    docker compose --env-file .env -f ray_compute/docker-compose.yml up -d --force-recreate \
         ray-compute-api 2>&1 | grep -v "orphan" || true
 
     wait_for_health "ray-compute-api" $DEFAULT_TIMEOUT || log_warn "Ray API may still be starting"
@@ -796,7 +1367,7 @@ start_all_services() {
     log_info "━━━ Phase 8: GPU Monitoring ━━━"
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter..."
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d 2>&1 | grep -v "orphan" || true
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         log_success "GPU monitoring started"
     else
         log_warn "DCGM configuration not found - skipping GPU monitoring"
@@ -804,16 +1375,180 @@ start_all_services() {
     echo ""
 
     # =========================================================================
-    # Phase 9: Observability Services
+    # Phase 9: Main Inference Gateway (Qwen3-VL + Z-Image + Gateway + P4 Services)
     # =========================================================================
-    log_info "━━━ Phase 9: Observability & Landing Page ━━━"
+    log_info "━━━ Phase 9: Main Inference Gateway (Viewer+ Access) ━━━"
+    if [ -f "inference/docker-compose.inference.yml" ]; then
+        echo "Starting: Qwen3-VL (RTX 3090), Z-Image (RTX 3090), Gateway, PII-Blur (RTX 2070), Audio-Copyright (CPU)..."
+        # Ensure network exists before starting (compose file uses external: true)
+        ensure_network
+        docker compose --env-file .env -f inference/docker-compose.inference.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Model loading takes significant time - extended timeouts
+        QWEN3_VL_TIMEOUT=${QWEN3_VL_TIMEOUT:-300}
+        Z_IMAGE_TIMEOUT=${Z_IMAGE_TIMEOUT:-300}
+        INFERENCE_GW_TIMEOUT=${INFERENCE_GW_TIMEOUT:-30}
+        PII_BLUR_TIMEOUT=${PII_BLUR_TIMEOUT:-300}
+        AUDIO_COPYRIGHT_TIMEOUT=${AUDIO_COPYRIGHT_TIMEOUT:-120}
+
+        echo "  Waiting for Qwen3-VL LLM (8B INT4 on RTX 3090)..."
+        wait_for_health "qwen3-vl-api" $QWEN3_VL_TIMEOUT || log_warn "Qwen3-VL may still be loading (INT4 quantization takes 2-3 minutes)"
+
+        echo "  Waiting for Z-Image generator (on-demand, RTX 3090)..."
+        wait_for_health "z-image-api" $Z_IMAGE_TIMEOUT || log_warn "Z-Image may still be loading (can take 3-5 minutes)"
+
+        echo "  Waiting for Inference Gateway (queue/rate limiting/history)..."
+        wait_for_health "inference-gateway" $INFERENCE_GW_TIMEOUT || log_error "Inference Gateway failed to start"
+
+        echo "  Waiting for PII Blur API (YOLOv8l + SAM3 on RTX 2070)..."
+        wait_for_health "pii-blur-api" $PII_BLUR_TIMEOUT || log_warn "PII Blur API may still be loading"
+
+        echo "  Waiting for Audio Copyright API (fingerprinting + MusicGen)..."
+        wait_for_health "audio-copyright-api" $AUDIO_COPYRIGHT_TIMEOUT || log_warn "Audio Copyright API may still be loading"
+
+        log_success "Main inference gateway services started"
+    else
+        log_warn "Main inference gateway configuration not found - skipping"
+    fi
+    echo ""
+
+    # Start embedding service (CPU-based, no GPU dependencies)
+    if [ -f "inference/embedding-service/docker-compose.yml" ]; then
+        echo "Starting: Embedding Service (CPU-based sentence-transformers)..."
+        docker compose --env-file .env -f inference/embedding-service/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        EMBEDDING_TIMEOUT=${EMBEDDING_TIMEOUT:-60}
+        echo "  Waiting for embedding service (model loading ~60s)..."
+        wait_for_health "${PLATFORM_PREFIX:-shml}-embedding-service" $EMBEDDING_TIMEOUT || log_warn "Embedding service may still be loading"
+
+        log_success "Embedding service started"
+    else
+        log_warn "Embedding service configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 9a: Coding Model Services (Protected by OAuth2 - Developer role)
+    # =========================================================================
+    log_info "━━━ Phase 9a: Coding Model Services (Developer+ Access) ━━━"
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        echo "Starting: Coding Models (Primary: 30B on 3090Ti, Fallback: 3B on 2070)..."
+        # Ensure network exists before starting (compose file uses external: true)
+        ensure_network
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Model loading takes time, use extended timeout
+        # Wait for fallback first (faster to load)
+        CODING_MODEL_TIMEOUT=${CODING_MODEL_TIMEOUT:-300}
+        echo "  Waiting for fallback model (3B)..."
+        wait_for_health "coding-model-fallback" 180 || log_warn "Fallback model may still be loading"
+        echo "  Waiting for primary model (30B)..."
+        wait_for_health "coding-model-primary" $CODING_MODEL_TIMEOUT || log_warn "Primary model may still be loading (this can take 2-5 minutes)"
+        log_success "Coding model services started"
+    else
+        log_warn "Coding model configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 9b: Chat API Service (Needs coding models + Redis + Postgres)
+    # Provides OpenAI-compatible API for Cursor/VS Code integration
+    # =========================================================================
+    log_info "━━━ Phase 9b: Chat API Service ━━━"
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        echo "Starting: Chat API (OpenAI-compatible endpoint for Cursor/editors)..."
+        ensure_network
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Wait for Chat API to be healthy
+        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-api" $DEFAULT_TIMEOUT || log_warn "Chat API may still be starting"
+        log_success "Chat API service started"
+    else
+        log_warn "Chat API configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 9c: Chat UI Service (Web interface for chat)
+    # =========================================================================
+    log_info "━━━ Phase 9c: Chat UI Service ━━━"
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
+        echo "Starting: Chat UI (Web interface)..."
+        ensure_network
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+
+        # Wait for Chat UI to be healthy
+        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT || log_warn "Chat UI may still be starting"
+        log_success "Chat UI service started"
+    else
+        log_warn "Chat UI configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 9d: Code Server (VS Code IDE - Admin Only)
+    # Requires: OAuth2 middleware + role-auth-admin middleware
+    # =========================================================================
+    log_info "━━━ Phase 9d: Code Server (Admin Only) ━━━"
+    echo "Starting: VS Code IDE with GitHub Copilot..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
+
+    # Wait for code-server health
+    wait_for_health "${PLATFORM_PREFIX:-shml}-code-server" $DEFAULT_TIMEOUT || log_warn "Code Server may still be starting"
+
+    # Install Copilot extensions if not present
+    echo -n "  Checking GitHub Copilot extensions..."
+    if ! docker exec "${PLATFORM_PREFIX:-shml}-code-server" code-server --list-extensions 2>/dev/null | grep -q "github.copilot"; then
+        echo -e " installing..."
+        docker exec "${PLATFORM_PREFIX:-shml}-code-server" code-server --install-extension GitHub.copilot --install-extension GitHub.copilot-chat 2>/dev/null || log_warn "Copilot installation may require manual setup"
+        log_success "Copilot extensions installed"
+    else
+        echo -e " ${GREEN}✓${NC} already installed"
+    fi
+
+    log_success "Code Server ready (accessible at /ide - admin only)"
+    echo ""
+
+    # =========================================================================
+    # Phase 9e: Agent Service (ACE-based Autonomous Agent - Developer+ Access)
+    # Requires: Postgres, Redis, Coding Models, Inference Gateway
+    # =========================================================================
+    log_info "━━━ Phase 9e: Agent Service (Developer+ Access) ━━━"
+    if [ -f "inference/agent-service/docker-compose.yml" ]; then
+        echo "Starting: ACE Agent Service (LangGraph G-R-C workflow)..."
+        ensure_network
+        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+
+        # Wait for agent service health
+        AGENT_TIMEOUT=${AGENT_TIMEOUT:-60}
+        echo "  Waiting for agent service (embedding model loading ~60s)..."
+        wait_for_health "${PLATFORM_PREFIX:-shml}-agent-service" $AGENT_TIMEOUT || log_warn "Agent service may still be initializing"
+
+        log_success "Agent service started (accessible at /api/agent - developer+ only)"
+    else
+        log_warn "Agent service configuration not found - skipping"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 10: Observability Services
+    # =========================================================================
+    log_info "━━━ Phase 10: Observability & Landing Page ━━━"
     echo "Starting: Homer (landing), Dozzle (logs), Postgres Backup..."
-    docker compose up -d \
-        homer dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+    # Force recreate Homer to ensure config mounts are fresh
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate homer 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+
+    # FiftyOne visual dataset curation (depends on fiftyone-mongodb)
+    echo "Starting: FiftyOne (dataset curation)..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        fiftyone-mongodb fiftyone 2>&1 | grep -v "orphan" || true
 
     # Wait for services
     wait_for_health "homer" $DEFAULT_TIMEOUT || log_warn "Homer may still be starting"
     wait_for_health "postgres-backup" $DEFAULT_TIMEOUT || log_warn "Postgres Backup may still be starting"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-fiftyone-mongodb" $DEFAULT_TIMEOUT || log_warn "FiftyOne MongoDB may still be starting"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-fiftyone" $DEFAULT_TIMEOUT || log_warn "FiftyOne may still be starting"
 
     # Dozzle doesn't have healthcheck (minimal image)
     if docker ps --format '{{.Names}}' | grep -q "^dozzle$"; then
@@ -823,6 +1558,37 @@ start_all_services() {
     fi
 
     log_success "Observability services ready"
+    echo ""
+
+    # =========================================================================
+    # Phase 10.5: Self-Healing Watchdog
+    # =========================================================================
+    log_info "━━━ Phase 10.5: Self-Healing Watchdog ━━━"
+    echo "Starting: Watchdog (container health), Watchdog Admin, Alertmanager..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d \
+        watchdog watchdog-admin alertmanager 2>&1 | grep -v "orphan" || true
+
+    # Wait for watchdog to be running
+    sleep 3
+    if docker ps --format '{{.Names}}' | grep -q "watchdog"; then
+        log_success "Watchdog self-healing active"
+    else
+        log_warn "Watchdog may not have started — containers will NOT auto-recover"
+    fi
+    echo ""
+
+    # =========================================================================
+    # Phase 11: Generate Container ID Mapping (for Grafana dashboards)
+    # =========================================================================
+    log_info "━━━ Phase 11: Container Metrics Mapping ━━━"
+    echo "Generating container ID to name mapping for Grafana..."
+    if [ -x "${SCRIPT_DIR}/scripts/generate_container_mapping.sh" ]; then
+        "${SCRIPT_DIR}/scripts/generate_container_mapping.sh" >/dev/null 2>&1 && \
+            log_success "Container mapping generated" || \
+            log_warn "Container mapping generation failed"
+    else
+        log_warn "Container mapping script not found"
+    fi
     echo ""
 
     # Show status
@@ -940,7 +1706,7 @@ show_status() {
     log_success "Platform startup complete!"
     echo ""
     echo "Service Status:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup" || true
+    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup|coding-model|chat-api|code-server|nessie|fiftyone|slo-exporter" || true
     echo ""
     echo -e "${CYAN}Public Access (via Tailscale Funnel):${NC}"
     if [ -n "$PUBLIC_DOMAIN" ]; then
@@ -955,6 +1721,16 @@ show_status() {
         echo "  • Ray Dashboard:     https://${PUBLIC_DOMAIN}/ray/"
         echo "  • Grafana:           https://${PUBLIC_DOMAIN}/grafana/"
         echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
+        echo ""
+        echo "  Data Platform (Developer role required):"
+        echo "  • Nessie Catalog:    https://${PUBLIC_DOMAIN}/nessie/"
+        echo "  • FiftyOne:          https://${PUBLIC_DOMAIN}/fiftyone/"
+        echo ""
+        echo "  Admin-Only Services:"
+        echo "  • VS Code IDE:       https://${PUBLIC_DOMAIN}/ide/ (with GitHub Copilot)"
+        echo ""
+        echo "  Inference APIs (OAuth Protected - Developer role):"
+        echo "  • Coding Model API:  https://${PUBLIC_DOMAIN}/api/coding/v1/ (OpenAI-compatible)"
     fi
     echo ""
     # Get LAN IP (try multiple methods, fallback to common default)
@@ -970,6 +1746,16 @@ show_status() {
     echo "  • Ray Dashboard:   http://${LAN_IP}/ray/"
     echo "  • Grafana:         http://${LAN_IP}/grafana/"
     echo "  • Dozzle (Logs):   http://${LAN_IP}/logs/"
+    echo ""
+    echo "  Data Platform (Developer role required):"
+    echo "  • Nessie Catalog:  http://${LAN_IP}/nessie/"
+    echo "  • FiftyOne:        http://${LAN_IP}/fiftyone/"
+    echo ""
+    echo "  Inference APIs (Developer role required):"
+    echo "  • Coding Model:    http://${LAN_IP}/api/coding/v1/chat/completions"
+    echo ""
+    echo "  Admin-Only Services:"
+    echo "  • VS Code IDE:     http://${LAN_IP}/ide/ (with GitHub Copilot)"
     echo ""
     echo "  Admin (direct ports):"
     echo "  • FusionAuth:      http://${LAN_IP}:9011/admin/"
@@ -1025,7 +1811,7 @@ diagnose_auth() {
             echo "       healthcheck:"
             echo "         disable: true"
             echo ""
-            echo "  Then run: docker compose up -d --force-recreate oauth2-proxy"
+            echo "  Then run: docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
             ;;
         *)
             echo -e "${YELLOW}$health${NC}"
@@ -1096,7 +1882,7 @@ diagnose_auth() {
         echo "  #     disable: true"
         echo ""
         echo "  # Then restart:"
-        echo "  docker compose up -d --force-recreate oauth2-proxy"
+        echo "  docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
         echo ""
     fi
 }
@@ -1224,25 +2010,526 @@ fix_fusionauth_oauth() {
     echo ""
 }
 
+# =============================================================================
+# Individual Service Start Functions
+# =============================================================================
+
+# Helper function to update container ID mapping for Grafana dashboards
+update_container_mapping() {
+    # Generate JSON mapping file
+    if [ -x "${SCRIPT_DIR}/scripts/generate_container_mapping.sh" ]; then
+        "${SCRIPT_DIR}/scripts/generate_container_mapping.sh" >/dev/null 2>&1 || true
+    fi
+    # Generate Prometheus metrics file for container name labels
+    if [ -x "${SCRIPT_DIR}/scripts/generate_container_name_metrics.sh" ]; then
+        "${SCRIPT_DIR}/scripts/generate_container_name_metrics.sh" >/dev/null 2>&1 || true
+    fi
+}
+
+start_infra() {
+    log_info "━━━ Starting Infrastructure Only ━━━"
+    ensure_network
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        traefik \
+        postgres \
+        redis \
+        cadvisor \
+        node-exporter \
+        2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-postgres" $POSTGRES_TIMEOUT
+    wait_for_health "${PLATFORM_PREFIX:-shml}-traefik" $TRAEFIK_TIMEOUT
+    update_container_mapping
+    log_success "Infrastructure started"
+}
+
+start_auth() {
+    log_info "━━━ Starting Auth Services Only ━━━"
+    ensure_network
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate fusionauth oauth2-proxy 2>&1 | grep -v "orphan" || true
+    wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT
+    update_container_mapping
+    log_success "Auth services started"
+}
+
+start_mlflow() {
+    log_info "━━━ Starting MLflow Services Only ━━━"
+    ensure_network
+    docker compose --env-file .env -f mlflow-server/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+    wait_for_health "mlflow-server" $MLFLOW_TIMEOUT
+    update_container_mapping
+    log_success "MLflow services started"
+}
+
+# =============================================================================
+# Ray Database Migration
+# Ensures database schema is compatible with SQLAlchemy models
+# =============================================================================
+
+migrate_ray_database() {
+    log_info "━━━ Migrating Ray Compute Database ━━━"
+
+    local POSTGRES_CONTAINER="${PLATFORM_PREFIX:-shml}-postgres"
+
+    # Check if postgres container is running
+    if ! docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+        log_warn "PostgreSQL container not running, skipping migration"
+        return 1
+    fi
+
+    # Check if ray_compute database exists
+    if ! docker exec "$POSTGRES_CONTAINER" psql -U postgres -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw ray_compute; then
+        log_info "Creating ray_compute database..."
+        docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "CREATE DATABASE ray_compute;" 2>/dev/null || true
+        docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "CREATE USER ray_compute WITH ENCRYPTED PASSWORD 'ray_compute';" 2>/dev/null || true
+        docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE ray_compute TO ray_compute;" 2>/dev/null || true
+        log_success "Created ray_compute database"
+    fi
+
+    # Check if migration file exists
+    if [ ! -f "ray_compute/config/migrate_schema.sql" ]; then
+        log_warn "Migration file not found, skipping"
+        return 0
+    fi
+
+    # Run migration script
+    log_info "Applying database migrations..."
+    if docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d ray_compute < ray_compute/config/migrate_schema.sql 2>&1 | grep -E "(NOTICE|ERROR|Migration complete)"; then
+        log_success "Database migration complete"
+    else
+        log_warn "Migration had issues, check database manually"
+    fi
+
+    # Grant permissions to ray_compute user
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d ray_compute -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO ray_compute;" 2>/dev/null || true
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d ray_compute -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ray_compute;" 2>/dev/null || true
+
+    return 0
+}
+
+start_ray() {
+    log_info "━━━ Starting Ray Services Only ━━━"
+    ensure_network
+
+    # Run database migration before starting Ray API
+    migrate_ray_database || log_warn "Database migration skipped"
+
+    docker compose --env-file .env -f ray_compute/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+    wait_for_health "ray-head" $RAY_TIMEOUT
+    update_container_mapping
+    log_success "Ray services started"
+}
+
+start_inference() {
+    log_info "━━━ Starting Inference Services Only ━━━"
+    ensure_network
+
+    # Main inference gateway (Qwen3-VL + Z-Image + Gateway + PII Blur + Audio Copyright)
+    if [ -f "inference/docker-compose.inference.yml" ]; then
+        echo "Starting main inference gateway (Qwen3-VL, Z-Image, Gateway, PII-Blur, Audio-Copyright)..."
+        docker compose --env-file .env -f inference/docker-compose.inference.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "qwen3-vl-api" ${QWEN3_VL_TIMEOUT:-300} || log_warn "Qwen3-VL may still be loading"
+        wait_for_health "z-image-api" ${Z_IMAGE_TIMEOUT:-300} || log_warn "Z-Image may still be loading"
+        wait_for_health "inference-gateway" ${INFERENCE_GW_TIMEOUT:-30}
+
+        # P4 Content Creator Platform - PII Face Blurring (RTX 2070)
+        wait_for_health "pii-blur-api" ${PII_BLUR_TIMEOUT:-300} || log_warn "PII Blur API may still be loading (YOLOv8l + SAM3)"
+
+        # P4 Content Creator Platform - Audio Copyright Detection (CPU)
+        wait_for_health "audio-copyright-api" ${AUDIO_COPYRIGHT_TIMEOUT:-120} || log_warn "Audio Copyright API may still be loading"
+    fi
+
+    # Embedding service (CPU-based)
+    if [ -f "inference/embedding-service/docker-compose.yml" ]; then
+        echo "Starting embedding service..."
+        docker compose --env-file .env -f inference/embedding-service/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-embedding-service" ${EMBEDDING_TIMEOUT:-60} || log_warn "Embedding service may still be loading"
+    fi
+
+    # Nemotron coding model (PRIMARY - RTX 3090 Ti)
+    # Replaces Qwen2.5-Coder-32B with superior quality (95% vs 90% Claude Sonnet)
+    if [ -f "inference/nemotron/docker-compose.yml" ]; then
+        echo "Starting Nemotron-3-Nano-30B primary coding model (RTX 3090 Ti)..."
+        docker compose --env-file .env -f inference/nemotron/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "nemotron-coding" ${NEMOTRON_TIMEOUT:-300} || log_warn "Nemotron may still be loading (22GB model)"
+    fi
+
+    # Coding model fallback (FALLBACK - RTX 2070)
+    # Also available for agentic services (vision, etc.) when needed
+    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+        echo "Starting coding model fallback (RTX 2070) + agentic services..."
+        docker compose --env-file .env -f inference/coding-model/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "coding-model-fallback" 180 || log_warn "Fallback model may still be loading"
+        # Note: coding-model-primary is now deprecated, replaced by Nemotron
+    fi
+
+    # Chat API (Developer+ access)
+    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+        echo "Starting chat API..."
+        docker compose --env-file .env -f inference/chat-api/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-api" $DEFAULT_TIMEOUT
+    fi
+
+    # Chat UI (Developer+ access)
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
+        echo "Starting chat UI..."
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT
+    fi
+
+    update_container_mapping
+    log_success "Inference services started"
+}
+
+start_monitoring() {
+    log_info "━━━ Starting Monitoring Services Only ━━━"
+    ensure_network
+
+    # Start Prometheus, Pushgateway (for training job metrics), and Grafana
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        global-prometheus pushgateway unified-grafana 2>&1 | grep -v "orphan" || true
+
+    wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT
+    wait_for_health "${PLATFORM_PREFIX:-shml}-pushgateway" $DEFAULT_TIMEOUT || log_warn "Pushgateway may still be starting"
+    wait_for_health "unified-grafana" $GRAFANA_TIMEOUT
+
+    # Start DCGM exporter for GPU metrics
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
+        echo "Starting: DCGM Exporter (GPU metrics)..."
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        log_success "DCGM exporter started"
+    fi
+
+    # Start Loki + Promtail (log aggregation with 90-day retention)
+    if [ -f "docker-compose.logging.yml" ]; then
+        echo "Starting: Loki + Promtail (log aggregation)..."
+        docker compose --env-file .env -f docker-compose.logging.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "loki" ${LOKI_TIMEOUT:-60} || log_warn "Loki may still be starting"
+        wait_for_health "promtail" ${PROMTAIL_TIMEOUT:-30} || log_warn "Promtail may still be starting"
+        log_success "Loki log aggregation started"
+    fi
+
+    # Start Tempo + OpenTelemetry (distributed tracing)
+    if [ -f "docker-compose.tracing.yml" ]; then
+        echo "Starting: Tempo + OpenTelemetry (distributed tracing)..."
+        docker compose --env-file .env -f docker-compose.tracing.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        wait_for_health "tempo" ${TEMPO_TIMEOUT:-60} || log_warn "Tempo may still be starting"
+        wait_for_health "otel-collector" ${OTEL_TIMEOUT:-30} || log_warn "OTel Collector may still be starting"
+        log_success "Tempo distributed tracing started"
+    fi
+
+    # Update Prometheus to scrape pushgateway if not already configured
+    update_container_mapping
+    log_success "Monitoring services started (Prometheus, Pushgateway, Grafana, DCGM, Loki, Tempo)"
+}
+
+start_devtools() {
+    log_info "━━━ Starting Development Tools ━━━"
+    ensure_network
+
+    # Verify prerequisites (OAuth middleware must exist)
+    if ! curl -sf "http://localhost:8090/api/http/middlewares/oauth2-auth@docker" >/dev/null 2>&1; then
+        log_warn "oauth2-auth middleware not found - code-server OAuth won't work"
+        log_warn "Start auth services first: ./start_all_safe.sh start auth"
+    fi
+
+    if ! curl -sf "http://localhost:8090/api/http/middlewares/role-auth-admin@docker" >/dev/null 2>&1; then
+        log_warn "role-auth-admin middleware not found - starting role-auth first"
+        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
+        wait_for_middleware "role-auth-admin" 30 || log_error "role-auth-admin middleware failed to register"
+    fi
+
+    # Start code-server
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-code-server" $DEFAULT_TIMEOUT || log_warn "Code Server may still be starting"
+
+    # Install Copilot if not present
+    if ! docker exec "${PLATFORM_PREFIX:-shml}-code-server" code-server --list-extensions 2>/dev/null | grep -q "github.copilot"; then
+        echo "Installing GitHub Copilot extensions..."
+        docker exec "${PLATFORM_PREFIX:-shml}-code-server" code-server --install-extension GitHub.copilot --install-extension GitHub.copilot-chat 2>/dev/null || true
+    fi
+
+    update_container_mapping
+    log_success "Development tools started (VS Code IDE at /ide - admin only)"
+}
+
+start_agent() {
+    log_info "━━━ Starting Agent Service Only ━━━"
+    ensure_network
+
+    # Verify prerequisites
+    if ! docker ps --format '{{.Names}}' | grep -q "^${PLATFORM_PREFIX:-shml}-postgres$"; then
+        log_warn "PostgreSQL not running - starting infrastructure first"
+        start_infra
+    fi
+
+    if ! docker ps --format '{{.Names}}' | grep -q "^coding-model-primary$"; then
+        log_warn "Coding models not running - agent service requires them"
+        log_warn "Start inference services first: ./start_all_safe.sh start inference"
+    fi
+
+    # Start agent service
+    if [ -f "inference/agent-service/docker-compose.yml" ]; then
+        echo "Starting ACE Agent Service (LangGraph G-R-C workflow)..."
+        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-agent-service" ${AGENT_TIMEOUT:-60} || log_warn "Agent service may still be initializing"
+        update_container_mapping
+        log_success "Agent service started (accessible at /api/agent - developer+ only)"
+    else
+        log_error "Agent service configuration not found at inference/agent-service/docker-compose.yml"
+        exit 1
+    fi
+}
+
+start_sba_portal() {
+    log_info "━━━ Starting SBA Resource Portal ━━━"
+    ensure_network
+
+    # Verify prerequisites (OAuth middleware must exist for developer role)
+    if ! curl -sf "http://localhost:8090/api/http/middlewares/oauth2-auth@docker" >/dev/null 2>&1; then
+        log_warn "oauth2-auth middleware not found - SBA Portal OAuth won't work"
+        log_warn "Start auth services first: ./start_all_safe.sh start auth"
+    fi
+
+    if ! curl -sf "http://localhost:8090/api/http/middlewares/role-auth-developer@docker" >/dev/null 2>&1; then
+        log_warn "role-auth-developer middleware not found - starting role-auth first"
+        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
+        wait_for_middleware "role-auth-developer" 30 || log_error "role-auth-developer middleware failed to register"
+    fi
+
+    # Build and start SBA Resource Portal from docker-compose.infra.yml
+    echo "Building and starting SBA Resource Portal (Gemini AI Document Q&A)..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate --build sba-resource-portal 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-sba-resource-portal" ${SBA_PORTAL_TIMEOUT:-60} || log_warn "SBA Portal may still be starting"
+
+    update_container_mapping
+    log_success "SBA Resource Portal started (accessible at /sba-portal/ - developer+ only)"
+}
+
+stop_infra() {
+    log_info "━━━ Stopping Infrastructure ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop \
+        traefik \
+        postgres \
+        redis \
+        cadvisor \
+        node-exporter \
+        2>/dev/null || true
+    log_success "Infrastructure stopped"
+}
+
+stop_auth() {
+    log_info "━━━ Stopping Auth Services ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop fusionauth oauth2-proxy 2>/dev/null || true
+    log_success "Auth services stopped"
+}
+
+stop_mlflow() {
+    log_info "━━━ Stopping MLflow Services ━━━"
+    docker compose --env-file .env -f mlflow-server/docker-compose.yml stop 2>/dev/null || true
+    log_success "MLflow services stopped"
+}
+
+stop_ray() {
+    log_info "━━━ Stopping Ray Services ━━━"
+    docker compose --env-file .env -f ray_compute/docker-compose.yml stop 2>/dev/null || true
+    log_success "Ray services stopped"
+}
+
+stop_inference() {
+    log_info "━━━ Stopping Inference Services ━━━"
+    docker compose --env-file .env -f inference/docker-compose.inference.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/embedding-service/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/coding-model/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/chat-api/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/agent-service/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f chat-ui-v2/docker-compose.yml stop 2>/dev/null || true
+    log_success "Inference services stopped"
+}
+
+stop_monitoring() {
+    log_info "━━━ Stopping Monitoring Services ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop global-prometheus pushgateway unified-grafana 2>/dev/null || true
+    # Stop DCGM exporter (GPU metrics)
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml stop 2>/dev/null || true
+    fi
+    # Stop Loki + Promtail
+    if [ -f "docker-compose.logging.yml" ]; then
+        docker compose --env-file .env -f docker-compose.logging.yml stop 2>/dev/null || true
+    fi
+    # Stop Tempo + OTel
+    if [ -f "docker-compose.tracing.yml" ]; then
+        docker compose --env-file .env -f docker-compose.tracing.yml stop 2>/dev/null || true
+    fi
+    log_success "Monitoring services stopped"
+}
+
+stop_devtools() {
+    log_info "━━━ Stopping Development Tools ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop code-server 2>/dev/null || true
+    log_success "Development tools stopped"
+}
+
+stop_agent() {
+    log_info "━━━ Stopping Agent Service ━━━"
+    docker compose --env-file .env -f inference/agent-service/docker-compose.yml stop 2>/dev/null || true
+    log_success "Agent service stopped"
+}
+
+stop_sba_portal() {
+    log_info "━━━ Stopping SBA Resource Portal ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop sba-resource-portal 2>/dev/null || true
+    log_success "SBA Resource Portal stopped"
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+# Handle service-specific commands
+SERVICE="${2:-}"
+
 case "${1:-restart}" in
     start)
-        rebuild_images
-        start_all_services
+        case "$SERVICE" in
+            infra|infrastructure)
+                start_infra
+                ;;
+            auth|authentication)
+                start_auth
+                ;;
+            mlflow)
+                start_mlflow
+                ;;
+            ray)
+                start_ray
+                ;;
+            inference|models|coding)
+                start_inference
+                ;;
+            monitoring|mon)
+                start_monitoring
+                ;;
+            devtools|dev|ide|code-server)
+                start_devtools
+                ;;
+            agent|ace)
+                start_agent
+                ;;
+            sba|sba-portal|gemini)
+                start_sba_portal
+                ;;
+            "")
+                # Start all services
+                rebuild_images
+                start_all_services
+                ;;
+            *)
+                echo "Unknown service: $SERVICE"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, sba-portal"
+                exit 1
+                ;;
+        esac
         ;;
     stop)
-        stop_all_services
+        case "$SERVICE" in
+            infra|infrastructure)
+                stop_infra
+                ;;
+            auth|authentication)
+                stop_auth
+                ;;
+            mlflow)
+                stop_mlflow
+                ;;
+            ray)
+                stop_ray
+                ;;
+            inference|models|coding)
+                stop_inference
+                ;;
+            monitoring|mon)
+                stop_monitoring
+                ;;
+            devtools|dev|ide|code-server)
+                stop_devtools
+                ;;
+            agent|ace)
+                stop_agent
+                ;;
+            sba|sba-portal|gemini)
+                stop_sba_portal
+                ;;
+            "")
+                # Stop all services
+                stop_all_services
+                ;;
+            *)
+                echo "Unknown service: $SERVICE"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent"
+                exit 1
+                ;;
+        esac
         ;;
-    restart|"")
-        stop_all_services
-        cleanup_containers
-        rebuild_images
-        start_all_services
+    restart)
+        case "$SERVICE" in
+            infra|infrastructure)
+                stop_infra
+                start_infra
+                ;;
+            auth|authentication)
+                stop_auth
+                start_auth
+                ;;
+            mlflow)
+                stop_mlflow
+                start_mlflow
+                ;;
+            ray)
+                stop_ray
+                start_ray
+                ;;
+            inference|models|coding)
+                stop_inference
+                start_inference
+                ;;
+            monitoring|mon)
+                stop_monitoring
+                start_monitoring
+                ;;
+            devtools|dev|ide|code-server)
+                stop_devtools
+                start_devtools
+                ;;
+            agent|ace)
+                stop_agent
+                start_agent
+                ;;
+            sba|sba-portal|gemini)
+                stop_sba_portal
+                start_sba_portal
+                ;;
+            "")
+                # Full restart
+                create_pre_restart_backup
+                stop_all_services
+                cleanup_containers
+                rebuild_images
+                start_all_services
+                ;;
+            *)
+                echo "Unknown service: $SERVICE"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, sba-portal"
+                exit 1
+                ;;
+        esac
         ;;
     status)
         show_status
         verify_auth_protection
         ;;
     cleanup)
+        create_pre_restart_backup
         stop_all_services
         cleanup_containers
         ;;
@@ -1256,17 +2543,33 @@ case "${1:-restart}" in
         rebuild_images
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|cleanup|diagnose|fix-oauth|build}"
+        echo "Usage: $0 {start|stop|restart|status|cleanup|diagnose|fix-oauth|build} [service]"
         echo ""
         echo "Commands:"
-        echo "  start     - Rebuild images + start all services"
-        echo "  stop      - Stop all services"
-        echo "  restart   - Full restart: stop + cleanup + rebuild + start (default)"
-        echo "  status    - Show service status and access URLs"
-        echo "  build     - Rebuild all container images only"
-        echo "  cleanup   - Stop and remove all containers"
-        echo "  diagnose  - Debug OAuth2/middleware issues"
-        echo "  fix-oauth - Fix FusionAuth OAuth client callback URLs"
+        echo "  start [service]   - Start all services or specific service"
+        echo "  stop [service]    - Stop all services or specific service"
+        echo "  restart [service] - Restart all services or specific service (default)"
+        echo "  status            - Show service status and access URLs"
+        echo "  build             - Rebuild all container images only"
+        echo "  cleanup           - Stop and remove all containers"
+        echo "  diagnose          - Debug OAuth2/middleware issues"
+        echo "  fix-oauth         - Fix FusionAuth OAuth client callback URLs"
+        echo ""
+        echo "Services:"
+        echo "  infra      - Infrastructure (Traefik, Postgres, Redis)"
+        echo "  auth       - Authentication (FusionAuth, OAuth2 Proxy, Role Auth)"
+        echo "  mlflow     - MLflow tracking server"
+        echo "  ray        - Ray compute cluster"
+        echo "  inference  - Coding models + Chat API + Chat UI"
+        echo "  monitoring - Prometheus + Grafana"
+        echo "  devtools   - VS Code IDE (code-server with Copilot) - Admin only"
+        echo "  agent      - ACE Agent Service (LangGraph G-R-C workflow) - Developer+ only"
+        echo ""
+        echo "Examples:"
+        echo "  $0 start              # Start all services"
+        echo "  $0 start inference    # Start only inference services"
+        echo "  $0 restart ray        # Restart Ray cluster"
+        echo "  $0 stop mlflow        # Stop MLflow services"
         echo ""
         echo "Environment variables for timeouts (in seconds):"
         echo "  POSTGRES_TIMEOUT=$POSTGRES_TIMEOUT"

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(255) UNIQUE,
     email VARCHAR(255) UNIQUE,
-    role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'premium', 'user')),
+    role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'premium', 'user', 'viewer')),
     oauth_sub VARCHAR(255) UNIQUE,  -- Authentik OAuth subject
     api_key_hash VARCHAR(255),
 

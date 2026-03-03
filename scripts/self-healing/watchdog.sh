@@ -1,0 +1,893 @@
+#!/bin/bash
+# =============================================================================
+# Self-Healing Watchdog v2 — SHML Platform
+# =============================================================================
+# GPU-aware, memory-safe watchdog with autonomous agent orchestration.
+#
+# Key properties:
+#   - Uses RTX 2070 (GPU 1) memory first, then system RAM — never touches
+#     GPU 0 (RTX 3090 Ti) to protect training jobs
+#   - Detects and remediates memory leaks (OOM-killed containers, growing RSS)
+#   - Orchestrates cross-service resolution via the agent-service API
+#   - Discovers full application state: UIs, services, features, GPU allocation
+#   - Audit log for every action
+#   - Telegram notifications for all events
+#
+# Environment:
+#   CHECK_INTERVAL         — seconds between checks (default: 60)
+#   MAX_RESTARTS           — max restarts per container per hour (default: 3)
+#   COOLDOWN_SECONDS       — backoff after max restarts reached (default: 900)
+#   TRAINING_GPU           — GPU index reserved for training (default: 0)
+#   WATCHDOG_GPU           — GPU index watchdog prefers (default: 1)
+#   MEMORY_LEAK_THRESHOLD  — MB growth per hour to flag leak (default: 100)
+#   AGENT_SERVICE_URL      — Agent service for cross-svc resolution
+#   TELEGRAM_BOT_TOKEN     — Telegram bot API token
+#   TELEGRAM_CHAT_ID       — Telegram chat/group ID
+# =============================================================================
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+CHECK_INTERVAL="${CHECK_INTERVAL:-60}"
+MAX_RESTARTS="${MAX_RESTARTS:-3}"
+COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-900}"
+PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
+PROMETHEUS_URL="${PROMETHEUS_URL:-http://global-prometheus:9090}"
+AGENT_SERVICE_URL="${AGENT_SERVICE_URL:-http://agent-service:8000}"
+
+# GPU isolation — NEVER touch the training GPU
+TRAINING_GPU="${TRAINING_GPU:-0}"       # RTX 3090 Ti — hands off
+WATCHDOG_GPU="${WATCHDOG_GPU:-1}"       # RTX 2070 — watchdog uses this first
+
+# Memory leak detection
+MEMORY_LEAK_THRESHOLD_MB="${MEMORY_LEAK_THRESHOLD:-100}"  # MB growth/hour = leak
+OOM_RESTART_BUDGET="${OOM_RESTART_BUDGET:-2}"             # Max OOM restarts/hour
+
+# Pushgateway for Prometheus metrics export
+PUSHGATEWAY_URL="${PUSHGATEWAY_URL:-http://${PLATFORM_PREFIX}-pushgateway:9091}"
+
+LOG_DIR="/var/log/watchdog"
+AUDIT_LOG="${LOG_DIR}/audit.log"
+STATE_DIR="/var/lib/watchdog"
+MEMORY_DIR="${STATE_DIR}/memory"
+DISCOVERY_FILE="${STATE_DIR}/platform_state.json"
+
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$MEMORY_DIR"
+
+# ---------------------------------------------------------------------------
+# Metrics counters (reset on restart, pushed to Pushgateway each cycle)
+# ---------------------------------------------------------------------------
+WATCHDOG_START_TIME=$(date +%s)
+TOTAL_RESTARTS=0
+TOTAL_ACTIONS=0
+TOTAL_AGENT_ESCALATIONS=0
+TOTAL_OOM_KILLS=0
+TOTAL_MEMORY_LEAKS=0
+TRAINING_PROTECTED=0
+IS_PAUSED=0
+CONTROL_FILE="${STATE_DIR}/control"
+
+# Ensure watchdog itself doesn't use training GPU
+export CUDA_VISIBLE_DEVICES="${WATCHDOG_GPU}"
+export NVIDIA_VISIBLE_DEVICES="${WATCHDOG_GPU}"
+
+# ---------------------------------------------------------------------------
+# Container registry
+# ---------------------------------------------------------------------------
+# Critical: must be running at all times
+CRITICAL_CONTAINERS=(
+    "${PLATFORM_PREFIX}-traefik"
+    "global-prometheus"
+    "unified-grafana"
+    "${PLATFORM_PREFIX}-redis"
+    "${PLATFORM_PREFIX}-postgres"
+    "fusionauth"
+    "${PLATFORM_PREFIX}-alertmanager"
+)
+
+# Standard: tolerate brief downtime
+STANDARD_CONTAINERS=(
+    "mlflow-server"
+    "mlflow-prometheus"
+    "homer"
+    "oauth2-proxy"
+    "${PLATFORM_PREFIX}-code-server"
+    "${PLATFORM_PREFIX}-pushgateway"
+    "${PLATFORM_PREFIX}-ml-slo-exporter"
+    "${PLATFORM_PREFIX}-fiftyone"
+    "${PLATFORM_PREFIX}-fiftyone-mongodb"
+    "${PLATFORM_PREFIX}-chat-ui"
+    "${PLATFORM_PREFIX}-agent-service"
+    "inference-gateway"
+    "ray-head"
+)
+
+# Containers with known memory-growth patterns (watch closely)
+MEMORY_WATCH_CONTAINERS=(
+    "${PLATFORM_PREFIX}-agent-service"
+    "inference-gateway"
+    "${PLATFORM_PREFIX}-fiftyone"
+    "${PLATFORM_PREFIX}-code-server"
+    "mlflow-server"
+)
+
+# User-facing UIs (for state discovery)
+UI_SERVICES=(
+    "homer|/|Landing Page"
+    "chat-ui|/chat-ui/|AI Chat Interface"
+    "unified-grafana|/grafana|Monitoring Dashboards"
+    "code-server|/ide|VS Code IDE"
+    "ray-compute-ui|/ray/ui|Ray Compute UI"
+    "dozzle|/logs|Log Viewer"
+    "sba-resource-portal|/sba-portal|SBA Resource Portal"
+    "fiftyone|/fiftyone|Dataset Curation"
+    "pii-ui|/pii|PII Blur Demo"
+    "mlflow-nginx|/mlflow|ML Experiment Tracking"
+    "traefik|/traefik|API Gateway Dashboard"
+)
+
+if [[ -n "${PROTECTED_CONTAINERS:-}" ]]; then
+    IFS=',' read -ra EXTRA <<< "$PROTECTED_CONTAINERS"
+    STANDARD_CONTAINERS+=("${EXTRA[@]}")
+fi
+
+EXCLUDED=()
+if [[ -n "${EXCLUDED_CONTAINERS:-}" ]]; then
+    IFS=',' read -ra EXCLUDED <<< "$EXCLUDED_CONTAINERS"
+fi
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" | tee -a "$LOG_DIR/watchdog.log"
+}
+
+audit() {
+    local action="$1" target="$2" detail="${3:-}"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] ACTION=${action} TARGET=${target} DETAIL=${detail}" >> "$AUDIT_LOG"
+}
+
+send_telegram() {
+    local msg="$1"
+    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+        curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="${msg}" \
+            -d parse_mode=Markdown \
+            > /dev/null 2>&1 || log "WARN: Telegram send failed"
+    fi
+}
+
+is_excluded() {
+    local name="$1"
+    for excl in "${EXCLUDED[@]}"; do
+        [[ "$name" == "$excl" ]] && return 0
+    done
+    return 1
+}
+
+get_restart_count() {
+    local container="$1"
+    local state_file="${STATE_DIR}/${container}.restarts"
+    if [[ -f "$state_file" ]]; then
+        local ts count
+        read -r ts count < "$state_file"
+        local now
+        now=$(date +%s)
+        if (( now - ts > 3600 )); then
+            echo "0"
+            return
+        fi
+        echo "$count"
+    else
+        echo "0"
+    fi
+}
+
+increment_restart_count() {
+    local container="$1"
+    local state_file="${STATE_DIR}/${container}.restarts"
+    local now count
+    now=$(date +%s)
+    count=$(get_restart_count "$container")
+    echo "$now $((count + 1))" > "$state_file"
+}
+
+# ---------------------------------------------------------------------------
+# GPU isolation — protect training
+# ---------------------------------------------------------------------------
+check_training_gpu_safety() {
+    if ! command -v nvidia-smi &>/dev/null; then
+        TRAINING_PROTECTED=0
+        return 0
+    fi
+
+    # Detect active training processes on GPU 0
+    if nvidia-smi --id="${TRAINING_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q "[0-9]"; then
+        TRAINING_PROTECTED=1
+    else
+        TRAINING_PROTECTED=0
+    fi
+
+    local training_gpu_mem
+    training_gpu_mem=$(nvidia-smi --id="${TRAINING_GPU}" \
+        --query-gpu=memory.used,memory.total \
+        --format=csv,noheader,nounits 2>/dev/null) || return 0
+
+    local used total
+    used=$(echo "$training_gpu_mem" | cut -d',' -f1 | tr -d ' ')
+    total=$(echo "$training_gpu_mem" | cut -d',' -f2 | tr -d ' ')
+
+    if [[ -z "$used" || -z "$total" ]]; then
+        return 0
+    fi
+
+    local usage_pct=$(( used * 100 / total ))
+
+    # If training GPU is >95% full, check for non-training leakers
+    if (( usage_pct > 95 )); then
+        log "WARN: Training GPU ${TRAINING_GPU} at ${usage_pct}% (${used}/${total} MiB)"
+
+        local gpu_procs
+        gpu_procs=$(nvidia-smi --id="${TRAINING_GPU}" \
+            --query-compute-apps=pid,process_name,used_gpu_memory \
+            --format=csv,noheader 2>/dev/null) || gpu_procs=""
+
+        if [[ -n "$gpu_procs" ]]; then
+            while IFS=',' read -r pid pname mem; do
+                mem=$(echo "$mem" | tr -d ' MiB')
+                pname=$(echo "$pname" | tr -d ' ')
+                # Skip known training processes
+                if [[ "$pname" == *"train"* || "$pname" == *"rfdetr"* || "$pname" == *"ray"* || "$pname" == *"python"* ]]; then
+                    continue
+                fi
+                if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 1024 )); then
+                    log "ALERT: Non-training process ${pname} (PID ${pid}) using ${mem} MiB on training GPU"
+                    send_telegram "⚠️ *GPU Guard*: \`${pname}\` using ${mem} MiB on training GPU ${TRAINING_GPU}"
+                    audit "GPU_INTRUSION" "$pname" "PID=${pid} GPU=${TRAINING_GPU} MEM=${mem}MiB"
+                    request_gpu_yield "$pname"
+                fi
+            done <<< "$gpu_procs"
+        fi
+    fi
+}
+
+request_gpu_yield() {
+    local process_name="$1"
+    local response
+    response=$(curl -sf -X POST "http://gpu-manager:8000/api/v1/yield" \
+        -H "Content-Type: application/json" \
+        -d "{\"gpu_id\": ${TRAINING_GPU}, \"reason\": \"watchdog: training protection\", \"source\": \"${process_name}\"}" \
+        2>/dev/null) || {
+        log "WARN: gpu-manager yield request failed for ${process_name}"
+        return 1
+    }
+    log "OK: GPU yield requested for ${process_name}: ${response}"
+    audit "GPU_YIELD_REQUEST" "$process_name" "GPU=${TRAINING_GPU}"
+}
+
+# ---------------------------------------------------------------------------
+# Memory leak detection
+# ---------------------------------------------------------------------------
+check_memory_leaks() {
+    for container in "${MEMORY_WATCH_CONTAINERS[@]}"; do
+        is_excluded "$container" && continue
+
+        # Get current memory usage
+        local mem_raw
+        mem_raw=$(docker stats --no-stream --format '{{.MemUsage}}' "$container" 2>/dev/null | head -1) || continue
+
+        local mem_bytes
+        mem_bytes=$(echo "$mem_raw" | awk -F'/' '{print $1}' | tr -d ' ')
+
+        # Convert to MB
+        local mem_mb=0
+        if [[ "$mem_bytes" == *"GiB"* ]]; then
+            mem_mb=$(echo "$mem_bytes" | tr -d 'GiB' | awk '{printf "%.0f", $1 * 1024}')
+        elif [[ "$mem_bytes" == *"MiB"* ]]; then
+            mem_mb=$(echo "$mem_bytes" | tr -d 'MiB' | awk '{printf "%.0f", $1}')
+        elif [[ "$mem_bytes" == *"KiB"* ]]; then
+            mem_mb=$(echo "$mem_bytes" | tr -d 'KiB' | awk '{printf "%.0f", $1 / 1024}')
+        else
+            continue
+        fi
+
+        local state_file="${MEMORY_DIR}/${container}.mem"
+        local now
+        now=$(date +%s)
+
+        if [[ -f "$state_file" ]]; then
+            local prev_ts prev_mb
+            read -r prev_ts prev_mb < "$state_file"
+
+            local elapsed=$(( now - prev_ts ))
+            if (( elapsed > 1800 )); then  # Check after 30 min baseline
+                local growth=$(( mem_mb - prev_mb ))
+                local growth_per_hour=0
+                if (( elapsed > 0 )); then
+                    growth_per_hour=$(( growth * 3600 / elapsed ))
+                fi
+
+                if (( growth_per_hour > MEMORY_LEAK_THRESHOLD_MB )); then
+                    TOTAL_MEMORY_LEAKS=$((TOTAL_MEMORY_LEAKS + 1))
+                    log "LEAK: ${container} growing ${growth_per_hour} MB/hr (${prev_mb}→${mem_mb} MB over $((elapsed/60))m)"
+                    send_telegram "🧠 *Memory Leak*: \`${container}\`
+Growth: ${growth_per_hour} MB/hr
+Now: ${mem_mb} MB (was ${prev_mb} MB)
+Window: $((elapsed / 60)) minutes"
+                    audit "MEMORY_LEAK" "$container" "Growth=${growth_per_hour}MB/hr Now=${mem_mb}MB"
+                    handle_memory_leak "$container" "$mem_mb" "$growth_per_hour"
+                fi
+
+                echo "$now $mem_mb" > "$state_file"
+            fi
+        else
+            echo "$now $mem_mb" > "$state_file"
+        fi
+    done
+}
+
+handle_memory_leak() {
+    local container="$1"
+    local current_mb="$2"
+    local growth_rate="$3"
+
+    # Get container memory limit
+    local mem_limit
+    mem_limit=$(docker inspect --format='{{.HostConfig.Memory}}' "$container" 2>/dev/null) || mem_limit=0
+
+    local limit_mb=0
+    if (( mem_limit > 0 )); then
+        limit_mb=$(( mem_limit / 1048576 ))
+    fi
+
+    # Preemptive restart at >80% of limit
+    if (( limit_mb > 0 && current_mb * 100 / limit_mb > 80 )); then
+        log "PREEMPTIVE: ${container} at ${current_mb}/${limit_mb} MB (${growth_rate} MB/hr)"
+        send_telegram "🔄 *Preemptive Restart*: \`${container}\` at $((current_mb * 100 / limit_mb))% memory"
+        audit "PREEMPTIVE_RESTART" "$container" "Mem=${current_mb}/${limit_mb}MB Growth=${growth_rate}MB/hr"
+        restart_container "$container" "memory-leak-preemptive"
+        return
+    fi
+
+    # For agent-service: clear internal state by restarting if growth is aggressive
+    if [[ "$container" == *"agent-service"* ]]; then
+        if (( growth_rate > MEMORY_LEAK_THRESHOLD_MB * 2 )); then
+            log "REMEDIATE: agent-service aggressive leak (${growth_rate} MB/hr) — restarting"
+            restart_container "$container" "agent-service-memory-leak"
+        fi
+    fi
+
+    # For inference-gateway: httpx client pool leak — restart cleans it
+    if [[ "$container" == *"inference-gateway"* ]]; then
+        if (( growth_rate > MEMORY_LEAK_THRESHOLD_MB )); then
+            log "REMEDIATE: inference-gateway connection pool leak — restarting"
+            restart_container "$container" "gateway-connection-pool-leak"
+        fi
+    fi
+}
+
+check_oom_killed() {
+    local oom_containers
+    oom_containers=$(docker ps -a --filter "status=exited" \
+        --format '{{.Names}} {{.Status}}' 2>/dev/null | \
+        grep -i "137" || true)
+
+    if [[ -n "$oom_containers" ]]; then
+        while read -r name status; do
+            [[ -z "$name" ]] && continue
+            TOTAL_OOM_KILLS=$((TOTAL_OOM_KILLS + 1))
+            log "OOM: Container ${name}: ${status}"
+            send_telegram "💀 *OOM Kill*: \`${name}\`
+Status: ${status}"
+            audit "OOM_KILLED" "$name" "$status"
+
+            # Check if container uses training GPU exclusively
+            local gpu_info
+            gpu_info=$(docker inspect --format='{{range .HostConfig.DeviceRequests}}{{.DeviceIDs}}{{end}}' "$name" 2>/dev/null || echo "")
+
+            if [[ "$gpu_info" == *"${TRAINING_GPU}"* ]] && [[ "$gpu_info" != *"${WATCHDOG_GPU}"* ]]; then
+                log "SKIP: ${name} uses training GPU — NOT restarting"
+                send_telegram "⏸️ *Skipped*: \`${name}\` uses training GPU. Restart after training."
+                audit "OOM_SKIP_TRAINING" "$name" "Uses GPU ${TRAINING_GPU}"
+            else
+                restart_container "$name" "oom-killed"
+            fi
+        done <<< "$oom_containers"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Container health
+# ---------------------------------------------------------------------------
+check_container_health() {
+    local container="$1"
+    local severity="${2:-standard}"
+
+    local status
+    status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null) || {
+        return 2
+    }
+
+    if [[ "$status" != "running" ]]; then
+        log "ALERT: Container ${container} is ${status}"
+        return 1
+    fi
+
+    local health
+    health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null) || health="unknown"
+
+    if [[ "$health" == "unhealthy" ]]; then
+        log "ALERT: Container ${container} is unhealthy"
+        return 1
+    fi
+
+    return 0
+}
+
+check_prometheus() {
+    if curl -sf "${PROMETHEUS_URL}/-/healthy" > /dev/null 2>&1; then
+        return 0
+    fi
+    log "WARN: Prometheus not reachable at ${PROMETHEUS_URL}"
+    return 1
+}
+
+check_gpu_health() {
+    if ! command -v nvidia-smi &>/dev/null; then
+        return 0
+    fi
+
+    local gpu_status
+    gpu_status=$(nvidia-smi --query-gpu=index,gpu_name,temperature.gpu,utilization.gpu,memory.used,memory.total \
+        --format=csv,noheader 2>/dev/null) || {
+        log "WARN: nvidia-smi failed"
+        send_telegram "⚠️ *GPU Alert*: nvidia-smi failed"
+        audit "GPU_ERROR" "nvidia-smi" "Command failed"
+        return 1
+    }
+
+    while IFS=',' read -r idx name temp util mem_used mem_total; do
+        idx=$(echo "$idx" | tr -d ' ')
+        temp=$(echo "$temp" | tr -d ' ')
+        if [[ "$temp" =~ ^[0-9]+$ ]] && (( temp > 90 )); then
+            log "CRITICAL: GPU ${idx} at ${temp}°C — thermal throttling"
+            send_telegram "🔥 *GPU Thermal*: GPU ${idx} (${name}) at ${temp}°C"
+            audit "GPU_THERMAL" "GPU-${idx}" "Temp=${temp}°C"
+        fi
+    done <<< "$gpu_status"
+}
+
+# ---------------------------------------------------------------------------
+# Autonomous agent orchestration for cross-service resolution
+# ---------------------------------------------------------------------------
+request_agent_resolution() {
+    local issue_type="$1"
+    local description="$2"
+    local containers_affected="$3"
+
+    log "AGENT: Requesting autonomous resolution for ${issue_type}"
+
+    local task="You are the platform watchdog autonomous agent. A cross-service issue detected.
+
+Issue: ${issue_type}
+Details: ${description}
+Affected: ${containers_affected}
+Time: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+Instructions:
+1. Diagnose root cause by checking logs and health endpoints
+2. Determine if cascading failure (postgres→fusionauth→oauth→all UIs)
+3. Suggest correct restart order for affected services
+4. Check if GPU services need to yield before restart
+5. Report findings as JSON
+
+Respond: {\"diagnosis\": \"...\", \"root_cause\": \"...\", \"restart_order\": [...], \"gpu_yield_needed\": bool, \"severity\": \"critical|warning|info\"}"
+
+    local response
+    response=$(curl -sf -X POST "${AGENT_SERVICE_URL}/api/v1/agent/execute" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"task\": $(printf '%s' "$task" | jq -Rs '.' 2>/dev/null || echo "\"cross-service issue\""),
+            \"session_id\": \"watchdog-$(date +%s)\",
+            \"user_id\": \"watchdog\",
+            \"role\": \"admin\"
+        }" \
+        --max-time 60 2>/dev/null) || {
+        log "WARN: Agent service unavailable for resolution"
+        return 1
+    }
+
+    log "AGENT RESPONSE: $(echo "$response" | head -c 500)"
+    audit "AGENT_RESOLUTION" "$issue_type" "Response received"
+
+    # Extract restart order from agent response
+    local restart_order
+    restart_order=$(echo "$response" | jq -r '
+        (.answer // .response // "") |
+        capture("\\{(?<json>[^}]+)\\}") |
+        .json | "{" + . + "}" |
+        fromjson | .restart_order // [] | join(" ")
+    ' 2>/dev/null) || restart_order=""
+
+    if [[ -n "$restart_order" ]]; then
+        log "AGENT: Restart order: ${restart_order}"
+        send_telegram "🤖 *Agent Diagnosis*: ${issue_type}
+Order: \`${restart_order}\`
+Executing..."
+        audit "AGENT_RESTART_ORDER" "$issue_type" "Order: ${restart_order}"
+
+        for container in $restart_order; do
+            restart_container "$container" "agent-directed-${issue_type}"
+            sleep 10
+        done
+    else
+        log "AGENT: No restart order extracted — falling back to sequential restart"
+        # Fallback: restart affected containers in dependency order
+        for container in $containers_affected; do
+            restart_container "$container" "cascading-${issue_type}"
+            sleep 10
+        done
+    fi
+}
+
+detect_cascading_failure() {
+    local unhealthy_list="$1"
+    local count
+    count=$(echo "$unhealthy_list" | wc -w)
+
+    if (( count >= 3 )); then
+        TOTAL_AGENT_ESCALATIONS=$((TOTAL_AGENT_ESCALATIONS + 1))
+        log "CASCADE: ${count} containers unhealthy — requesting agent analysis"
+        request_agent_resolution \
+            "cascading_failure" \
+            "${count} containers unhealthy: ${unhealthy_list}" \
+            "$unhealthy_list" || log "WARN: Agent resolution unavailable, will retry next cycle"
+        return 0
+    fi
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Platform state discovery
+# ---------------------------------------------------------------------------
+discover_platform_state() {
+    log "DISCOVERY: Collecting full platform state..."
+
+    local now
+    now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+    # Container inventory (jq -s slurps lines into array)
+    local containers_json
+    containers_json=$(docker ps --format '{"name":"{{.Names}}","image":"{{.Image}}","status":"{{.Status}}"}' 2>/dev/null | \
+        jq -s '.' 2>/dev/null) || containers_json="[]"
+
+    # UI service status
+    local ui_status=""
+    for entry in "${UI_SERVICES[@]}"; do
+        IFS='|' read -r svc_name path label <<< "$entry"
+        local svc_status="down"
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$svc_name"; then
+            svc_status="running"
+        fi
+        ui_status="${ui_status}${svc_name}=${svc_status} "
+    done
+
+    # GPU state
+    local gpu_json="[]"
+    if command -v nvidia-smi &>/dev/null; then
+        gpu_json=$(nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu \
+            --format=csv,noheader 2>/dev/null | \
+            awk -F', ' -v tgpu="${TRAINING_GPU}" '{
+                role = ($1 == tgpu) ? "training (PROTECTED)" : "inference/watchdog"
+                printf "{\"index\":%d,\"name\":\"%s\",\"memory_used\":\"%s\",\"memory_total\":\"%s\",\"utilization\":\"%s\",\"temperature\":\"%s\",\"role\":\"%s\"}\n", $1, $2, $3, $4, $5, $6, role
+            }' | jq -s '.' 2>/dev/null) || gpu_json="[]"
+    fi
+
+    # Active training jobs from Ray
+    local training_json="[]"
+    training_json=$(curl -sf "http://ray-head:8265/api/jobs/" --max-time 5 2>/dev/null | \
+        jq '[.[] | select(.status == "PENDING" or .status == "RUNNING") | {id: .submission_id, status: .status, entrypoint: (.entrypoint // "?")[0:80]}]' 2>/dev/null) || training_json="[]"
+
+    # Alertmanager alerts
+    local alerts_json="[]"
+    alerts_json=$(curl -sf "http://alertmanager:9093/api/v2/alerts" --max-time 5 2>/dev/null | \
+        jq '[.[:20][] | {name: (.labels.alertname // "?"), severity: (.labels.severity // "?")}]' 2>/dev/null) || alerts_json="[]"
+
+    local container_count
+    container_count=$(docker ps -q 2>/dev/null | wc -l) || container_count=0
+    local unhealthy_count
+    unhealthy_count=$(docker ps --filter "health=unhealthy" -q 2>/dev/null | wc -l) || unhealthy_count=0
+
+    # Write state file (use jq to safely build JSON without bash interpolation)
+    jq -n \
+        --arg ts "$now" \
+        --argjson count "${container_count:-0}" \
+        --argjson unhealthy "${unhealthy_count:-0}" \
+        --argjson containers "$containers_json" \
+        --arg ui "$ui_status" \
+        --argjson gpus "$gpu_json" \
+        --argjson training "$training_json" \
+        --argjson alerts "$alerts_json" \
+        --argjson tgpu "${TRAINING_GPU}" \
+        --argjson wgpu "${WATCHDOG_GPU}" \
+        --argjson interval "${CHECK_INTERVAL}" \
+        --argjson maxr "${MAX_RESTARTS}" \
+        --argjson mlt "${MEMORY_LEAK_THRESHOLD_MB}" \
+        '{
+            timestamp: $ts,
+            containers: {total: $count, unhealthy: $unhealthy, inventory: $containers},
+            ui_services: ($ui | split(" ") | map(select(. != ""))),
+            gpus: $gpus,
+            training_jobs: $training,
+            alerts: $alerts,
+            watchdog: {training_gpu: $tgpu, watchdog_gpu: $wgpu, check_interval: $interval, max_restarts: $maxr, memory_leak_threshold_mb: $mlt}
+        }' > "$DISCOVERY_FILE" 2>/dev/null || log "WARN: State discovery JSON failed"
+
+    log "DISCOVERY: ${container_count} containers, ${unhealthy_count} unhealthy, UIs: ${ui_status}"
+    audit "DISCOVERY" "platform" "Total=${container_count} Unhealthy=${unhealthy_count}"
+}
+
+# ---------------------------------------------------------------------------
+# Remediation
+# ---------------------------------------------------------------------------
+restart_container() {
+    local container="$1"
+    local reason="${2:-unhealthy}"
+
+    # GPU safety — never restart something that disrupts training GPU
+    local gpu_info
+    gpu_info=$(docker inspect --format='{{range .HostConfig.DeviceRequests}}{{.DeviceIDs}}{{end}}' "$container" 2>/dev/null || echo "")
+
+    if [[ "$gpu_info" == *"${TRAINING_GPU}"* ]] && [[ "$gpu_info" != *"${WATCHDOG_GPU}"* ]]; then
+        local training_active
+        training_active=$(nvidia-smi --id="${TRAINING_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l || echo "0")
+        if (( training_active > 0 )); then
+            log "PROTECT: Skipping restart of ${container} — training active on GPU ${TRAINING_GPU}"
+            send_telegram "🛡️ *Training Protected*: Skipped \`${container}\` restart (GPU ${TRAINING_GPU} busy)"
+            audit "RESTART_SKIP_TRAINING" "$container" "Training active on GPU ${TRAINING_GPU}"
+            return 1
+        fi
+    fi
+
+    local count
+    count=$(get_restart_count "$container")
+    if (( count >= MAX_RESTARTS )); then
+        log "THROTTLE: ${container} hit ${count}/${MAX_RESTARTS} restarts"
+        send_telegram "🛑 *Throttle*: \`${container}\` — ${count}/${MAX_RESTARTS}. Manual intervention needed."
+        audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
+        return 1
+    fi
+
+    log "REMEDIATE: Restarting ${container} (${reason}, attempt $((count+1))/${MAX_RESTARTS})"
+    send_telegram "🔄 *Restart*: \`${container}\` (${reason}) — $((count+1))/${MAX_RESTARTS}"
+    audit "RESTART" "$container" "Reason=${reason} Attempt=$((count+1))/${MAX_RESTARTS}"
+
+    if docker restart "$container" --time 30 2>/dev/null; then
+        increment_restart_count "$container"
+        TOTAL_RESTARTS=$((TOTAL_RESTARTS + 1))
+        log "OK: ${container} restart issued"
+        sleep 15
+
+        if check_container_health "$container" > /dev/null 2>&1; then
+            log "OK: ${container} recovered"
+            send_telegram "✅ *Recovered*: \`${container}\`"
+            audit "RECOVERED" "$container" "Healthy after restart"
+        else
+            log "WARN: ${container} still unhealthy"
+            audit "STILL_UNHEALTHY" "$container" "Post-restart failed"
+        fi
+    else
+        log "ERROR: Failed to restart ${container}"
+        send_telegram "❌ *Restart Failed*: \`${container}\`"
+        audit "RESTART_FAILED" "$container" "Docker restart failed"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Pushgateway metrics export
+# ---------------------------------------------------------------------------
+push_metrics() {
+    local monitored_count=$(( ${#CRITICAL_CONTAINERS[@]} + ${#STANDARD_CONTAINERS[@]} ))
+    local uptime=$(($(date +%s) - WATCHDOG_START_TIME))
+
+    cat <<METRICS | curl -sf --data-binary @- \
+        "${PUSHGATEWAY_URL}/metrics/job/watchdog/instance/self-healing" \
+        2>/dev/null || true
+# HELP watchdog_up Whether the watchdog is running
+# TYPE watchdog_up gauge
+watchdog_up 1
+# HELP watchdog_cycle_total Total monitoring cycles completed
+# TYPE watchdog_cycle_total counter
+watchdog_cycle_total ${cycle:-0}
+# HELP watchdog_uptime_seconds Watchdog uptime in seconds
+# TYPE watchdog_uptime_seconds gauge
+watchdog_uptime_seconds $uptime
+# HELP watchdog_unhealthy_containers Current unhealthy container count
+# TYPE watchdog_unhealthy_containers gauge
+watchdog_unhealthy_containers ${unhealthy_count:-0}
+# HELP watchdog_restarts_total Total container restarts performed
+# TYPE watchdog_restarts_total counter
+watchdog_restarts_total $TOTAL_RESTARTS
+# HELP watchdog_agent_escalations_total Total agent escalation requests
+# TYPE watchdog_agent_escalations_total counter
+watchdog_agent_escalations_total $TOTAL_AGENT_ESCALATIONS
+# HELP watchdog_oom_kills_total Total OOM kills detected
+# TYPE watchdog_oom_kills_total counter
+watchdog_oom_kills_total $TOTAL_OOM_KILLS
+# HELP watchdog_memory_leaks_total Total memory leaks detected
+# TYPE watchdog_memory_leaks_total counter
+watchdog_memory_leaks_total $TOTAL_MEMORY_LEAKS
+# HELP watchdog_training_protected Whether training GPU has active processes
+# TYPE watchdog_training_protected gauge
+watchdog_training_protected $TRAINING_PROTECTED
+# HELP watchdog_monitored_containers Total containers being monitored
+# TYPE watchdog_monitored_containers gauge
+watchdog_monitored_containers $monitored_count
+# HELP watchdog_paused Whether watchdog is paused by admin
+# TYPE watchdog_paused gauge
+watchdog_paused $IS_PAUSED
+METRICS
+}
+
+# ---------------------------------------------------------------------------
+# Admin control file — pause/resume/stop-all
+# ---------------------------------------------------------------------------
+check_control() {
+    if [[ -f "$CONTROL_FILE" ]]; then
+        local cmd
+        cmd=$(cat "$CONTROL_FILE")
+        case "$cmd" in
+            pause)
+                if (( IS_PAUSED == 0 )); then
+                    IS_PAUSED=1
+                    log "CONTROL: Watchdog PAUSED by admin"
+                    send_telegram "⏸️ *Admin*: Watchdog paused — monitoring continues, no remediation"
+                    audit "ADMIN_PAUSE" "watchdog" "Paused by admin"
+                fi
+                ;;
+            resume)
+                IS_PAUSED=0
+                rm -f "$CONTROL_FILE"
+                log "CONTROL: Watchdog RESUMED by admin"
+                send_telegram "▶️ *Admin*: Watchdog resumed — auto-remediation active"
+                audit "ADMIN_RESUME" "watchdog" "Resumed by admin"
+                ;;
+            stop-all)
+                IS_PAUSED=1
+                log "CONTROL: All interventions STOPPED by admin"
+                send_telegram "🛑 *Admin*: All interventions stopped"
+                audit "ADMIN_STOP_ALL" "watchdog" "All interventions stopped"
+                echo "pause" > "$CONTROL_FILE"
+                ;;
+        esac
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+log "============================================="
+log "Self-Healing Watchdog v2 starting"
+log "  Check interval: ${CHECK_INTERVAL}s"
+log "  Max restarts/hour: ${MAX_RESTARTS}"
+log "  Training GPU: ${TRAINING_GPU} (PROTECTED)"
+log "  Watchdog GPU: ${WATCHDOG_GPU} (preferred)"
+log "  Memory leak threshold: ${MEMORY_LEAK_THRESHOLD_MB} MB/hr"
+log "  Agent service: ${AGENT_SERVICE_URL}"
+log "  Critical: ${#CRITICAL_CONTAINERS[@]}"
+log "  Standard: ${#STANDARD_CONTAINERS[@]}"
+log "  Memory-watched: ${#MEMORY_WATCH_CONTAINERS[@]}"
+log "  Excluded: ${EXCLUDED[*]:-none}"
+log "============================================="
+
+send_telegram "🛡️ *Watchdog v2* started
+📊 ${#CRITICAL_CONTAINERS[@]} critical + ${#STANDARD_CONTAINERS[@]} standard
+🎮 GPU ${TRAINING_GPU} PROTECTED | GPU ${WATCHDOG_GPU} for watchdog
+🧠 Leak detect: ${MEMORY_LEAK_THRESHOLD_MB} MB/hr
+🤖 Agent resolution: enabled"
+
+# Verify docker socket access
+if ! docker ps -q >/dev/null 2>&1; then
+    log "ERROR: Docker socket not accessible — retrying in 10s"
+    sleep 10
+    if ! docker ps -q >/dev/null 2>&1; then
+        log "FATAL: Docker socket still not accessible"
+        exit 1
+    fi
+fi
+log "Docker socket verified: $(docker ps -q 2>/dev/null | wc -l) containers visible"
+
+# Initial state discovery
+discover_platform_state || log "WARN: Initial discovery failed, continuing"
+
+cycle=0
+while true; do
+    cycle=$((cycle + 1))
+
+    # Check admin controls (pause/resume/stop-all)
+    check_control
+
+    unhealthy_count=0
+    action_count=0
+    unhealthy_list=""
+
+    # --- Critical containers ---
+    for container in "${CRITICAL_CONTAINERS[@]}"; do
+        is_excluded "$container" && continue
+        if ! check_container_health "$container" "critical"; then
+            unhealthy_count=$((unhealthy_count + 1))
+            unhealthy_list="${unhealthy_list} ${container}"
+        fi
+    done
+
+    # --- Standard containers ---
+    for container in "${STANDARD_CONTAINERS[@]}"; do
+        is_excluded "$container" && continue
+        if ! check_container_health "$container" "standard"; then
+            unhealthy_count=$((unhealthy_count + 1))
+            unhealthy_list="${unhealthy_list} ${container}"
+        fi
+    done
+
+    # --- Cascading failure detection via agent ---
+    if (( IS_PAUSED == 0 )); then
+        if (( unhealthy_count >= 3 )); then
+            detect_cascading_failure "$unhealthy_list"
+            action_count=$((action_count + 1))
+        elif (( unhealthy_count > 0 )); then
+            for container in $unhealthy_list; do
+                restart_container "$container" "unhealthy"
+                action_count=$((action_count + 1))
+            done
+        fi
+    elif (( unhealthy_count > 0 )); then
+        log "PAUSED: ${unhealthy_count} unhealthy but remediation paused by admin"
+    fi
+
+    # --- Training GPU protection (every cycle) ---
+    check_training_gpu_safety || true
+
+    # --- GPU thermal (every 5 cycles) ---
+    if (( cycle % 5 == 0 )); then
+        check_gpu_health || true
+    fi
+
+    # --- Memory leak detection (every 10 cycles ≈ 10 min) ---
+    if (( cycle % 10 == 0 )); then
+        check_memory_leaks || true
+    fi
+
+    # --- OOM detection (every 5 cycles) ---
+    if (( cycle % 5 == 0 )); then
+        check_oom_killed || true
+    fi
+
+    # --- Prometheus connectivity (every 3 cycles) ---
+    if (( cycle % 3 == 0 )); then
+        check_prometheus || true
+    fi
+
+    # --- Full state discovery (every 30 cycles ≈ 30 min) ---
+    if (( cycle % 30 == 0 )); then
+        discover_platform_state || true
+    fi
+
+    # --- Hourly status report (every 60 cycles) ---
+    if (( cycle % 60 == 0 )); then
+        local_total=$(( ${#CRITICAL_CONTAINERS[@]} + ${#STANDARD_CONTAINERS[@]} ))
+        log "STATUS: Cycle ${cycle} — ${local_total} monitored, ${unhealthy_count} unhealthy, ${action_count} actions"
+        send_telegram "📋 *Hourly Status*
+Monitored: ${local_total} | Unhealthy: ${unhealthy_count} | Actions: ${action_count}
+GPU ${TRAINING_GPU}: protected | Cycle: ${cycle}"
+    fi
+
+    # --- Track totals & push metrics ---
+    TOTAL_ACTIONS=$((TOTAL_ACTIONS + action_count))
+    push_metrics || true
+
+    sleep "$CHECK_INTERVAL"
+done

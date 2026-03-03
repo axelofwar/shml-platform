@@ -14,11 +14,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Accept build args for NEXT_PUBLIC_ variables
-ARG NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_AUTHENTIK_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_AUTHENTIK_URL=$NEXT_PUBLIC_AUTHENTIK_URL
+# CRITICAL: Do NOT set NEXT_PUBLIC_* environment variables here
+# The frontend uses relative URLs (/api/ray) to avoid mixed content errors
+# when accessed via HTTPS (Tailscale Funnel) while backend runs HTTP internally
 ENV NEXT_TELEMETRY_DISABLED 1
 
 RUN npm run build

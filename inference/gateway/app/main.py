@@ -1,3 +1,5 @@
+import os
+
 """Inference Gateway - Unified API with queue, history, and rate limiting."""
 
 import time
@@ -9,7 +11,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import QWEN3_VL_URL, Z_IMAGE_URL, HOST, PORT
+from .config import QWEN3_VL_URL, Z_IMAGE_URL, CODING_MODEL_URL, HOST, PORT
 from .schemas import (
     GatewayHealth,
     ServiceHealth,
@@ -19,10 +21,15 @@ from .schemas import (
     ConversationSummary,
     BackupInfo,
 )
+from .vision_schemas import OrchestrationRequest, OrchestrationResponse
+from .orchestrator import orchestrator
 from .queue import request_queue
 from .history import chat_history
 from .rate_limit import rate_limiter
 from .backup import create_backup, list_backups, cleanup_old_backups
+from .training_router import router as training_router
+from .feedback_router import router as feedback_router
+from .audio_router import router as audio_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,8 +44,10 @@ async def lifespan(app: FastAPI):
     await request_queue.connect()
     await chat_history.connect()
     await rate_limiter.connect()
+    await orchestrator.initialize()
     yield
     logger.info("Shutting down...")
+    await orchestrator.close()
     await request_queue.close()
     await chat_history.close()
     await rate_limiter.close()
@@ -46,17 +55,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Inference Gateway",
-    description="Unified API for local LLM and Image Generation",
-    version="1.0.0",
+    description="Unified API for local LLM, Image Generation, and Audio Processing",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.environ.get(
+        "CORS_ORIGINS",
+        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+    ).split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(training_router)
+app.include_router(feedback_router)
+app.include_router(audio_router)  # DMCA-safe audio workflow
 
 
 def get_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:
@@ -70,11 +87,19 @@ def get_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:
 @app.get("/health", response_model=GatewayHealth)
 async def health():
     """Gateway health check."""
+    from .config import SAM_AUDIO_URL, AUDIO_COPYRIGHT_URL
+
     services = []
 
-    # Check backend services
+    # Check backend services (core + audio)
     async with httpx.AsyncClient(timeout=5.0) as client:
-        for name, url in [("qwen3-vl", QWEN3_VL_URL), ("z-image", Z_IMAGE_URL)]:
+        for name, url in [
+            ("qwen3-vl", QWEN3_VL_URL),
+            ("z-image", Z_IMAGE_URL),
+            ("coding-model", CODING_MODEL_URL),
+            ("sam-audio", SAM_AUDIO_URL),
+            ("audio-copyright", AUDIO_COPYRIGHT_URL),
+        ]:
             try:
                 start = time.time()
                 resp = await client.get(f"{url}/health")
@@ -279,6 +304,82 @@ async def proxy_image(
             return resp.json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
+
+
+# ===== Coding Model Endpoints (OpenAI-compatible) =====
+
+
+@app.api_route("/coding/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_coding(
+    path: str,
+    x_user_id: Optional[str] = Header(default=None),
+):
+    """Proxy requests to Coding Model service (OpenAI-compatible).
+
+    Routes to the best available GPU:
+    - RTX 3090 Ti (FP8) when training is idle
+    - RTX 2070 (AWQ) when training is active
+    """
+    from fastapi import Request
+
+    user_id = get_user_id(x_user_id)
+
+    # Check rate limit
+    if not await rate_limiter.record(user_id):
+        status = await rate_limiter.check(user_id)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limited. Resets at {status.reset_at.isoformat()}",
+        )
+
+    # Forward to coding model backend
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        try:
+            resp = await client.request(
+                method="POST",
+                url=f"{CODING_MODEL_URL}/{path}",
+                headers={"X-User-ID": user_id},
+            )
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/coding/status")
+async def coding_model_status():
+    """Get coding model GPU allocation status."""
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            resp = await client.get(f"{CODING_MODEL_URL}/status")
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
+# ===== Orchestration Endpoint =====
+
+
+@app.post("/v1/orchestrate/chat", response_model=OrchestrationResponse)
+async def orchestrate_chat(
+    request: OrchestrationRequest,
+    user_id: str = Header(default="anonymous", alias="X-User-Id"),
+):
+    """
+    Orchestrated chat endpoint that automatically routes to vision + coding models.
+
+    - If request contains images: vision model first, then coding model with vision context
+    - If no images: coding model directly
+
+    This provides a seamless multimodal experience without client-side orchestration logic.
+    """
+    try:
+        logger.info(f"Orchestration request from user {user_id}")
+        response = await orchestrator.process_request(request)
+        logger.info(f"Orchestration complete: {response.orchestration_path}")
+        return response
+    except Exception as e:
+        logger.error(f"Orchestration failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

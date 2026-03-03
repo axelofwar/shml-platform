@@ -209,13 +209,16 @@ def register_yolo_model(
             print(f"  Version: {model_version.version}")
             print(f"  Version name: {version_name}")
 
-            # Update model version stage
+            # Set model alias (migrated from deprecated transition_model_version_stage)
             if stage and stage != "None":
                 client = MlflowClient()
-                client.transition_model_version_stage(
-                    name=model_name, version=model_version.version, stage=stage
+                alias = {"Production": "champion", "Staging": "challenger"}.get(
+                    stage, stage.lower()
                 )
-                print(f"  Stage: {stage}")
+                client.set_registered_model_alias(
+                    name=model_name, alias=alias, version=model_version.version
+                )
+                print(f"  Alias: @{alias}")
 
             # Add description to model version
             if description:

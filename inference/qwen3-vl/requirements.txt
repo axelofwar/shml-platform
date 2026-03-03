@@ -10,6 +10,9 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 
+# Image processing
+Pillow>=10.0.0
+
 # Utilities
 python-multipart>=0.0.6
 httpx>=0.25.0

@@ -6,7 +6,7 @@ version: 2
 secret:
   # Ignore test fixture passwords - these are fake passwords for test users
   # They only exist in test files and are never used in production
-  ignored-matches:
+  ignored_matches:
     # Test user passwords in tests/platform_admin/conftest.py
     - match: "BobTest123!@#"
       name: "Test fixture password for Bob test user"
@@ -22,9 +22,13 @@ secret:
       name: "Mock API key for unit tests"
     - match: "custom-key"
       name: "Mock API key for unit tests"
+    - match: "REDACTED"
+      name: "Placeholder for redacted values in documentation"
 
   # Paths where test fixtures are expected
-  ignored-paths:
+  ignored_paths:
     - "tests/**/*conftest.py"
     - "tests/**/test_*.py"
     - "**/test_fixtures/**"
+    - "archived/**"
+    - "docs/internal/archived_approaches/**"

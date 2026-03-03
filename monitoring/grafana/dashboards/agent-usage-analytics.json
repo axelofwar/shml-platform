@@ -1,0 +1,303 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "agent-usage-analytics",
+    "title": "Agent Service - Usage Analytics",
+    "tags": ["agent", "ml-platform", "usage", "analytics"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "type": "timeseries",
+        "title": "Requests by Role",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_requests_total[5m])) by (role)",
+            "legendFormat": "{{role}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Requests/sec",
+              "fillOpacity": 20
+            },
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "type": "piechart",
+        "title": "Request Distribution by Role",
+        "targets": [
+          {
+            "expr": "sum(agent_requests_total) by (role)",
+            "legendFormat": "{{role}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "values": ["value", "percent"]
+          },
+          "pieType": "donut"
+        }
+      },
+      {
+        "id": 3,
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "type": "timeseries",
+        "title": "Token Usage by Role",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_tokens_total[5m])) by (role)",
+            "legendFormat": "{{role}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Tokens/sec",
+              "fillOpacity": 20
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "type": "bargauge",
+        "title": "Daily Quota Usage by Role",
+        "targets": [
+          {
+            "expr": "100 * (agent_role_quota_used / agent_role_quota_limit)",
+            "legendFormat": "{{role}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient",
+          "showUnfilled": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 70, "color": "yellow" },
+                { "value": 90, "color": "red" }
+              ]
+            },
+            "max": 100,
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+        "type": "timeseries",
+        "title": "Workflow Duration by Role (p95)",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(agent_workflow_duration_seconds_bucket[5m])) by (role, le))",
+            "legendFormat": "{{role}} (p95)",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Duration (seconds)",
+              "fillOpacity": 20
+            },
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+        "type": "stat",
+        "title": "Active WebSocket Connections",
+        "targets": [
+          {
+            "expr": "sum(agent_websocket_connections) by (role)",
+            "legendFormat": "{{role}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 10, "color": "yellow" },
+                { "value": 50, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+        "type": "timeseries",
+        "title": "Tool Executions by Role",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_tool_executions_total[5m])) by (role, tool_name)",
+            "legendFormat": "{{role}} - {{tool_name}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Executions/sec",
+              "fillOpacity": 20
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "type": "timeseries",
+        "title": "Error Rate by Role",
+        "targets": [
+          {
+            "expr": "sum(rate(agent_errors_total[5m])) by (role, error_type)",
+            "legendFormat": "{{role}} - {{error_type}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "Errors/sec",
+              "fillOpacity": 20
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "type": "table",
+        "title": "Top Token Consumers",
+        "targets": [
+          {
+            "expr": "topk(10, sum(agent_tokens_total) by (user_id, role))",
+            "legendFormat": "{{user_id}} ({{role}})",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "options": {
+          "showHeader": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
+              "properties": [
+                {
+                  "id": "displayName",
+                  "value": "Total Tokens"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

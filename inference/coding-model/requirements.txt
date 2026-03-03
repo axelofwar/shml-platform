@@ -1,0 +1,39 @@
+# Agentic Coding Model Dependencies
+
+# Core
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# vLLM for high-performance inference
+vllm>=0.6.0
+
+# Transformers for tokenizers and model loading
+transformers>=4.45.0
+accelerate>=0.25.0
+tokenizers>=0.15.0
+
+# Quantization support
+auto-awq>=0.2.0
+autoawq-kernels>=0.0.6
+
+# HTTP client for Ray status checks
+httpx>=0.26.0
+
+# Utilities
+torch>=2.1.0
+numpy>=1.24.0
+
+# ============ Memory System Dependencies ============
+
+# PostgreSQL async driver (for pgvector)
+asyncpg>=0.29.0
+
+# Embedding model (BGE-M3: multilingual, 1024 dim)
+sentence-transformers>=2.2.0
+
+# Cross-encoder for reranking
+# (included in sentence-transformers)
+
+# Optional: faster tokenization
+tiktoken>=0.5.0

@@ -32,6 +32,20 @@ EOSQL
     echo "Database '$database' created successfully."
 }
 
+# Function to enable extensions on a database
+enable_extensions() {
+    local database=$1
+    shift
+    local extensions=("$@")
+
+    for ext in "${extensions[@]}"; do
+        echo "Enabling extension '$ext' on database '$database'..."
+        psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" <<-EOSQL
+            CREATE EXTENSION IF NOT EXISTS $ext;
+EOSQL
+    done
+}
+
 echo "========================================"
 echo "Initializing shared PostgreSQL databases"
 echo "========================================"
@@ -42,11 +56,19 @@ create_database "mlflow_db" "mlflow"
 # Create Ray Compute database
 create_database "ray_compute" "ray_compute"
 
-# Create Inference database
+# Create Inference database (with pgvector for RAG memory)
 create_database "inference" "inference"
+enable_extensions "inference" "vector" "pg_trgm"
+
+# Create Chat API database (with pgvector for codebase indexing)
+create_database "chat_api" "chat_api"
+enable_extensions "chat_api" "vector" "pg_trgm"
 
 # Create FusionAuth database
 create_database "fusionauth" "fusionauth"
+
+# Create Nessie catalog database (Iceberg metadata + version control)
+create_database "nessie" "nessie"
 
 echo "========================================"
 echo "All databases initialized successfully!"

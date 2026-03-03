@@ -374,7 +374,7 @@ curl http://localhost/api/v1/models?max_results=100
 {
   "models": [
     {
-      "name": "face-detection-yolov8",
+      "name": "face-detection-yolov8l-p2",
       "creation_timestamp": 1700000000000,
       "last_updated_timestamp": 1700100000000,
       "description": "YOLOv8 face detection optimized for privacy",
@@ -407,7 +407,7 @@ curl -X POST http://localhost/api/v1/models/register \
   -H "Content-Type: application/json" \
   -d '{
     "run_id": "a1b2c3d4...",
-    "model_name": "face-detection-yolov8",
+    "model_name": "face-detection-yolov8l-p2",
     "model_path": "model",
     "description": "YOLOv8 face detection optimized for privacy",
     "tags": {
@@ -423,14 +423,14 @@ curl -X POST http://localhost/api/v1/models/register \
 **Success Response:**
 ```json
 {
-  "model_name": "face-detection-yolov8",
+  "model_name": "face-detection-yolov8l-p2",
   "version": "1",
   "run_id": "a1b2c3d4...",
   "status": "registered",
   "current_stage": "None",
   "source": "runs:/a1b2c3d4.../model",
   "privacy_validated": true,
-  "message": "Model 'face-detection-yolov8' version 1 registered successfully"
+  "message": "Model 'face-detection-yolov8l-p2' version 1 registered successfully"
 }
 ```
 
@@ -457,13 +457,13 @@ curl -X POST http://localhost/api/v1/models/register \
 ### Get Model Details
 
 ```bash
-curl http://localhost/api/v1/models/face-detection-yolov8
+curl http://localhost/api/v1/models/face-detection-yolov8l-p2
 ```
 
 **Response:**
 ```json
 {
-  "name": "face-detection-yolov8",
+  "name": "face-detection-yolov8l-p2",
   "creation_timestamp": 1700000000000,
   "last_updated_timestamp": 1700100000000,
   "description": "YOLOv8 face detection optimized for privacy",
@@ -499,19 +499,19 @@ curl http://localhost/api/v1/models/face-detection-yolov8
 
 ```bash
 # Move to Staging
-curl -X POST "http://localhost/api/v1/models/face-detection-yolov8/versions/1/transition?stage=Staging"
+curl -X POST "http://localhost/api/v1/models/face-detection-yolov8l-p2/versions/1/transition?stage=Staging"
 
 # Move to Production
-curl -X POST "http://localhost/api/v1/models/face-detection-yolov8/versions/1/transition?stage=Production"
+curl -X POST "http://localhost/api/v1/models/face-detection-yolov8l-p2/versions/1/transition?stage=Production"
 
 # Archive
-curl -X POST "http://localhost/api/v1/models/face-detection-yolov8/versions/1/transition?stage=Archived"
+curl -X POST "http://localhost/api/v1/models/face-detection-yolov8l-p2/versions/1/transition?stage=Archived"
 ```
 
 **Response:**
 ```json
 {
-  "model_name": "face-detection-yolov8",
+  "model_name": "face-detection-yolov8l-p2",
   "version": "1",
   "new_stage": "Production",
   "status": "transitioned",
@@ -522,13 +522,13 @@ curl -X POST "http://localhost/api/v1/models/face-detection-yolov8/versions/1/tr
 ### Delete Model Version
 
 ```bash
-curl -X DELETE http://localhost/api/v1/models/face-detection-yolov8/versions/1
+curl -X DELETE http://localhost/api/v1/models/face-detection-yolov8l-p2/versions/1
 ```
 
 **Response:**
 ```json
 {
-  "model_name": "face-detection-yolov8",
+  "model_name": "face-detection-yolov8l-p2",
   "version": "1",
   "status": "deleted",
   "message": "Model version 1 deleted successfully"
@@ -694,7 +694,7 @@ requests.post(f"{BASE_URL}/runs/{run_id}/finish", json={"status": "FINISHED"})
 # 5. Register model
 response = requests.post(f"{BASE_URL}/models/register", json={
     "run_id": run_id,
-    "model_name": "face-detection-yolov8",
+    "model_name": "face-detection-yolov8l-p2",
     "model_path": "model",
     "description": "YOLOv8 face detection",
     "tags": {
@@ -711,7 +711,7 @@ print(f"Registered model: {model_data['model_name']} v{model_data['version']}")
 
 # 6. Transition to Production
 requests.post(
-    f"{BASE_URL}/models/face-detection-yolov8/versions/{model_data['version']}/transition",
+    f"{BASE_URL}/models/face-detection-yolov8l-p2/versions/{model_data['version']}/transition",
     params={"stage": "Production"}
 )
 ```
