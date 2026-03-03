@@ -65,7 +65,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio httpx aiohttp pydantic fastapi starlette
+          pip install pytest pytest-asyncio httpx aiohttp pydantic fastapi starlette requests
 
           # Install chat-api test requirements
           if [ -f "tests/chat-api/requirements-test.txt" ]; then
@@ -103,7 +103,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio httpx pyyaml
+          pip install pytest pytest-asyncio httpx pyyaml requests
 
       - name: Run RBAC configuration tests
         run: |
@@ -146,10 +146,24 @@ jobs:
 
       - name: Run mocked integration tests
         run: |
-          # Run tests that can work with mocks
+          # Run tests that can work without live services
           if [ -d "tests/integration" ]; then
-            # Skip tests that require live services
-            pytest tests/integration/ -v --tb=short -k "not live and not running" --ignore=tests/integration/test_chat_api_live.py
+            EXIT_CODE=0
+            pytest tests/integration/ -v --tb=short \
+              -k "not live and not running" \
+              --ignore=tests/integration/test_chat_api_live.py \
+              --ignore=tests/integration/test_full_stack.py \
+              --ignore=tests/integration/test_api_endpoints.py \
+              --ignore=tests/integration/test_new_services.py \
+              --ignore=tests/integration/test_observability.py \
+              --ignore=tests/integration/test_inference_stack.py \
+              --ignore=tests/integration/test_traefik_routing.py \
+              || EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 5 ]; then
+              echo "No integration tests to run without live services - OK"
+            elif [ $EXIT_CODE -ne 0 ]; then
+              exit $EXIT_CODE
+            fi
           fi
 
   # Live Chat API Integration Tests (requires secrets)
