@@ -81,8 +81,8 @@ services:
       # Grafana organization ID (default: 1)
       - RAY_GRAFANA_ORG_ID=1
     volumes:
-      - ./data/ray:/tmp/ray
-      - ./data/job_workspaces:/opt/ray/job_workspaces
+      - ray-data:/tmp/ray          # K8s: PVC ray-data (10Gi)
+      - job-workspaces:/opt/ray/job_workspaces  # K8s: PVC job-workspaces (50Gi)
       - mlflow-artifacts:/mlflow/artifacts
       # nvidia-mps volume removed - MPS disabled for Ray containers
     networks:
@@ -176,9 +176,9 @@ services:
       - DEBUG=false
       - LOG_LEVEL=INFO
     volumes:
-      - ./logs:/app/logs
-      - ./data/artifacts:/app/artifacts
-      - ./data/job_workspaces:/opt/ray/job_workspaces
+      - ray-api-logs:/app/logs        # K8s: PVC ray-api-logs (5Gi)
+      - ray-artifacts:/app/artifacts  # K8s: PVC ray-artifacts (20Gi)
+      - job-workspaces:/opt/ray/job_workspaces  # shared with ray-head
       - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - shared_db_password
@@ -282,12 +282,21 @@ services:
     image: ${PLATFORM_PREFIX:-shml}-ray-compute-ui:latest
     container_name: ray-compute-ui
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     environment:
       # CRITICAL: Do NOT set NEXT_PUBLIC_API_URL - it causes mixed content errors
       # The frontend uses relative URLs (/api/ray) which work with both HTTP and HTTPS
       - NODE_ENV=production
+    # SECURITY: Bind Ray UI to localhost only (was 0.0.0.0)
     ports:
-      - "3002:3000"
+      - "127.0.0.1:3002:3000"
     networks:
       - platform
     depends_on:
@@ -332,3 +341,12 @@ volumes:
     external: true
   mlflow-artifacts:
     external: true
+  # Named volumes for K8s portability (replaces bind mounts)
+  ray-data:
+    name: ${PLATFORM_PREFIX:-shml}-ray-data
+  job-workspaces:
+    name: ${PLATFORM_PREFIX:-shml}-job-workspaces
+  ray-api-logs:
+    name: ${PLATFORM_PREFIX:-shml}-ray-api-logs
+  ray-artifacts:
+    name: ${PLATFORM_PREFIX:-shml}-ray-artifacts

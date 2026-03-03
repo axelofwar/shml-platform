@@ -16,8 +16,8 @@
 - Phase 3: `/tmp/ray/models/phase3-wider-face-v1.pt`
 
 ### MLflow Registry
-- Model Name: `face-detection-pii`
-- Experiment: `Face-Detection-Model-Registry`
+- Model Name: `face-detection-yolov8l-p2`
+- Experiment: `face-detection/training`
 
 ## PII KPI Targets
 - mAP50: > 94%

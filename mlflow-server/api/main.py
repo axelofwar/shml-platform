@@ -83,7 +83,7 @@ class RunCreateRequest(BaseModel):
     """Request to create a new run with schema validation"""
 
     experiment_name: str = Field(
-        ..., description="Name of experiment (e.g., 'Development-Training')"
+        ..., description="Name of experiment (e.g., 'face-detection/training')"
     )
     run_name: Optional[str] = Field(None, description="Optional run name")
 
@@ -101,7 +101,7 @@ class RunCreateRequest(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "experiment_name": "Development-Training",
+                "experiment_name": "face-detection/training",
                 "run_name": "yolov8-face-detection-v1",
                 "tags": {
                     "model_type": "yolov8n",
@@ -175,7 +175,7 @@ class ModelRegisterRequest(BaseModel):
         schema_extra = {
             "example": {
                 "run_id": "abc123...",
-                "model_name": "face-detection-yolov8",
+                "model_name": "face-detection-yolov8l-p2",
                 "model_path": "model",
                 "description": "YOLOv8 face detection optimized for privacy",
                 "tags": {
@@ -323,7 +323,7 @@ async def get_schema():
         schema["usage"] = {
             "description": "PII-PRO schema enforces privacy-focused tracking for computer vision models",
             "experiments": {
-                "Development-Training": "Model training and experimentation",
+                "face-detection/training": "Model training and experimentation",
                 "Staging-Model-Comparison": "A/B testing and baseline comparison",
                 "Performance-Benchmarking": "FPS testing across resolutions",
                 "Production-Candidates": "Production-ready model validation",
@@ -348,7 +348,7 @@ async def get_schema():
 )
 async def get_experiment_schema(
     experiment_name: str = PathParam(
-        ..., description="Experiment name (e.g., 'Development-Training')"
+        ..., description="Experiment name (e.g., 'face-detection/training')"
     )
 ):
     """
@@ -1000,39 +1000,64 @@ async def get_model(
 
 @app.post(
     "/api/v1/models/{model_name}/versions/{version}/transition",
-    summary="Transition model stage",
+    summary="Set model alias (champion/challenger)",
 )
 async def transition_model_stage(
     model_name: str = PathParam(..., description="Model name"),
     version: str = PathParam(..., description="Model version"),
     stage: Literal["Staging", "Production", "Archived", "None"] = Query(
-        ..., description="Target stage"
+        ...,
+        description="Target stage (mapped to alias: Production→champion, Staging→challenger)",
     ),
 ):
     """
-    Transition a model version to a different stage.
+    Set a model alias based on the requested stage.
 
-    Stages:
-    - None: Default initial stage
-    - Staging: Model under evaluation
-    - Production: Model approved for production use
-    - Archived: Model retired from use
+    Stage-to-alias mapping (migrated from deprecated transition_model_version_stage):
+    - Production → @champion
+    - Staging → @challenger
+    - Archived → removes both aliases
+    - None → no-op
     """
     try:
-        client.transition_model_version_stage(
-            name=model_name,
-            version=version,
-            stage=stage,
-            archive_existing_versions=False,
-        )
-
-        return {
-            "model_name": model_name,
-            "version": version,
-            "new_stage": stage,
-            "status": "transitioned",
-            "message": f"Model version {version} transitioned to {stage}",
-        }
+        alias_map = {"Production": "champion", "Staging": "challenger"}
+        if stage == "Archived":
+            # Remove aliases from this version
+            for alias in ["champion", "challenger"]:
+                try:
+                    mv = client.get_model_version_by_alias(model_name, alias)
+                    if mv.version == version:
+                        client.delete_registered_model_alias(model_name, alias)
+                except Exception:
+                    pass
+            return {
+                "model_name": model_name,
+                "version": version,
+                "new_stage": stage,
+                "status": "archived",
+                "message": f"Model version {version} aliases removed (archived)",
+            }
+        elif stage in alias_map:
+            alias = alias_map[stage]
+            client.set_registered_model_alias(
+                name=model_name, alias=alias, version=version
+            )
+            return {
+                "model_name": model_name,
+                "version": version,
+                "new_stage": stage,
+                "alias": f"@{alias}",
+                "status": "transitioned",
+                "message": f"Model version {version} set to @{alias}",
+            }
+        else:
+            return {
+                "model_name": model_name,
+                "version": version,
+                "new_stage": stage,
+                "status": "no-op",
+                "message": "Stage 'None' requires no action",
+            }
 
     except Exception as e:
         return format_error_response(

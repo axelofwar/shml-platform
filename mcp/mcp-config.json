@@ -14,9 +14,10 @@
                 "sampling": false
             }
         },
-        "filesystem": {
-            "name": "File System",
-            "description": "Read/write files in the workspace",
+        "filesystem-DISABLED": {
+            "_SECURITY_NOTE": "DISABLED - grants read/write access to entire platform directory including secrets/. Use admin-only scoped access instead.",
+            "name": "File System (DISABLED)",
+            "description": "SECURITY: Disabled - was granting model access to secrets/ directory",
             "transport": {
                 "type": "stdio",
                 "command": "npx",

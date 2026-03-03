@@ -1,0 +1,408 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Watchdog Admin Controls",
+      "url": "/watchdog/",
+      "targetBlank": true,
+      "icon": "bolt"
+    },
+    {
+      "title": "Watchdog Logs (Dozzle)",
+      "url": "/logs/",
+      "targetBlank": true,
+      "icon": "external link"
+    },
+    {
+      "title": "Platform Overview",
+      "url": "/grafana/d/platform-overview",
+      "targetBlank": false,
+      "icon": "apps"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Watchdog Status",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_up{job=\"watchdog\"}",
+          "refId": "A",
+          "legendFormat": "Status"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green" } } },
+            { "type": "special", "options": { "match": "null", "result": { "text": "DOWN", "color": "red" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 1 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value" }
+    },
+    {
+      "id": 2,
+      "title": "Mode",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_paused{job=\"watchdog\"}",
+          "refId": "A",
+          "legendFormat": "Mode"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "ACTIVE", "color": "green" },
+              "1": { "text": "PAUSED", "color": "orange" }
+            }}
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value" }
+    },
+    {
+      "id": 3,
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_uptime_seconds{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 4,
+      "title": "Unhealthy Containers",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_unhealthy_containers{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "red", "value": 3 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "textMode": "value" }
+    },
+    {
+      "id": 5,
+      "title": "Total Restarts",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_restarts_total{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 5 },
+            { "color": "red", "value": 15 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 6,
+      "title": "Agent Escalations",
+      "type": "stat",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_agent_escalations_total{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red", "value": 5 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 7,
+      "title": "OOM Kills",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 4, "w": 6, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_oom_kills_total{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 8,
+      "title": "Memory Leaks Detected",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 4, "w": 6, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_memory_leaks_total{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red", "value": 5 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 9,
+      "title": "Training GPU Protected",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 4, "w": 6, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_training_protected{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "No Training", "color": "text" },
+              "1": { "text": "PROTECTED", "color": "green" }
+            }}
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "text", "value": null },
+            { "color": "green", "value": 1 }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value" }
+    },
+    {
+      "id": 10,
+      "title": "Monitored Containers",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 4, "w": 6, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_monitored_containers{job=\"watchdog\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "blue", "value": null }
+          ]}
+        }
+      },
+      "options": { "graphMode": "none", "colorMode": "value", "textMode": "value" }
+    },
+    {
+      "id": 11,
+      "title": "Unhealthy Containers (Trend)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "watchdog_unhealthy_containers{job=\"watchdog\"}",
+          "refId": "A",
+          "legendFormat": "Unhealthy"
+        },
+        {
+          "expr": "watchdog_monitored_containers{job=\"watchdog\"}",
+          "refId": "B",
+          "legendFormat": "Monitored"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "pointSize": 5,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Unhealthy" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Monitored" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 5 }
+            ]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 12,
+      "title": "Intervention Rate (per hour)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "global-metrics" },
+      "targets": [
+        {
+          "expr": "increase(watchdog_restarts_total{job=\"watchdog\"}[1h])",
+          "refId": "A",
+          "legendFormat": "Restarts"
+        },
+        {
+          "expr": "increase(watchdog_oom_kills_total{job=\"watchdog\"}[1h])",
+          "refId": "B",
+          "legendFormat": "OOM Kills"
+        },
+        {
+          "expr": "increase(watchdog_memory_leaks_total{job=\"watchdog\"}[1h])",
+          "refId": "C",
+          "legendFormat": "Memory Leaks"
+        },
+        {
+          "expr": "increase(watchdog_agent_escalations_total{job=\"watchdog\"}[1h])",
+          "refId": "D",
+          "legendFormat": "Agent Escalations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "stacking": { "mode": "normal", "group": "A" },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Restarts" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "OOM Kills" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Memory Leaks" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Agent Escalations" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Admin Controls & Links",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 15, "w": 24, "h": 3 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Quick Access\n\n| Link | Description |\n|------|-------------|\n| [**Watchdog Admin Panel**](/watchdog/) | Start/Stop interventions, view terminal output, audit log |\n| [**Container Logs (Dozzle)**](/logs/) | Real-time streaming logs for all containers |\n| [**Alertmanager**](/alertmanager/) | View active alerts and silences |\n| [**Platform Overview**](/grafana/d/platform-overview) | Service UP/DOWN status |\n| [**GPU Monitoring**](/grafana/d/gpu-monitoring) | GPU thermals, memory, utilization |"
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["watchdog", "self-healing", "operations"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Watchdog Operations Center",
+  "uid": "watchdog-overview",
+  "version": 1
+}

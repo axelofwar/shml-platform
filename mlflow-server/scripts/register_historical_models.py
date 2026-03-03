@@ -93,14 +93,18 @@ def register_model(model_info, client):
                 name=MODEL_NAME, version=version, description=model_info["description"]
             )
 
-            # Set stage
-            if model_info.get("stage"):
-                client.transition_model_version_stage(
-                    name=MODEL_NAME, version=version, stage=model_info["stage"]
+            # Set alias (migrated from deprecated transition_model_version_stage)
+            stage = model_info.get("stage")
+            if stage and stage != "None":
+                alias = {"Production": "champion", "Staging": "challenger"}.get(
+                    stage, stage.lower()
+                )
+                client.set_registered_model_alias(
+                    name=MODEL_NAME, alias=alias, version=version
                 )
 
             print(f"  ✓ Registered as version {version}")
-            print(f"  ✓ Stage: {model_info.get('stage', 'None')}")
+            print(f"  ✓ Alias: @{alias if stage and stage != 'None' else 'none'}")
 
             return True
 

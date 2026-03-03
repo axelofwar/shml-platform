@@ -16,6 +16,7 @@ MCP Protocol Reference: https://opencode.ai/docs/mcp-servers
 """
 
 import asyncio
+import os
 import subprocess
 import json
 import base64
@@ -165,7 +166,9 @@ class MCPToolExecutor:
     def __init__(self):
         self.gateway_url = "http://inference-gateway:8000"
         self.qwen3_vl_url = "http://qwen3-vl-api:8000"
-        self.mlflow_url = "http://mlflow-server:5000"
+        self.mlflow_url = os.environ.get(
+            "MLFLOW_TRACKING_URI", "http://mlflow-nginx:80"
+        )
         self.ray_api_url = "http://ray-compute-api:8000"
 
     async def execute(self, tool_name: str, args: Dict[str, Any]) -> MCPToolResult:

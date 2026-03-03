@@ -29,17 +29,20 @@ services:
 
     environment:
       - YIELD_WAIT_SECONDS=5
+      # SECURITY: Docker access via restricted proxy (read-only container listing)
+      - DOCKER_HOST=tcp://docker-proxy:2375
 
-    volumes:
-      # Docker socket for container management
-      - /var/run/docker.sock:/var/run/docker.sock
+    # SECURITY: Docker socket removed - was critical host-escape vector
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock
 
     # Run with docker group for socket access
     # Get docker GID with: getent group docker | cut -d: -f3
     user: "1000:984"  # UID:docker-GID (adjust GID if different)
 
-    ports:
-      - "8012:8000"
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8012:8000"  # REMOVED: was bypassing auth
 
     networks:
       - shml-platform
@@ -51,7 +54,8 @@ services:
       - "traefik.http.routers.gpu-manager.priority=2147483645"
       - "traefik.http.services.gpu-manager.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.gpu-manager-strip.stripprefix.prefixes=/api/gpu-manager"
-      - "traefik.http.routers.gpu-manager.middlewares=gpu-manager-strip"
+      # SECURITY: Require OAuth + developer role (was completely unprotected)
+      - "traefik.http.routers.gpu-manager.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,gpu-manager-strip"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

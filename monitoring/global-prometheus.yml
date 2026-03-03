@@ -9,6 +9,16 @@ global:
     cluster: 'ml-platform'
     service: 'global'
 
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Load alert rules
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
 # Federate from service-specific Prometheus instances
 scrape_configs:
   # MLflow Prometheus Federation
@@ -113,3 +123,20 @@ scrape_configs:
         labels:
           component: 'dcgm-exporter'
           instance: 'ml-platform-gpus'
+
+  # ML SLO Exporter - model freshness, training success, error budgets
+  - job_name: 'ml-slo-exporter'
+    scrape_interval: 60s
+    static_configs:
+      - targets: ['shml-ml-slo-exporter:9092']
+        labels:
+          component: 'ml-slo-exporter'
+
+  # Nessie Catalog - Iceberg version control metrics
+  - job_name: 'nessie'
+    scrape_interval: 30s
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ['shml-nessie:9000']
+        labels:
+          component: 'nessie-catalog'

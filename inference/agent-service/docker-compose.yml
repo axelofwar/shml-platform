@@ -35,12 +35,18 @@ services:
       # Embeddings (CPU mode to avoid GPU conflicts)
       - TORCH_DEVICE=cpu
 
+      # SECURITY: Production mode - require OAuth authentication
+      - DEV_MODE=false
+
+      # SECURITY: Docker access via restricted proxy (read-only container listing)
+      - DOCKER_HOST=tcp://docker-proxy:2375
+
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-      # Docker socket for SandboxSkill (elevated-developer/admin only)
-      # Security: Agent service enforces role-based access before container creation
-      - /var/run/docker.sock:/var/run/docker.sock
+      # SECURITY: Docker socket REMOVED (was critical host-escape vector)
+      # Agent uses docker-proxy (read-only GET /containers) via DOCKER_HOST env var
+      # SandboxSkill and ShellSkill docker commands route through restricted proxy
 
     networks:
       - shml-platform
@@ -76,32 +82,31 @@ services:
       # SECURITY: Require FusionAuth authentication for ACE workflow
       - "traefik.http.routers.agent-service.middlewares=oauth2-errors,oauth2-auth,agent-strip"
 
-      # Router 2: /cli/* - CLI/terminal access (no OAuth, DEV_MODE handles auth)
-      # Allows SHML CLI tool to access agent service without browser auth
+      # Router 2: /cli/* - CLI/terminal access (SECURED: requires developer role)
       - "traefik.http.routers.agent-cli.rule=PathPrefix(`/cli`)"
       - "traefik.http.routers.agent-cli.priority=2147483647"
       - "traefik.http.routers.agent-cli.entrypoints=web,websecure"
       - "traefik.http.routers.agent-cli.service=agent-service"
       - "traefik.http.middlewares.agent-cli-strip.stripprefix.prefixes=/cli"
-      - "traefik.http.routers.agent-cli.middlewares=agent-cli-strip"
-      # NOTE: No OAuth - CLI tool uses DEV_MODE or API key auth internally
+      # SECURITY: CLI access requires OAuth + developer role
+      - "traefik.http.routers.agent-cli.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,agent-cli-strip"
 
-      # Router 3: /v1/chat/* - OpenAI-compatible endpoint (Cursor/IDE, no OAuth)
-      # Bypasses OAuth for IDE integrations (Continue.dev, Cursor, etc.)
+      # Router 3: /v1/chat/* - OpenAI-compatible endpoint (SECURED: requires OAuth)
       - "traefik.http.routers.agent-openai.rule=PathPrefix(`/v1/chat`)"
       - "traefik.http.routers.agent-openai.priority=2147483646"
       - "traefik.http.routers.agent-openai.entrypoints=web,websecure"
       - "traefik.http.routers.agent-openai.service=agent-service"
-      # NOTE: No OAuth middleware - direct access for IDE tools
+      # SECURITY: IDE access requires OAuth + developer role
+      - "traefik.http.routers.agent-openai.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
 
-      # Router 3: /ws-test/* - Unprotected WebSocket test endpoint (development only)
+      # Router 3b: /ws-test/* - WebSocket test endpoint (SECURED: requires developer role)
       - "traefik.http.routers.agent-ws-test.rule=PathPrefix(`/ws-test`)"
       - "traefik.http.routers.agent-ws-test.priority=2147483645"
       - "traefik.http.routers.agent-ws-test.entrypoints=web,websecure"
       - "traefik.http.routers.agent-ws-test.service=agent-service"
       - "traefik.http.middlewares.agent-ws-test-strip.stripprefix.prefixes=/ws-test"
-      - "traefik.http.routers.agent-ws-test.middlewares=agent-ws-test-strip"
-      # NOTE: No OAuth - for WebSocket testing during development
+      # SECURITY: WebSocket testing requires OAuth + developer role
+      - "traefik.http.routers.agent-ws-test.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,agent-ws-test-strip"
 
       # Router 4: /agent-health - Public health check (no auth required)
       - "traefik.http.routers.agent-health.rule=Path(`/agent-health`)"
@@ -113,14 +118,14 @@ services:
       - "traefik.http.routers.agent-health.middlewares=agent-health-rewrite"
       # NOTE: No OAuth - public health check for monitoring
 
-      # Router 5: /api/agent/user/me - Public user info (DEV_MODE fallback, no auth)
+      # Router 5: /api/agent/user/me - User info (SECURED: requires OAuth)
       - "traefik.http.routers.agent-user-info.rule=PathPrefix(`/api/agent/user`)"
       - "traefik.http.routers.agent-user-info.priority=2147483648"
       - "traefik.http.routers.agent-user-info.entrypoints=web,websecure"
       - "traefik.http.routers.agent-user-info.service=agent-service"
       - "traefik.http.middlewares.agent-user-strip.stripprefix.prefixes=/api/agent"
-      - "traefik.http.routers.agent-user-info.middlewares=agent-user-strip"
-      # NOTE: No OAuth - DEV_MODE handles auth internally (returns demo user if no headers)
+      # SECURITY: User info requires OAuth authentication
+      - "traefik.http.routers.agent-user-info.middlewares=oauth2-errors,oauth2-auth,agent-user-strip"
 
 networks:
   shml-platform:

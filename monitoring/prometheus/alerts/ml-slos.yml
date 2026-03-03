@@ -1,0 +1,89 @@
+# ML SLO Alert Rules
+# Loaded by unified Prometheus alongside platform-alerts.yml
+
+groups:
+  # ==========================================================================
+  # ML Platform SLO Alerts
+  # ==========================================================================
+  - name: ml_slo_alerts
+    rules:
+      - alert: ModelStale
+        expr: ml_model_freshness_days > 14
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Champion model is {{ $value }} days old"
+          description: "The @champion face detection model has not been updated in over 14 days. Review training pipeline."
+
+      - alert: ModelVeryStale
+        expr: ml_model_freshness_days > 30
+        for: 1h
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "Champion model is {{ $value }} days old - CRITICAL"
+          description: "The @champion model is over 30 days old. Immediate review required."
+
+      - alert: TrainingSuccessRateLow
+        expr: ml_training_success_rate_7d < 0.90
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Training success rate is {{ $value | humanizePercentage }}"
+          description: "Training job success rate has dropped below 90% over the last 7 days."
+
+      - alert: ErrorBudgetExhausted
+        expr: ml_error_budget_remaining_pct < 20
+        for: 15m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "ML error budget at {{ $value }}%"
+          description: "Less than 20% of the monthly error budget remains. Freeze non-critical changes."
+
+      - alert: EvalIncomplete
+        expr: ml_eval_completeness_ratio < 0.95
+        for: 2h
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Model evaluation completeness at {{ $value | humanizePercentage }}"
+          description: "Some registered model versions are missing evaluation results."
+
+      - alert: FeatureFreshnessBreached
+        expr: ml_feature_freshness_minutes > 120
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Feature freshness SLO breached ({{ $value }} minutes)"
+          description: "Feature materialization is over 2 hours stale."
+
+      # EB-05: Per-feature-view SLO alerts
+      - alert: FeatureViewSLOBreached
+        expr: ml_feature_view_slo_met == 0 and ml_feature_view_freshness_minutes >= 0
+        for: 15m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Feature view {{ $labels.feature_view }} breaching SLO"
+          description: "Feature view '{{ $labels.feature_view }}' has been stale beyond its SLO for 15+ minutes."
+
+      - alert: FeatureViewNoData
+        expr: ml_feature_view_freshness_minutes < 0
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Feature view {{ $labels.feature_view }} has no data"
+          description: "Feature view '{{ $labels.feature_view }}' has never been materialized."

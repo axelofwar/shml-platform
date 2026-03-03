@@ -211,6 +211,15 @@ from .training import router as training_router
 
 app.include_router(training_router, prefix="/api/v1")
 
+# Feature Platform API router (EB-05 - Tecton-like feature registry + serving)
+try:
+    from ..features.api import router as features_router
+
+    app.include_router(features_router, prefix="/api/v1")
+    logger.info("Feature Platform API router mounted at /api/v1/features")
+except ImportError as e:
+    logger.warning("Feature Platform API not available: %s", e)
+
 
 # ============================================================================
 # Pydantic Models (Request/Response schemas)

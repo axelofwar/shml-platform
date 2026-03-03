@@ -43,7 +43,8 @@ services:
       - "127.0.0.1:443:443"
       - "${LAN_IP:-0.0.0.0}:80:80"
       - "${LAN_IP:-0.0.0.0}:443:443"
-      - "0.0.0.0:8090:8080"
+      # SECURITY: Bind Traefik API to localhost only (was 0.0.0.0)
+      - "127.0.0.1:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
@@ -68,6 +69,52 @@ services:
       - "traefik.http.services.traefik.loadbalancer.server.port=8080"
       # SECURITY: Traefik dashboard requires admin role
       - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+
+  # ==========================================================================
+  # DATA CATALOG (Iceberg version control)
+  # ==========================================================================
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.107.3
+    container_name: ${PLATFORM_PREFIX:-shml}-nessie
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      # Version store: PostgreSQL (production-grade)
+      NESSIE_VERSION_STORE_TYPE: JDBC2
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: nessie
+      QUARKUS_DATASOURCE_PASSWORD: ${SHARED_DB_PASSWORD}
+      # Cache: 60% of heap (default)
+      JAVA_OPTS: "-Xmx1g -Xms512m"
+    expose:
+      - "19120"  # REST API (Iceberg catalog)
+      - "9000"   # Management/metrics
+    networks:
+      - platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nessie.rule=PathPrefix(`/nessie`)"
+      - "traefik.http.routers.nessie.entrypoints=web,websecure"
+      - "traefik.http.services.nessie.loadbalancer.server.port=19120"
+      - "traefik.http.middlewares.nessie-strip.stripprefix.prefixes=/nessie"
+      - "traefik.http.routers.nessie.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,nessie-strip"
+      - "traefik.http.routers.nessie.priority=100"
 
   # ==========================================================================
   # SHARED DATA LAYER
@@ -162,8 +209,9 @@ services:
       - fusionauth-config:/usr/local/fusionauth/config
     networks:
       - platform
+    # SECURITY: Bind FusionAuth admin to localhost only (was 0.0.0.0)
     ports:
-      - "9011:9011"
+      - "127.0.0.1:9011:9011"
     depends_on:
       postgres:
         condition: service_healthy
@@ -189,7 +237,8 @@ services:
       - "traefik.http.routers.fusionauth-admin.rule=PathPrefix(`/admin`)"
       - "traefik.http.routers.fusionauth-admin.entrypoints=web,websecure"
       - "traefik.http.routers.fusionauth-admin.priority=150"
-      - "traefik.http.routers.fusionauth-admin.middlewares=fusionauth-headers"
+      # SECURITY: FusionAuth admin requires platform admin role (was unprotected)
+      - "traefik.http.routers.fusionauth-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,fusionauth-headers"
       - "traefik.http.routers.fusionauth-admin.service=fusionauth"
       - "traefik.http.routers.fusionauth-css.rule=PathPrefix(`/css`)"
       - "traefik.http.routers.fusionauth-css.entrypoints=web,websecure"
@@ -553,6 +602,11 @@ services:
     expose:
       - "9100"
     pid: host
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
@@ -588,6 +642,11 @@ services:
     privileged: true
     devices:
       - /dev/kmsg
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ==========================================================================
   # UNIFIED MONITORING - Federated Prometheus + Grafana
@@ -666,6 +725,36 @@ services:
       - "traefik.http.middlewares.pushgateway-strip.stripprefix.prefixes=/pushgateway"
       - "traefik.http.routers.pushgateway.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,pushgateway-strip"
       - "traefik.http.routers.pushgateway.priority=100"
+
+  # ML SLO Exporter - periodically queries MLflow/Ray for SLO metrics
+  ml-slo-exporter:
+    build: ./monitoring/ml-slo-exporter
+    container_name: ${PLATFORM_PREFIX:-shml}-ml-slo-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    env_file:
+      - ./config/mlflow.env
+    environment:
+      RAY_API_URI: http://ray-compute-api:8000
+      SCRAPE_INTERVAL: "60"
+      EXPORTER_PORT: "9092"
+    expose:
+      - "9092"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   unified-grafana:
     image: grafana/grafana:10.2.2
@@ -851,6 +940,11 @@ services:
       - ./monitoring/homer:/www/assets:ro
     networks:
       - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     labels:
       - "traefik.enable=true"
       # Lowest priority - catch-all for root path
@@ -926,6 +1020,7 @@ services:
     command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
     environment:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      FUSIONAUTH_WEBHOOK_SECRET: "${FUSIONAUTH_WEBHOOK_SECRET:-}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
       DEPLOY_EMAIL: "${DEPLOY_NOTIFICATION_EMAIL:-}"
@@ -936,6 +1031,11 @@ services:
       - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
     networks:
       - platform
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.webhook.rule=PathPrefix(`/webhook`)"
@@ -998,6 +1098,332 @@ services:
       # SECURITY: Admin-only OAuth protection
       - "traefik.http.routers.code-server.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,code-server-strip"
 
+  # ==========================================================================
+  # CV DATASET CURATION (FiftyOne)
+  # ==========================================================================
+  fiftyone:
+    image: voxel51/fiftyone:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone
+    restart: unless-stopped
+    command: ["python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    environment:
+      FIFTYONE_DATABASE_URI: mongodb://fiftyone-mongodb:27017/fiftyone
+      FIFTYONE_DEFAULT_DATASET_DIR: /fiftyone/datasets
+      # SECURITY FIX: Server-side path prefix for proxy routing (fixes similarity panel)
+      FIFTYONE_SERVER_PATH_PREFIX: /fiftyone
+      FIFTYONE_PATH_PREFIX: /fiftyone
+    volumes:
+      - fiftyone-data:/fiftyone
+      - fiftyone-datasets:/fiftyone/datasets
+      # Dynamic entrypoint patches index.html for any Python version
+      - ./config/fiftyone:/opt/fiftyone-entrypoint:ro
+      # Share ray data directory so FiftyOne can serve images stored by ray-head
+      - ./ray_compute/data/ray:/tmp/ray:ro
+    expose:
+      - "5151"
+    networks:
+      - platform
+    depends_on:
+      fiftyone-mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fiftyone.rule=PathPrefix(`/fiftyone`)"
+      - "traefik.http.routers.fiftyone.entrypoints=web,websecure"
+      - "traefik.http.services.fiftyone.loadbalancer.server.port=5151"
+      - "traefik.http.middlewares.fiftyone-strip.stripprefix.prefixes=/fiftyone"
+      - "traefik.http.routers.fiftyone.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,fiftyone-strip"
+      - "traefik.http.routers.fiftyone.priority=100"
+
+  # FiftyOne embedded MongoDB (lightweight, only for FiftyOne metadata)
+  fiftyone-mongodb:
+    image: mongo:7-jammy
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    volumes:
+      - fiftyone-mongodb-data:/data/db
+    expose:
+      - "27017"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # ALERTMANAGER - Alert routing and deduplication
+  # Routes Prometheus alerts to Telegram via severity-based routing
+  # --------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address='
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    expose:
+      - "9093"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alertmanager.rule=PathPrefix(`/alertmanager`)"
+      - "traefik.http.routers.alertmanager.entrypoints=web,websecure"
+      - "traefik.http.services.alertmanager.loadbalancer.server.port=9093"
+      - "traefik.http.routers.alertmanager.middlewares=oauth2-auth@docker"
+
+  # --------------------------------------------------------------------------
+  # ALERTMANAGER-TELEGRAM - Telegram notification bridge
+  # Receives Alertmanager webhooks and forwards to Telegram chat
+  # --------------------------------------------------------------------------
+  alertmanager-telegram:
+    image: metalmatze/alertmanager-bot:0.4.3
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram
+    restart: unless-stopped
+    command:
+      - --alertmanager.url=http://alertmanager:9093
+      - --log.level=info
+      - --store=bolt
+      - --bolt.path=/data/bot.db
+      - --listen.addr=0.0.0.0:9087
+      - --template.paths=/templates/telegram.tmpl
+    environment:
+      TELEGRAM_ADMIN: "${TELEGRAM_CHAT_ID:-0}"
+      TELEGRAM_TOKEN: "${TELEGRAM_BOT_TOKEN:-placeholder}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - alertmanager-telegram-data:/data
+      - ./monitoring/alertmanager/templates:/templates:ro
+    expose:
+      - "9087"
+    networks:
+      - platform
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9087 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # --------------------------------------------------------------------------
+  # FEATURE-SCHEDULER - Periodic feature materialization via Ray
+  # Submits scheduled_materialize.py to Ray cluster every hour
+  # --------------------------------------------------------------------------
+  feature-scheduler:
+    image: curlimages/curl:8.5.0
+    container_name: ${PLATFORM_PREFIX:-shml}-feature-scheduler
+    restart: unless-stopped
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/scripts/monitoring/feature_scheduler.sh"]
+    environment:
+      RAY_HEAD_ADDRESS: "ray-head:8265"
+      MATERIALIZE_INTERVAL: "${MATERIALIZE_INTERVAL:-3600}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ./scripts:/scripts:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/feature-scheduler/scheduler.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # SELF-HEALING WATCHDOG - Container health monitoring & auto-restart
+  # Monitors all critical containers, restarts unhealthy ones, reports to Telegram
+  # --------------------------------------------------------------------------
+  watchdog:
+    image: docker:cli
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
+    environment:
+      CHECK_INTERVAL: "${WATCHDOG_INTERVAL:-60}"
+      MAX_RESTARTS: "${WATCHDOG_MAX_RESTARTS:-3}"
+      COOLDOWN_SECONDS: "900"
+      PLATFORM_PREFIX: "${PLATFORM_PREFIX:-shml}"
+      PROMETHEUS_URL: "http://global-prometheus:9090"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      EXCLUDED_CONTAINERS: "${WATCHDOG_EXCLUDED:-}"
+      # GPU isolation - protect training on GPU 0, watchdog uses GPU 1 (RTX 2070)
+      TRAINING_GPU: "0"
+      WATCHDOG_GPU: "1"
+      # Memory leak detection threshold (MB growth per hour)
+      MEMORY_LEAK_THRESHOLD: "100"
+      # Agent service URL for autonomous cross-service resolution
+      AGENT_SERVICE_URL: "http://agent-service:8000"
+      # Max OOM restarts before escalating to agent
+      OOM_RESTART_BUDGET: "5"
+      # Pushgateway for Prometheus metrics export
+      PUSHGATEWAY_URL: "http://${PLATFORM_PREFIX:-shml}-pushgateway:9091"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/watchdog/watchdog.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # WATCHDOG ADMIN — Operations Control Center
+  # Web UI + API for watchdog monitoring, start/stop controls, audit & log viewer
+  # --------------------------------------------------------------------------
+  watchdog-admin:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog-admin
+    restart: unless-stopped
+    entrypoint: ["python3", "/scripts/self-healing/watchdog_admin.py"]
+    environment:
+      ADMIN_PORT: "8099"
+      BASE_PATH: "/watchdog"
+      WATCHDOG_STATE_DIR: "/var/lib/watchdog"
+      WATCHDOG_LOG_DIR: "/var/log/watchdog"
+      DOZZLE_URL: "/logs/"
+      GRAFANA_DASHBOARD_URL: "/grafana/d/watchdog-overview"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ./scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog:ro
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.watchdog-admin.rule=PathPrefix(`/watchdog`)"
+      - "traefik.http.routers.watchdog-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.watchdog-admin.priority=100"
+      - "traefik.http.routers.watchdog-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+      - "traefik.http.services.watchdog-admin.loadbalancer.server.port=8099"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8099/watchdog/health\")' 2>/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # NIGHTLY TEST RUNNER - Automated test suite execution with reporting
+  # Runs full pytest suite daily and reports results via Telegram
+  # --------------------------------------------------------------------------
+  nightly-test-runner:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-nightly-test-runner
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/workspace/scripts/monitoring/nightly_test_runner.sh"]
+    working_dir: /workspace
+    environment:
+      TEST_HOUR: "${TEST_HOUR:-3}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TEST_DIR: "/workspace/tests"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - .:/workspace:ro
+      - test-runner-data:/var/log/test-runner
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/test-runner/runner.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 secrets:
   shared_db_password:
     file: ./secrets/shared_db_password.txt
@@ -1030,6 +1456,30 @@ volumes:
     name: ${PLATFORM_PREFIX:-shml}-code-server-data
   code-server-config:
     name: ${PLATFORM_PREFIX:-shml}-code-server-config
+
+  # FiftyOne (CV dataset curation)
+  fiftyone-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-data
+  fiftyone-datasets:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-datasets
+  fiftyone-mongodb-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb-data
+
+  # Alertmanager
+  alertmanager-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-data
+  alertmanager-telegram-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram-data
+
+  # Self-healing watchdog
+  watchdog-data:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-data
+  watchdog-logs:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-logs
+
+  # Nightly test runner
+  test-runner-data:
+    name: ${PLATFORM_PREFIX:-shml}-test-runner-data
 
 networks:
   platform:

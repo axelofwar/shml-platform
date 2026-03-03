@@ -1,0 +1,371 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "datasource", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "GPU Monitoring",
+      "tooltip": "View GPU metrics",
+      "type": "link",
+      "url": "/grafana/d/gpu-monitoring/gpu-monitoring"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "MLflow",
+      "tooltip": "View MLflow experiments",
+      "type": "link",
+      "url": "/mlflow"
+    }
+  ],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": [],
+      "title": "🎯 Phase 9 — RF-DETR Large Training Progress",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "text": "Idle" }, "1": { "text": "Training" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "title": "Status",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_active{phase=\"9\",model=\"rfdetr-large\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Epoch",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_epoch{phase=\"9\"}", "legendFormat": "Current", "refId": "A" },
+        { "expr": "training_total_epochs{phase=\"9\"}", "legendFormat": "Total", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }, { "color": "green", "value": 0.94 }] },
+          "unit": "percentunit",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "mAP@50 (KPI: ≥94%)",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_mAP50{phase=\"9\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }, { "color": "green", "value": 0.95 }] },
+          "unit": "percentunit",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 1 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Recall (KPI: ≥95%)",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_recall{phase=\"9\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }, { "color": "green", "value": 0.90 }] },
+          "unit": "percentunit",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 1 },
+      "id": 6,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Precision (KPI: ≥90%)",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_precision{phase=\"9\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 0 }] },
+          "unit": "percentunit",
+          "decimals": 2
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "id": 7,
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "vs Phase 5 (mAP50)",
+      "type": "stat",
+      "targets": [
+        { "expr": "training_vs_phase5_mAP50{phase=\"9\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "percentunit",
+          "min": 0, "max": 1
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "id": 8,
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "title": "Training Progress",
+      "type": "gauge",
+      "targets": [
+        { "expr": "training_progress{phase=\"9\"}", "legendFormat": "__auto", "refId": "A" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 10,
+      "panels": [],
+      "title": "📈 Metrics Over Time",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisColorMode": "text", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "showPoints": "auto", "spanNulls": false },
+          "unit": "percentunit",
+          "min": 0, "max": 1
+        }
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Detection Metrics (mAP50 / Recall / Precision)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "training_mAP50{phase=\"9\"}", "legendFormat": "mAP@50", "refId": "A" },
+        { "expr": "training_recall{phase=\"9\"}", "legendFormat": "Recall", "refId": "B" },
+        { "expr": "training_precision{phase=\"9\"}", "legendFormat": "Precision", "refId": "C" },
+        { "expr": "training_best_mAP50{phase=\"9\"}", "legendFormat": "Best mAP50", "refId": "D" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2 },
+          "unit": "none"
+        }
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 6 },
+      "id": 12,
+      "options": { "legend": { "calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Training Losses",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "training_box_loss{phase=\"9\"}", "legendFormat": "Box Loss", "refId": "A" },
+        { "expr": "training_cls_loss{phase=\"9\"}", "legendFormat": "Class Loss", "refId": "B" },
+        { "expr": "training_giou_loss{phase=\"9\"}", "legendFormat": "GIoU Loss", "refId": "C" },
+        { "expr": "training_total_loss{phase=\"9\"}", "legendFormat": "Total Loss", "refId": "D" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 20,
+      "panels": [],
+      "title": "🎯 KPI Gap Analysis",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": true, "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 21,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "KPI Gap (target - actual, 0 = met)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "training_kpi_gap_mAP50{phase=\"9\"}", "legendFormat": "mAP50 gap", "refId": "A" },
+        { "expr": "training_kpi_gap_recall{phase=\"9\"}", "legendFormat": "Recall gap", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": true, "drawStyle": "bars", "fillOpacity": 50, "lineWidth": 1 },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 22,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "vs Phase 5 Baseline (delta)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "training_vs_phase5_mAP50{phase=\"9\"}", "legendFormat": "mAP50 Δ", "refId": "A" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "id": 30,
+      "panels": [],
+      "title": "🖥️ GPU Resources",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "custom": { "drawStyle": "line", "fillOpacity": 30, "lineWidth": 1 },
+          "unit": "percent",
+          "min": 0, "max": 100
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 26 },
+      "id": 31,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "title": "GPU Utilization",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "gpu_0_utilization", "legendFormat": "GPU 0 (3090 Ti)", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "custom": { "drawStyle": "line", "fillOpacity": 30, "lineWidth": 1 },
+          "unit": "decmbytes",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 26 },
+      "id": 32,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "title": "GPU Memory",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "gpu_0_memory_used_mb", "legendFormat": "Used (MB)", "refId": "A" },
+        { "expr": "gpu_0_memory_total_mb", "legendFormat": "Total (MB)", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 1 },
+          "unit": "celsius",
+          "min": 30, "max": 95
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 26 },
+      "id": 33,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "title": "GPU Temperature",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "gpu_0_temperature", "legendFormat": "GPU 0 Temp", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["training", "phase9", "rfdetr", "face-detection", "pii"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Phase 9 — RF-DETR Training Live",
+  "uid": "phase9-rfdetr-training",
+  "version": 1,
+  "weekStart": ""
+}

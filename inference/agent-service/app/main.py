@@ -59,20 +59,62 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# WebSocket connections manager
+# WebSocket connections manager with TTL-based cleanup (memory leak prevention)
 class ConnectionManager:
+    # Maximum age (seconds) before a stale connection is reaped
+    CONNECTION_TTL_SECONDS = 3600  # 1 hour
+
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        self._connection_times: Dict[str, float] = {}  # session_id -> connect timestamp
 
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[session_id] = websocket
-        logger.info(f"WebSocket connected: {session_id}")
+        self._connection_times[session_id] = __import__("time").time()
+        logger.info(
+            f"WebSocket connected: {session_id} (active: {len(self.active_connections)})"
+        )
+        # Opportunistic cleanup of stale connections
+        await self._cleanup_stale()
 
     def disconnect(self, session_id: str):
         if session_id in self.active_connections:
             del self.active_connections[session_id]
-            logger.info(f"WebSocket disconnected: {session_id}")
+            self._connection_times.pop(session_id, None)
+            logger.info(
+                f"WebSocket disconnected: {session_id} (active: {len(self.active_connections)})"
+            )
+
+    async def _cleanup_stale(self):
+        """Remove connections that have exceeded TTL or are silently closed."""
+        import time
+
+        now = time.time()
+        stale = []
+        for sid, ws in list(self.active_connections.items()):
+            connect_time = self._connection_times.get(sid, now)
+            age = now - connect_time
+            if age > self.CONNECTION_TTL_SECONDS:
+                stale.append(sid)
+                continue
+            # Check if the WebSocket client_state indicates disconnection
+            try:
+                if (
+                    hasattr(ws, "client_state")
+                    and ws.client_state.name == "DISCONNECTED"
+                ):
+                    stale.append(sid)
+            except Exception:
+                pass
+        for sid in stale:
+            logger.warning(f"Cleaning up stale WebSocket: {sid}")
+            self.active_connections.pop(sid, None)
+            self._connection_times.pop(sid, None)
+        if stale:
+            logger.info(
+                f"Cleaned {len(stale)} stale connections, {len(self.active_connections)} remain"
+            )
 
     async def send_message(self, session_id: str, message: dict):
         if session_id in self.active_connections:

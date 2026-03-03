@@ -83,7 +83,7 @@ def setup_standard_experiments(client):
     logger.info("Setting up standard experiments...")
 
     experiments = {
-        "Development-Training": {
+        "face-detection/training": {
             "tags": {
                 "stage": "development",
                 "purpose": "model training and experimentation",

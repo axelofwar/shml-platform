@@ -19,6 +19,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Shared SentenceTransformer instance (memory leak prevention)
+# Each model instance uses ~90MB - sharing avoids per-user duplication
+_shared_embedder: Optional[SentenceTransformer] = None
+_shared_embedder_model: Optional[str] = None
+
+
+def _get_shared_embedder(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
+    """Get or create a shared SentenceTransformer.
+
+    Prevents loading duplicate ~90MB models per user playbook.
+    Force CPU to avoid GPU memory contention with training.
+    """
+    global _shared_embedder, _shared_embedder_model
+    if _shared_embedder is None or _shared_embedder_model != model_name:
+        logger.info(f"Loading shared embedder model: {model_name}")
+        _shared_embedder = SentenceTransformer(model_name, device="cpu")
+        _shared_embedder_model = model_name
+    return _shared_embedder
+
 
 @dataclass
 class ContextBullet:
@@ -165,9 +184,8 @@ class AgentPlaybook:
         self.max_bullets = max_bullets
         self.dedup_threshold = dedup_threshold
 
-        # Load sentence transformer for embeddings (force CPU to avoid GPU memory issues)
-        logger.info(f"Loading embedder model: {embedder_model}")
-        self.embedder = SentenceTransformer(embedder_model, device="cpu")
+        # Use shared sentence transformer (avoids ~90MB duplicate per user)
+        self.embedder = _get_shared_embedder(embedder_model)
 
         # In-memory cache of bullets (loaded from DB on init)
         self.bullets: List[ContextBullet] = []

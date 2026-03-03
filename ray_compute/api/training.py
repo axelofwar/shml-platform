@@ -338,7 +338,7 @@ callbacks.append(curriculum)
 # MLflow Callback
 from shml_training.integrations import MLflowCallback
 mlflow_callback = MLflowCallback(
-    tracking_uri=os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow-server:8080"),
+    tracking_uri=os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80"),
     experiment_name={repr(request.mlflow_experiment or "training-jobs")},
     run_name={repr(request.name)},
     tags={repr({**request.mlflow_tags, "job_id": job_id, "user": user.username})}
@@ -524,7 +524,7 @@ async def submit_training_job(
         ],
         "env_vars": {
             "MLFLOW_TRACKING_URI": os.environ.get(
-                "MLFLOW_TRACKING_URI", "http://mlflow-server:8080"
+                "MLFLOW_TRACKING_URI", "http://mlflow-nginx:80"
             ),
             "PROMETHEUS_PUSHGATEWAY_URL": os.environ.get(
                 "PROMETHEUS_PUSHGATEWAY_URL", "http://prometheus-pushgateway:9091"

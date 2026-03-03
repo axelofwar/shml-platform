@@ -9,12 +9,12 @@ global:
     cluster: "ml-platform"
     environment: "production"
 
-# Alertmanager configuration (optional)
+# Alertmanager configuration
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
-          # - 'alertmanager:9093'  # Uncomment if you add Alertmanager
+        - targets:
+          - 'alertmanager:9093'
 
 # Load alert rules from all services
 rule_files:

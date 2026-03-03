@@ -1,0 +1,16 @@
+{{ define "telegram.default.message" }}
+{{ if eq .Status "firing" }}🔴 FIRING{{ else }}🟢 RESOLVED{{ end }} | {{ .CommonLabels.alertname }}
+
+{{ range .Alerts }}
+{{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} {{ .Labels.alertname }}
+  Severity: {{ .Labels.severity }}
+  {{ if .Annotations.summary }}Summary: {{ .Annotations.summary }}{{ end }}
+  {{ if .Annotations.description }}Details: {{ .Annotations.description }}{{ end }}
+  {{ if .Labels.instance }}Instance: {{ .Labels.instance }}{{ end }}
+  {{ if .Labels.container }}Container: {{ .Labels.container }}{{ end }}
+  Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+  {{ if eq .Status "resolved" }}Resolved: {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}{{ end }}
+{{ end }}
+
+Platform: SHML ML Platform
+{{ end }}

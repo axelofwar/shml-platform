@@ -60,7 +60,7 @@ app.add_middleware(
 
 # Configuration
 RAY_ADDRESS = os.getenv("RAY_ADDRESS", "http://127.0.0.1:8265")
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:8080")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80")
 JOB_WORKSPACE = os.getenv("JOB_WORKSPACE", "/opt/ray/job_workspaces")
 ARTIFACT_RETENTION_HOURS = int(os.getenv("ARTIFACT_RETENTION_HOURS", "24"))
 API_KEY_ENABLED = os.getenv("API_KEY_ENABLED", "false").lower() == "true"

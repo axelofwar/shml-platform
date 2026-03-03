@@ -666,9 +666,15 @@ stop_all_services() {
     log_success "MLflow services stopped"
     echo ""
 
-    # Phase 5: Stop Monitoring (Grafana/Prometheus/Pushgateway/DCGM)
+    # Phase 4.5: Stop Data Platform (FiftyOne, Nessie)
+    log_info "━━━ Stopping Data Platform ━━━"
+    docker compose --env-file .env -f docker-compose.infra.yml stop fiftyone fiftyone-mongodb nessie 2>/dev/null || true
+    log_success "Data platform stopped"
+    echo ""
+
+    # Phase 5: Stop Monitoring (Grafana/Prometheus/Pushgateway/SLO Exporter/DCGM)
     log_info "━━━ Stopping Monitoring ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway 2>/dev/null || true
+    docker compose --env-file .env -f docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway ml-slo-exporter 2>/dev/null || true
     docker compose --env-file .env -f docker-compose.infra.yml stop cadvisor node-exporter 2>/dev/null || true
     # Stop DCGM exporter (GPU metrics)
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
@@ -740,6 +746,9 @@ cleanup_containers() {
         "${PLATFORM_PREFIX:-shml}-traefik" "${PLATFORM_PREFIX:-shml}-redis" "${PLATFORM_PREFIX:-shml}-postgres"
         # UI
         "homer" "dozzle" "postgres-backup" "webhook-deployer"
+        # Data Platform
+        "${PLATFORM_PREFIX:-shml}-nessie" "${PLATFORM_PREFIX:-shml}-fiftyone" "${PLATFORM_PREFIX:-shml}-fiftyone-mongodb"
+        "${PLATFORM_PREFIX:-shml}-ml-slo-exporter"
         # Inference
         "coding-model-primary" "coding-model-fallback"
         "${PLATFORM_PREFIX:-shml}-chat-api"
@@ -930,6 +939,13 @@ start_all_services() {
 
     # Verify Traefik API is accessible
     wait_for_http "http://localhost:8090/api/overview" 30 || log_warn "Traefik API not yet accessible"
+
+    # Nessie Iceberg catalog (depends on PostgreSQL)
+    echo "Starting: Nessie (Iceberg catalog)..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        nessie 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-nessie" $DEFAULT_TIMEOUT || log_warn "Nessie may still be starting"
+
     log_success "Infrastructure ready"
     echo ""
 
@@ -1274,7 +1290,14 @@ start_all_services() {
     wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT || log_warn "Prometheus may still be loading data"
     wait_for_health "${PLATFORM_PREFIX:-shml}-pushgateway" $DEFAULT_TIMEOUT || log_warn "Pushgateway may still be starting"
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT || log_warn "Grafana may still be initializing"
-    log_success "Monitoring ready (Prometheus, Pushgateway, Grafana)"
+
+    # ML SLO Exporter (depends on MLflow/Ray APIs existing on network)
+    echo "Starting: ML SLO Exporter..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        ml-slo-exporter 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-ml-slo-exporter" $DEFAULT_TIMEOUT || log_warn "ML SLO Exporter may still be starting"
+
+    log_success "Monitoring ready (Prometheus, Pushgateway, Grafana, SLO Exporter)"
     echo ""
 
     # =========================================================================
@@ -1516,9 +1539,16 @@ start_all_services() {
     docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate homer 2>&1 | grep -v "orphan" || true
     docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate dozzle postgres-backup 2>&1 | grep -v "orphan" || true
 
+    # FiftyOne visual dataset curation (depends on fiftyone-mongodb)
+    echo "Starting: FiftyOne (dataset curation)..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+        fiftyone-mongodb fiftyone 2>&1 | grep -v "orphan" || true
+
     # Wait for services
     wait_for_health "homer" $DEFAULT_TIMEOUT || log_warn "Homer may still be starting"
     wait_for_health "postgres-backup" $DEFAULT_TIMEOUT || log_warn "Postgres Backup may still be starting"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-fiftyone-mongodb" $DEFAULT_TIMEOUT || log_warn "FiftyOne MongoDB may still be starting"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-fiftyone" $DEFAULT_TIMEOUT || log_warn "FiftyOne may still be starting"
 
     # Dozzle doesn't have healthcheck (minimal image)
     if docker ps --format '{{.Names}}' | grep -q "^dozzle$"; then
@@ -1528,6 +1558,23 @@ start_all_services() {
     fi
 
     log_success "Observability services ready"
+    echo ""
+
+    # =========================================================================
+    # Phase 10.5: Self-Healing Watchdog
+    # =========================================================================
+    log_info "━━━ Phase 10.5: Self-Healing Watchdog ━━━"
+    echo "Starting: Watchdog (container health), Watchdog Admin, Alertmanager..."
+    docker compose --env-file .env -f docker-compose.infra.yml up -d \
+        watchdog watchdog-admin alertmanager 2>&1 | grep -v "orphan" || true
+
+    # Wait for watchdog to be running
+    sleep 3
+    if docker ps --format '{{.Names}}' | grep -q "watchdog"; then
+        log_success "Watchdog self-healing active"
+    else
+        log_warn "Watchdog may not have started — containers will NOT auto-recover"
+    fi
     echo ""
 
     # =========================================================================
@@ -1659,7 +1706,7 @@ show_status() {
     log_success "Platform startup complete!"
     echo ""
     echo "Service Status:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup|coding-model|chat-api|code-server" || true
+    docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAME|traefik|postgres|redis|mlflow|ray|grafana|prometheus|fusionauth|oauth2|cadvisor|node-exporter|dozzle|homer|backup|coding-model|chat-api|code-server|nessie|fiftyone|slo-exporter" || true
     echo ""
     echo -e "${CYAN}Public Access (via Tailscale Funnel):${NC}"
     if [ -n "$PUBLIC_DOMAIN" ]; then
@@ -1674,6 +1721,10 @@ show_status() {
         echo "  • Ray Dashboard:     https://${PUBLIC_DOMAIN}/ray/"
         echo "  • Grafana:           https://${PUBLIC_DOMAIN}/grafana/"
         echo "  • Dozzle (Logs):     https://${PUBLIC_DOMAIN}/logs/"
+        echo ""
+        echo "  Data Platform (Developer role required):"
+        echo "  • Nessie Catalog:    https://${PUBLIC_DOMAIN}/nessie/"
+        echo "  • FiftyOne:          https://${PUBLIC_DOMAIN}/fiftyone/"
         echo ""
         echo "  Admin-Only Services:"
         echo "  • VS Code IDE:       https://${PUBLIC_DOMAIN}/ide/ (with GitHub Copilot)"
@@ -1695,6 +1746,10 @@ show_status() {
     echo "  • Ray Dashboard:   http://${LAN_IP}/ray/"
     echo "  • Grafana:         http://${LAN_IP}/grafana/"
     echo "  • Dozzle (Logs):   http://${LAN_IP}/logs/"
+    echo ""
+    echo "  Data Platform (Developer role required):"
+    echo "  • Nessie Catalog:  http://${LAN_IP}/nessie/"
+    echo "  • FiftyOne:        http://${LAN_IP}/fiftyone/"
     echo ""
     echo "  Inference APIs (Developer role required):"
     echo "  • Coding Model:    http://${LAN_IP}/api/coding/v1/chat/completions"
@@ -1975,11 +2030,11 @@ start_infra() {
     log_info "━━━ Starting Infrastructure Only ━━━"
     ensure_network
     docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
-        "${PLATFORM_PREFIX:-shml}-traefik" \
-        "${PLATFORM_PREFIX:-shml}-postgres" \
-        "${PLATFORM_PREFIX:-shml}-redis" \
-        "${PLATFORM_PREFIX:-shml}-cadvisor" \
-        "${PLATFORM_PREFIX:-shml}-node-exporter" \
+        traefik \
+        postgres \
+        redis \
+        cadvisor \
+        node-exporter \
         2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-postgres" $POSTGRES_TIMEOUT
     wait_for_health "${PLATFORM_PREFIX:-shml}-traefik" $TRAEFIK_TIMEOUT
@@ -2253,11 +2308,11 @@ start_sba_portal() {
 stop_infra() {
     log_info "━━━ Stopping Infrastructure ━━━"
     docker compose --env-file .env -f docker-compose.infra.yml stop \
-        "${PLATFORM_PREFIX:-shml}-traefik" \
-        "${PLATFORM_PREFIX:-shml}-postgres" \
-        "${PLATFORM_PREFIX:-shml}-redis" \
-        "${PLATFORM_PREFIX:-shml}-cadvisor" \
-        "${PLATFORM_PREFIX:-shml}-node-exporter" \
+        traefik \
+        postgres \
+        redis \
+        cadvisor \
+        node-exporter \
         2>/dev/null || true
     log_success "Infrastructure stopped"
 }

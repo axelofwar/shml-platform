@@ -19,6 +19,14 @@ import shlex
 import json
 import re
 
+from .security import (
+    is_command_safe_for_role,
+    filter_skills_for_role,
+    get_system_prompt_preamble,
+    filter_output,
+    BLOCKED_PATTERNS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -211,32 +219,12 @@ Returns detailed nvidia-smi output:
 """
 
     @classmethod
-    def _is_command_safe(cls, command: str) -> tuple[bool, str]:
-        """Check if command is safe to execute."""
-        cmd_lower = command.lower().strip()
-
-        # Check blocked patterns
-        for pattern in cls.BLOCKED_PATTERNS:
-            if pattern in cmd_lower:
-                return False, f"Blocked pattern detected: {pattern}"
-
-        # Check if command starts with allowed prefix
-        cmd_parts = shlex.split(command)
-        if not cmd_parts:
-            return False, "Empty command"
-
-        base_cmd = cmd_parts[0]
-
-        # Allow commands that start with allowed prefixes
-        is_allowed = any(
-            base_cmd == allowed or base_cmd.startswith(allowed.split()[0])
-            for allowed in cls.ALLOWED_COMMANDS
-        )
-
-        if not is_allowed:
-            return False, f"Command '{base_cmd}' not in allowed list"
-
-        return True, "OK"
+    def _is_command_safe(
+        cls, command: str, user_role: str = "admin"
+    ) -> tuple[bool, str]:
+        """Check if command is safe to execute for the given role."""
+        # Use role-based security check from security module
+        return is_command_safe_for_role(command, user_role)
 
     @classmethod
     async def execute(cls, operation: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -419,11 +407,21 @@ Use Ray Dashboard at http://localhost:8265 for live metrics.""",
             if not command:
                 return {"error": "No command provided"}
 
-            is_safe, reason = cls._is_command_safe(command)
+            # Get user role from params (set by agent when invoking skill)
+            user_role = params.get("_user_role", "viewer")
+            is_safe, reason = cls._is_command_safe(command, user_role)
             if not is_safe:
                 return {"error": f"Command blocked: {reason}", "command": command}
 
-            return await cls._run_command(command, timeout=timeout)
+            result = await cls._run_command(command, timeout=timeout)
+
+            # Filter output for secrets before returning
+            if result.get("stdout"):
+                result["stdout"], redacted = filter_output(result["stdout"], user_role)
+                if redacted:
+                    result["_redacted_count"] = redacted
+
+            return result
 
         else:
             return {
@@ -1228,23 +1226,28 @@ SKILLS: List[type[Skill]] = [
 ]
 
 
-def get_active_skills(user_task: str) -> List[str]:
-    """Get context from all activated skills.
+def get_active_skills(user_task: str, user_role: str = "viewer") -> List[str]:
+    """Get context from all activated skills, filtered by user role.
 
     Args:
         user_task: The user's task description
+        user_role: The user's primary role (controls which skills are available)
 
     Returns:
         List of context strings from activated skills
     """
-    contexts = []
+    # Filter skills based on user role
+    allowed_skills = filter_skills_for_role(SKILLS, user_role)
 
-    for skill_class in SKILLS:
+    contexts = []
+    for skill_class in allowed_skills:
         if skill_class.is_activated(user_task):
             context = skill_class.get_context(user_task)
             if context:
                 contexts.append(context)
-                logger.info(f"Activated skill: {skill_class.__name__}")
+                logger.info(
+                    f"Activated skill: {skill_class.__name__} (role: {user_role})"
+                )
 
     return contexts
 
@@ -1265,22 +1268,48 @@ def format_skill_contexts(contexts: List[str]) -> str:
 
 
 async def execute_skill(
-    skill_name: str, operation: str, params: Dict[str, Any]
+    skill_name: str, operation: str, params: Dict[str, Any], user_role: str = "viewer"
 ) -> Dict[str, Any]:
-    """Execute a skill operation by name.
+    """Execute a skill operation by name, with role-based access control.
 
     Args:
         skill_name: Name of the skill (e.g., "GitHubSkill")
         operation: Operation to execute
         params: Operation parameters
+        user_role: The user's primary role
 
     Returns:
         Result dictionary from skill execution
     """
+    # Check if skill is allowed for this role
+    allowed_skills = filter_skills_for_role(SKILLS, user_role)
+    allowed_names = {s.__name__ for s in allowed_skills}
+
+    if skill_name not in allowed_names:
+        logger.warning(
+            f"SECURITY: Role '{user_role}' denied access to skill '{skill_name}'"
+        )
+        return {
+            "error": f"Skill '{skill_name}' is not available for your role ({user_role})"
+        }
+
     skill_map = {skill.__name__: skill for skill in SKILLS}
 
     if skill_name not in skill_map:
         return {"error": f"Unknown skill: {skill_name}"}
 
+    # Inject user role into params for role-aware execution
+    params["_user_role"] = user_role
+
     skill_class = skill_map[skill_name]
-    return await skill_class.execute(operation, params)
+    result = await skill_class.execute(operation, params)
+
+    # Filter output for secrets
+    for key in ("stdout", "output", "content"):
+        if isinstance(result.get(key), str):
+            result[key], redacted = filter_output(result[key], user_role)
+            if redacted:
+                result.setdefault("_redacted_count", 0)
+                result["_redacted_count"] += redacted
+
+    return result

@@ -1,0 +1,102 @@
+# =============================================================================
+# Alertmanager Configuration — SHML Platform
+# =============================================================================
+# Routes Prometheus alerts to Telegram via webhook receiver.
+# Supports severity-based routing: critical → immediate, warning → batched.
+#
+# Environment variables (set in docker-compose.infra.yml):
+#   TELEGRAM_BOT_TOKEN  — Telegram bot API token
+#   TELEGRAM_CHAT_ID    — Chat/group ID for notifications
+# =============================================================================
+
+global:
+  resolve_timeout: 5m
+
+# -----------------------------------------------------------------------------
+# Notification templates
+# -----------------------------------------------------------------------------
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# -----------------------------------------------------------------------------
+# Routing tree
+# -----------------------------------------------------------------------------
+route:
+  # Default receiver
+  receiver: 'telegram-warnings'
+  # How long to wait before sending a notification about new alerts that are
+  # added to a group of alerts that have already been sent.
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  # Group alerts by alertname + severity so each alert type gets its own message
+  group_by: ['alertname', 'severity']
+
+  routes:
+    # Critical alerts → immediate delivery, shorter repeat
+    - receiver: 'telegram-critical'
+      match:
+        severity: critical
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+      continue: false
+
+    # Warning alerts → batched delivery
+    - receiver: 'telegram-warnings'
+      match:
+        severity: warning
+      group_wait: 1m
+      group_interval: 10m
+      repeat_interval: 4h
+      continue: false
+
+    # SLO alerts → dedicated channel with tighter repeat
+    - receiver: 'telegram-slo'
+      match_re:
+        alertname: '.*SLO.*|.*ErrorBudget.*|.*Freshness.*'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+      continue: false
+
+# -----------------------------------------------------------------------------
+# Inhibition rules — suppress less-severe duplicates
+# -----------------------------------------------------------------------------
+inhibit_rules:
+  # If a critical alert fires, inhibit warnings for the same alertname
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+  # Container down inhibits container high-resource alerts
+  - source_match:
+      alertname: 'ContainerDown'
+    target_match_re:
+      alertname: 'Container(HighCPU|HighMemory)'
+    equal: ['container']
+
+# -----------------------------------------------------------------------------
+# Receivers
+# -----------------------------------------------------------------------------
+receivers:
+  # ---- Critical alerts (immediate) -----------------------------------------
+  - name: 'telegram-critical'
+    webhook_configs:
+      - url: 'http://alertmanager-telegram:9087/alert'
+        send_resolved: true
+
+  # ---- Warning alerts (batched) ---------------------------------------------
+  - name: 'telegram-warnings'
+    webhook_configs:
+      - url: 'http://alertmanager-telegram:9087/alert'
+        send_resolved: true
+
+  # ---- SLO / ML alerts ------------------------------------------------------
+  - name: 'telegram-slo'
+    webhook_configs:
+      - url: 'http://alertmanager-telegram:9087/alert'
+        send_resolved: true

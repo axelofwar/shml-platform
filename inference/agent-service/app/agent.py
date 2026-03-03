@@ -21,10 +21,34 @@ import json
 from .context import AgentPlaybook, ContextBullet
 from .diary import create_session_diary, ReflectionEngine
 from .skills import get_active_skills, format_skill_contexts, SKILLS, execute_skill
+from .security import get_system_prompt_preamble, filter_output
 from .config import settings
 import re
 
 logger = logging.getLogger(__name__)
+
+# Shared httpx client - avoids per-call client creation (memory leak prevention)
+# Lazy-initialized on first use, reused across all LLM calls
+_shared_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    """Get or create a shared httpx.AsyncClient.
+
+    Prevents memory leaks from creating a new client per LLM call.
+    Each client holds connection pools, SSL contexts, etc.
+    """
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        _shared_http_client = httpx.AsyncClient(
+            timeout=300.0,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30,
+            ),
+        )
+    return _shared_http_client
 
 
 def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
@@ -305,7 +329,8 @@ async def call_coding_model(
     primary_url = settings.GATEWAY_URL
     fallback_url = settings.FALLBACK_MODEL_URL
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    client = _get_shared_client()
+    if True:  # Preserve indentation block without context manager
         # Step 1: Check primary model health
         use_fallback = False
         try:
@@ -428,25 +453,23 @@ async def call_vision_model(
         )
 
         # Qwen3-VL uses OpenAI-compatible format with image_url
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                "http://qwen3-vl-api:8000/v1/chat/completions", json=payload
+        client = _get_shared_client()
+        response = await client.post(
+            "http://qwen3-vl-api:8000/v1/chat/completions", json=payload
+        )
+
+        # Log full error for debugging
+        if response.status_code != 200:
+            error_detail = response.text
+            logger.error(
+                f"Vision model returned {response.status_code}: {error_detail}"
             )
+            raise Exception(f"Vision API error {response.status_code}: {error_detail}")
 
-            # Log full error for debugging
-            if response.status_code != 200:
-                error_detail = response.text
-                logger.error(
-                    f"Vision model returned {response.status_code}: {error_detail}"
-                )
-                raise Exception(
-                    f"Vision API error {response.status_code}: {error_detail}"
-                )
-
-            data = response.json()
-            result = data["choices"][0]["message"]["content"]
-            logger.info(f"Vision model response length: {len(result)}")
-            return result
+        data = response.json()
+        result = data["choices"][0]["message"]["content"]
+        logger.info(f"Vision model response length: {len(result)}")
+        return result
 
     except httpx.HTTPStatusError as e:
         logger.error(
@@ -587,13 +610,17 @@ Be thorough and specific."""
         f"chars={tiered_context['used_chars']}/{tiered_context['budget_chars']}"
     )
 
-    # Get active skill contexts
-    skill_contexts = get_active_skills(state["current_task"])
+    # Get active skill contexts (filtered by user role)
+    user_role = state.get("user_role", "viewer")
+    skill_contexts = get_active_skills(state["current_task"], user_role=user_role)
     skills_str = (
         format_skill_contexts(skill_contexts)
         if skill_contexts
         else "No skills activated."
     )
+
+    # Prepend role-specific security instructions to the system prompt
+    security_preamble = get_system_prompt_preamble(user_role)
 
     # Detect if task requires direct delivery (code, solution) vs tool usage
     task_lower = state["current_task"].lower()
@@ -888,8 +915,18 @@ Params: {{"query": "X topic", "max_results": 5}}
 **START YOUR RESPONSE:**
 """
 
+    # Prepend role-specific security instructions to the prompt
+    prompt = security_preamble + prompt
+
     # Call LLM
     response = await call_coding_model(prompt, temperature=0.0)
+
+    # Apply output filtering to prevent secret leakage
+    response, redacted_count = filter_output(response, user_role)
+    if redacted_count > 0:
+        logger.warning(
+            f"SECURITY: Filtered {redacted_count} sensitive patterns from LLM response for role '{user_role}'"
+        )
 
     logger.info(f"Generator response length: {len(response)}")
     logger.info(f"Generator response preview: {response[:100]}")

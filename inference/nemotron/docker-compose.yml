@@ -36,8 +36,9 @@ services:
       - --reasoning-budget
       - "0"
 
-    ports:
-      - "8010:8000"
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8010:8000"  # REMOVED: was bypassing auth
 
     deploy:
       resources:
@@ -80,16 +81,18 @@ services:
       - NEMOTRON_CONTAINER=nemotron-coding
       - GPU_INDEX=0
       - YIELD_WAIT_SECONDS=5
+      - DOCKER_HOST=tcp://docker-proxy:2375
 
-    volumes:
-      # Docker socket for container management
-      - /var/run/docker.sock:/var/run/docker.sock
+    # SECURITY: Docker socket removed - using proxy instead
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock  # REMOVED: host-escape vector
 
     # Run with docker group for socket access
     user: "1000:984"  # UID:docker-GID (adjust GID if different)
 
-    ports:
-      - "8011:8000"
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8011:8000"  # REMOVED: was bypassing auth
 
     networks:
       - shml-platform

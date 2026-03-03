@@ -67,6 +67,9 @@ enable_extensions "chat_api" "vector" "pg_trgm"
 # Create FusionAuth database
 create_database "fusionauth" "fusionauth"
 
+# Create Nessie catalog database (Iceberg metadata + version control)
+create_database "nessie" "nessie"
+
 echo "========================================"
 echo "All databases initialized successfully!"
 echo "========================================"

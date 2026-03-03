@@ -15,7 +15,7 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 # Experiment definitions for PII-PRO
 EXPERIMENTS = {
     "development": {
-        "name": "Development-Training",
+        "name": "face-detection/training",
         "description": "Development environment for model training and experimentation (Face/License Plate Detection, DMCA Audio, AI Music)",
         "tags": {
             "environment": "dev",
@@ -113,7 +113,7 @@ def initialize_experiments():
     print("\n📝 PII-PRO Usage Examples:")
     print("-" * 60)
     print("Face Detection Training:")
-    print(f'  mlflow.set_experiment("Development-Training")')
+    print(f'  mlflow.set_experiment("face-detection/training")')
     print(f'  with mlflow.start_run(run_name="yolov8-face-detection"):')
     print(f'      mlflow.set_tag("model_type", "yolov8")')
     print(f'      mlflow.set_tag("developer", "john")')

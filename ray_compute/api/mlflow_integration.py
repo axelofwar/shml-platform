@@ -25,9 +25,7 @@ class MLflowAutoLogger:
 
     def __init__(self):
         self.enabled = os.getenv("DISABLE_MLFLOW_LOGGING", "false").lower() != "true"
-        self.tracking_uri = os.getenv(
-            "MLFLOW_TRACKING_URI", "http://mlflow-server:5000"
-        )
+        self.tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80")
         self.experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "Ray-Jobs")
         self._initialized = False
 
