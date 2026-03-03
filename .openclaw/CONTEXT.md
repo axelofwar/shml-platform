@@ -7,6 +7,18 @@
 4. **No secrets in output** — never print API keys, tokens, or .env contents.
 5. **Absolute paths** — always use `/home/axelofwar/Projects/shml-platform/` for platform files.
 
+## OpenClaw Governance
+
+- Policy file: `/home/axelofwar/Projects/shml-platform/.openclaw/governance.policy.yaml`
+- Operator controls: `/home/axelofwar/Projects/shml-platform/scripts/openclaw/openclaw_governor.sh`
+- Skill: `/home/axelofwar/Projects/shml-platform/skills/openclaw-governor/SKILL.md`
+
+### Control Objectives
+- Route low-complexity work to local-first model tier.
+- Escalate to hosted tiers only when complexity/failure thresholds are met.
+- Require reasoned overrides and keep audit logs for every override/cancel action.
+- Capture outcomes into `.openclaw/workspace-state.json` and weekly context compaction.
+
 ## Architecture
 
 ### Hardware

@@ -400,3 +400,4 @@ ray_compute/data/
 # Monitoring data directories
 monitoring/tempo/data/
 monitoring/loki/data/
+site/

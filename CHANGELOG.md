@@ -11,6 +11,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 5: Platform Professionalization & Self-Healing** (2026-03-01)
+  - **Self-Healing Watchdog v2** — GPU-aware container health monitor
+    - `scripts/self-healing/watchdog.sh` (~900 lines): 7 critical + 12 standard + 5 memory-watched containers
+    - GPU isolation (CUDA_VISIBLE_DEVICES=1, GPU 0 protected for training)
+    - Memory leak detection (100MB/hr threshold), OOM kill detection + restart budgeting
+    - Cascading failure detection (≥3 unhealthy → agent-directed resolution)
+    - 11 Pushgateway metrics per 60s cycle, platform state discovery (JSON)
+    - Admin controls (pause/resume/stop-all via control file)
+  - **Watchdog Admin Dashboard** — Zero-dependency web UI at /watchdog/
+    - `scripts/self-healing/watchdog_admin.py`: Dark-themed HTML dashboard, API endpoints, audit log viewer
+    - Admin-only OAuth2 access via Traefik
+  - **Watchdog Grafana Dashboard** — 13-panel overview
+    - `monitoring/grafana/dashboards/platform/watchdog-overview.json`: status, uptime, restarts, OOM kills, trends
+  - **Alertmanager + Telegram Pipeline** — Alert routing and notification
+    - `monitoring/alertmanager/alertmanager.yml`: Severity-based routing (critical/warning/SLO)
+    - `monitoring/alertmanager/templates/telegram.tmpl`: Alert notification template
+  - **Feature Materialization Scheduler** — Hourly Ray job submission
+    - `scripts/monitoring/feature_scheduler.sh`: Cron-like loop with Ray Job Submission API
+  - **Nightly Test Runner** — Automated daily pytest with reporting
+    - `scripts/monitoring/nightly_test_runner.sh`: Runs at configurable hour, Telegram reports
+  - **Training Pipeline Automation** — Declarative multi-stage curriculum
+    - `scripts/training/training_pipeline.py` + `pipelines/face_detection.yml` (3-stage curriculum)
+  - **Skill Updater + Improvement Planner** — Autonomous reporting
+    - `scripts/monitoring/skill_updater.py` + `scripts/monitoring/improvement_planner.py`
+  - **Homer entries** — Watchdog Ops Center + Watchdog Dashboard in Monitoring group
+
+- **Memory Leak Fixes** (2026-03-01)
+  - `inference/agent-service/app/agent.py` — Shared httpx.AsyncClient singleton (20 max connections)
+  - `inference/agent-service/app/main.py` — TTL-based WebSocket cleanup (1hr max age)
+  - `inference/agent-service/app/context.py` — Shared SentenceTransformer singleton (~90MB savings)
+
+### Changed
+
+- **docker-compose.infra.yml** — 6 new services: alertmanager, alertmanager-telegram, feature-scheduler, watchdog, watchdog-admin, nightly-test-runner
+- **monitoring/homer/config.yml** — Added Watchdog Ops Center and Watchdog Dashboard entries
+- **Test suite** — Expanded from 114 → 223 tests (109 new tests for Phase 5)
+
+### Fixed
+
+- **Watchdog docker:24-cli → docker:cli** — Host Docker 29.2.1 requires API 1.44+ (24-cli provides 1.43)
+- **Watchdog discovery** — Rewrote python3 JSON interpolation to jq (fixed bash double-quote escaping in JSON)
+- **Watchdog container names** — Fixed prefix mismatches (global-prometheus, homer, unified-grafana etc.)
+- **Feature scheduler permissions** — Added `user: "0:0"` for curlimages/curl log directory creation
+
+### Platform Status (2026-03-01)
+- **52 containers** running (47 healthy, 0 unhealthy, 5 without healthchecks)
+- **14 user-facing UIs** all operational
+- **18 Grafana dashboards** across 6 folders
+- **GPU 0 (RTX 3090 Ti):** Training active — 19.1GB/24.6GB VRAM, 36% util
+- **GPU 1 (RTX 2070):** Inference/watchdog — 1.3GB/8.2GB VRAM, 26% util
+- **Model eval (FiftyOne):** YOLOv8 Face mAP@50=0.3462, P=0.8737, R=0.7526 on WIDER Face (3,222 images)
+
+---
+
 - **PII Blurring Self-Hosted Research & Project Board Update** (2025-01-14)
   - **KEY DISCOVERY**: YOLOv8-seg face segmentation model from HuggingFace (`jags/yolov8_model_segmentation-set`)
   - Enables fully self-hosted face blurring WITHOUT external API dependencies (SAM3/Roboflow)

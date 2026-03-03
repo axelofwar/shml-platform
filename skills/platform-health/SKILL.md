@@ -86,10 +86,61 @@ docker exec inference-gateway getent hosts shml-postgres nemotron-coding qwen3-v
 
 When a service is unhealthy:
 
-1. **Check logs first**: `docker logs --tail 50 <container>`
-2. **Soft restart**: `docker restart <container>` (preserves volumes)
-3. **Hard recreate**: `docker compose up -d --force-recreate <service>` (only if restart fails)
-4. **Verify after**: Re-run health endpoint check
+1. **Check watchdog audit log first**: Review `/var/lib/watchdog/audit.log` for recent auto-remediation
+2. **Check Alertmanager**: Visit `/alertmanager` for active/silenced alerts
+3. **Check logs**: `docker logs --tail 50 <container>`
+4. **Soft restart**: `docker restart <container>` (preserves volumes)
+5. **Hard recreate**: `docker compose up -d --force-recreate <service>` (only if restart fails)
+6. **Verify after**: Re-run health endpoint check
+
+### Self-Healing Systems
+
+The platform has automated remediation that should be checked before manual intervention:
+
+```bash
+# Check watchdog status
+docker logs --tail 20 shml-watchdog
+
+# View watchdog audit log (all auto-restart events)
+docker exec shml-watchdog cat /var/lib/watchdog/audit.log | tail -20
+
+# Check alertmanager active alerts
+curl -sf http://localhost:9093/api/v2/alerts | python3 -m json.tool
+
+# Check Telegram bot delivery status
+docker logs --tail 10 shml-alertmanager-telegram
+
+# Check feature materialization scheduler
+docker logs --tail 10 shml-feature-scheduler
+```
+
+### Training Pipeline Status
+
+```bash
+# Check active training pipelines
+python3 scripts/training/training_pipeline.py --status
+
+# View current training job on Ray
+curl -sf http://ray-head:8265/api/jobs/ | python3 -c "
+import sys, json
+for j in json.load(sys.stdin):
+    if j.get('status') in ('PENDING','RUNNING'):
+        print(f\"{j['submission_id']}: {j['status']}\")
+"
+```
+
+### Improvement Planning
+
+```bash
+# Run automated improvement analysis
+python3 scripts/monitoring/improvement_planner.py
+
+# Generate plan to file
+python3 scripts/monitoring/improvement_planner.py --output /tmp/plan.md
+
+# Update skills with current platform state
+python3 scripts/monitoring/skill_updater.py --report
+```
 
 ### Safety Rules
 
