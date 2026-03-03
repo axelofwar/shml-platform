@@ -407,3 +407,7 @@ site/
 archived/
 docs/internal/archived_originals/
 docs/internal/archived_approaches/
+monitoring/grafana/dashboards/archived/
+
+# Generated outputs (not source code)
+ray_compute/evaluation_results/
