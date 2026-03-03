@@ -43,7 +43,7 @@ jobs:
       - name: Run unit tests
         run: |
           if [ -d "tests/unit" ]; then
-            pytest tests/unit/ -v --tb=short -x || true
+            pytest tests/unit/ -v --tb=short -x
           else
             echo "No unit tests directory found"
           fi
@@ -81,7 +81,7 @@ jobs:
         run: |
           if [ -d "tests/chat-api" ]; then
             # Run tests that don't require live services
-            pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py tests/chat-api/test_security_config.py -v --tb=short || true
+            pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py tests/chat-api/test_security_config.py -v --tb=short
           else
             echo "No chat-api tests directory found"
           fi
@@ -109,7 +109,7 @@ jobs:
         run: |
           # Test Traefik middleware configuration
           if [ -f "tests/chat-api/test_traefik_config.py" ]; then
-            pytest tests/chat-api/test_traefik_config.py -v --tb=short || true
+            pytest tests/chat-api/test_traefik_config.py -v --tb=short
           fi
 
           # Test role-auth service configuration
@@ -149,7 +149,7 @@ jobs:
           # Run tests that can work with mocks
           if [ -d "tests/integration" ]; then
             # Skip tests that require live services
-            pytest tests/integration/ -v --tb=short -k "not live and not running" --ignore=tests/integration/test_chat_api_live.py || true
+            pytest tests/integration/ -v --tb=short -k "not live and not running" --ignore=tests/integration/test_chat_api_live.py
           fi
 
   # Live Chat API Integration Tests (requires secrets)

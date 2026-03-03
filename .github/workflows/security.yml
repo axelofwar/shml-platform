@@ -47,7 +47,6 @@ jobs:
 
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main
-        continue-on-error: true  # Don't fail on force-pushed branches
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
@@ -73,7 +72,7 @@ jobs:
         run: |
           find . -name "requirements*.txt" -type f | while read req; do
             echo "Auditing: $req"
-            pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012 || true
+            pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012
           done
 
   # Scan Dockerfiles and images

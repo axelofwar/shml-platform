@@ -21,7 +21,6 @@ paths = [
     '''\.github/copilot-instructions\.md$''',
     '''docs/internal/archived_approaches/.*''',
     '''fusionauth/lambdas/.*''',
-    '''scripts/auth/.*''',
 ]
 
 # Ignore specific patterns that are false positives
@@ -33,9 +32,6 @@ regexes = [
     '''<[A-Z_]+>''',
     '''\$\{[A-Z_]+\}''',
     '''sk-1234567890''',
-    '''JsDs6mClPCWKqEq''',
-    # Historical Ray Grafana password (rotated, service deprecated)
-    '''oVkbwOk7AtELl2xz''',
     # REDACTED placeholders in documentation
     '''REDACTED''',
     # Example API keys in documentation
