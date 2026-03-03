@@ -1,4 +1,0 @@
-# ML Platform Git Ignore
-
-# Remote access credentials (contains sensitive info)
-REMOTE_ACCESS_COMPLETE.sh

@@ -127,6 +127,7 @@ dmypy.json
 
 # Dependencies
 node_modules/
+package-lock.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -401,3 +402,8 @@ ray_compute/data/
 monitoring/tempo/data/
 monitoring/loki/data/
 site/
+
+# Archived code (preserved in git history)
+archived/
+docs/internal/archived_originals/
+docs/internal/archived_approaches/

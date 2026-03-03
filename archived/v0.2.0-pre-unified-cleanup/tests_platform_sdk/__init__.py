@@ -1,3 +1,0 @@
-"""
-Platform SDK Test Package.
-"""
