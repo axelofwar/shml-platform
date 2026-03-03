@@ -170,6 +170,12 @@ services:
         logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/fusionauth.png"
         url: "/auth/"
         target: "_blank"
+      - name: "GitLab"
+        subtitle: "Git Mirror & Container/Package Registry"
+        logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/gitlab.png"
+        url: "/gitlab"
+        target: "_blank"
+        tag: "developer"
 
   - name: "User Management"
     icon: "fas fa-user-shield"

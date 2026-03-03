@@ -1099,6 +1099,140 @@ services:
       - "traefik.http.routers.code-server.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,code-server-strip"
 
   # ==========================================================================
+  # GITLAB CE (Self-Hosted Git Mirror + Container/Package Registry)
+  # ==========================================================================
+  # GitLab CE for git disaster recovery mirror, container registry, and PyPI
+  # packages. Uses shared PostgreSQL (database: gitlab) and Redis (db 8).
+  # Accessible at /gitlab via Traefik with developer-level OAuth protection.
+  # Container registry available at port 5050.
+  # --------------------------------------------------------------------------
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${GITLAB_CPU_LIMIT:-4.0}'
+          memory: ${GITLAB_MEM_LIMIT:-6G}
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # --- External URL & path ---
+        external_url 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab'
+
+        # --- Disable bundled services (use shared infra) ---
+        postgresql['enable'] = false
+        redis['enable'] = false
+        nginx['enable'] = false
+        puma['worker_processes'] = 2
+
+        # --- GitLab Workhorse (handles HTTP) ---
+        gitlab_workhorse['listen_network'] = 'tcp'
+        gitlab_workhorse['listen_addr'] = '0.0.0.0:8929'
+
+        # --- Shared PostgreSQL ---
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlab'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = '${SHARED_DB_PASSWORD}'
+
+        # --- Shared Redis (database 8) ---
+        gitlab_rails['redis_host'] = 'redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_database'] = 8
+
+        # --- Container Registry ---
+        # Registry requires root path URL, not a subpath. Exposed on port 5050
+        # directly. Docker clients push to: <tailscale-ip>:5050
+        registry_external_url 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}:5050'
+        registry['enable'] = true
+        registry['registry_http_addr'] = '0.0.0.0:5050'
+
+        # --- Monitoring / Prometheus exporter ---
+        gitlab_rails['monitoring_whitelist'] = ['172.30.0.0/16', '127.0.0.0/8']
+        sidekiq['metrics_enabled'] = true
+        gitlab_exporter['enable'] = true
+        gitlab_exporter['listen_address'] = '0.0.0.0'
+        gitlab_exporter['listen_port'] = 9168
+
+        # --- Resource tuning ---
+        sidekiq['max_concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+
+        # --- FusionAuth OIDC ---
+        gitlab_rails['omniauth_enabled'] = true
+        gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+        gitlab_rails['omniauth_block_auto_created_users'] = false
+        gitlab_rails['omniauth_providers'] = [
+          {
+            name: 'openid_connect',
+            label: 'FusionAuth',
+            args: {
+              name: 'openid_connect',
+              scope: ['openid', 'profile', 'email'],
+              response_type: 'code',
+              issuer: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth',
+              client_auth_method: 'basic',
+              discovery: true,
+              uid_field: 'sub',
+              pkce: true,
+              client_options: {
+                identifier: '${GITLAB_OIDC_CLIENT_ID}',
+                secret: '${GITLAB_OIDC_CLIENT_SECRET}',
+                redirect_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab/users/auth/openid_connect/callback'
+              }
+            }
+          }
+        ]
+
+        # --- Initial root password from secret ---
+        gitlab_rails['initial_root_password'] = File.read('/run/secrets/gitlab_root_password').strip
+      GITLAB_ROOT_PASSWORD_FILE: /run/secrets/gitlab_root_password
+    secrets:
+      - shared_db_password
+      - gitlab_root_password
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - platform
+    expose:
+      - "8929"
+      - "9168"
+    ports:
+      # Container registry - bind to localhost (accessible via Tailscale)
+      - "127.0.0.1:5050:5050"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      # --- GitLab Web UI ---
+      - "traefik.http.routers.gitlab.rule=PathPrefix(`/gitlab`)"
+      - "traefik.http.routers.gitlab.entrypoints=web,websecure"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=8929"
+      # SECURITY: Developer-level OAuth protection
+      - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+      # --- Container Registry (port 5050, direct access via Tailscale) ---
+      # Registry is accessed directly at <tailscale-ip>:5050, not through Traefik
+      # Docker login: docker login shml-platform.tail38b60a.ts.net:5050
+
+  # ==========================================================================
   # CV DATASET CURATION (FiftyOne)
   # ==========================================================================
   fiftyone:
@@ -1433,6 +1567,8 @@ secrets:
     file: ./secrets/fusionauth_db_password.txt
   oauth2_proxy_cookie_secret:
     file: ./secrets/oauth2_proxy_cookie_secret.txt
+  gitlab_root_password:
+    file: ./secrets/gitlab_root_password.txt
 
 volumes:
   # Shared Data
@@ -1476,6 +1612,14 @@ volumes:
     name: ${PLATFORM_PREFIX:-shml}-watchdog-data
   watchdog-logs:
     name: ${PLATFORM_PREFIX:-shml}-watchdog-logs
+
+  # GitLab CE
+  gitlab-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-config
+  gitlab-logs:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
+  gitlab-data:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-data
 
   # Nightly test runner
   test-runner-data:
