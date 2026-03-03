@@ -11,6 +11,7 @@ scripts/
 ├── gpu/            # GPU management & monitoring
 ├── monitoring/     # Metrics, dashboards, resources
 ├── network/        # Tailscale, funnel, remote access
+├── openclaw/       # OpenClaw governance and control utilities
 ├── setup/          # One-time setup scripts
 ├── training/       # Training orchestration & outputs
 └── webhook/        # Webhook deployment
@@ -30,6 +31,7 @@ scripts/
 | `add-elevated-developer-role.sh` | Add developer role | `./add-elevated-developer-role.sh` |
 | `create-elevated-developer-key.sh` | Create API keys | `./create-elevated-developer-key.sh` |
 | `apply-session-config.sh` | Apply session settings | `./apply-session-config.sh` |
+| `export_mlflow_oauth_env.sh` | Generate short-lived OAuth env exports for Traefik-protected MLflow (`MLFLOW_TRACKING_URI` + `MLFLOW_TRACKING_TOKEN`) | `./export_mlflow_oauth_env.sh` |
 
 ### Backup (`backup/`)
 
@@ -58,6 +60,7 @@ scripts/
 | `metrics_exporter.sh` | Export platform metrics | `./metrics_exporter.sh` |
 | `monitor_resources.sh` | Real-time resource monitoring | `./monitor_resources.sh` |
 | `detect_resources.sh` | Detect system resources | `./detect_resources.sh` |
+| `autonomous_service_guard.sh` | Resource-aware health check + self-remediation | `./autonomous_service_guard.sh remediate` |
 | `resource_manager.py` | Python resource management | `python resource_manager.py` |
 
 ### Network (`network/`)
@@ -66,6 +69,19 @@ scripts/
 |--------|---------|-------|
 | `manage_funnel.sh` | Tailscale Funnel management | `./manage_funnel.sh start` |
 | `recover-tailscale.sh` | Tailscale recovery | `./recover-tailscale.sh` |
+
+### OpenClaw (`openclaw/`)
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `openclaw_governor.sh` | Budget/cancel/override governance for OpenClaw | `./openclaw/openclaw_governor.sh status` |
+| `openclaw_autonomous_manager.sh` | 5-minute health remediation + model routing (local Nemotron first, Copilot fallback) | `./openclaw/openclaw_autonomous_manager.sh` |
+| `install_autonomous_manager_timer.sh` | Install user-level systemd timer for always-on autonomous manager | `./openclaw/install_autonomous_manager_timer.sh` |
+
+Environment tuning for `openclaw_autonomous_manager.sh`:
+- `CONSECUTIVE_DEGRADE_THRESHOLD` (default: `2`)
+- `MAX_NEMOTRON_HEALTH_LATENCY_MS` (default: `2500`)
+- `NEMOTRON_HEALTH_TIMEOUT_SECONDS` (default: `8`)
 
 ### Setup (`setup/`)
 

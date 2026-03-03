@@ -637,7 +637,7 @@ import subprocess
 import sys
 
 # Set environment
-os.environ["MLFLOW_TRACKING_URI"] = "http://mlflow-server:8080"
+os.environ["MLFLOW_TRACKING_URI"] = "http://mlflow-nginx:80"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
 # Run the face detection training script

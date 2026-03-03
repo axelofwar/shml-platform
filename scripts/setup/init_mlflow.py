@@ -9,7 +9,7 @@ from mlflow.tracking import MlflowClient
 import os
 
 # MLflow configuration
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80")
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 client = MlflowClient()

@@ -30,6 +30,8 @@ load_env() {
 # Load env vars
 load_env
 
+PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -150,9 +152,9 @@ echo ""
 
 # Core Infrastructure
 echo "Core Infrastructure:"
-test_container "ml-platform-traefik" || ((failed++))
-test_container "shared-postgres" || ((failed++))
-test_container "ml-platform-redis" || ((failed++))
+test_container "${PLATFORM_PREFIX}-traefik" || ((failed++))
+test_container "${PLATFORM_PREFIX}-postgres" || ((failed++))
+test_container "${PLATFORM_PREFIX}-redis" || ((failed++))
 test_container "oauth2-proxy" || ((failed++))
 test_container "fusionauth" || ((failed++))
 echo ""
@@ -176,8 +178,8 @@ echo ""
 echo "Monitoring Stack:"
 test_container "unified-grafana" || ((failed++))
 test_container "global-prometheus" || ((failed++))
-test_container "ml-platform-cadvisor" || ((failed++))
-test_container "ml-platform-node-exporter" || echo -e "${YELLOW}⚠${NC}  Node Exporter not found"
+test_container "${PLATFORM_PREFIX}-cadvisor" || ((failed++))
+test_container "${PLATFORM_PREFIX}-node-exporter" || echo -e "${YELLOW}⚠${NC}  Node Exporter not found"
 test_container "dcgm-exporter" || echo -e "${YELLOW}⚠${NC}  DCGM Exporter not found"
 echo ""
 
@@ -320,25 +322,25 @@ echo ""
 
 # Test Shared PostgreSQL
 echo "Shared PostgreSQL Databases:"
-if docker exec shared-postgres psql -U postgres -d mlflow_db -c "SELECT 1" > /dev/null 2>&1; then
+if docker exec ${PLATFORM_PREFIX:-shml}-postgres psql -U postgres -d mlflow_db -c "SELECT 1" > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} MLflow database (mlflow_db)"
 else
     echo -e "${YELLOW}⚠${NC}  MLflow database connection failed"
 fi
 
-if docker exec shared-postgres psql -U postgres -d ray_compute -c "SELECT 1" > /dev/null 2>&1; then
+if docker exec ${PLATFORM_PREFIX:-shml}-postgres psql -U postgres -d ray_compute -c "SELECT 1" > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} Ray Compute database (ray_compute)"
 else
     echo -e "${YELLOW}⚠${NC}  Ray Compute database connection failed"
 fi
 
-if docker exec shared-postgres psql -U postgres -d fusionauth -c "SELECT 1" > /dev/null 2>&1; then
+if docker exec ${PLATFORM_PREFIX:-shml}-postgres psql -U postgres -d fusionauth -c "SELECT 1" > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} FusionAuth database (fusionauth)"
 else
     echo -e "${YELLOW}⚠${NC}  FusionAuth database connection failed"
 fi
 
-if docker exec shared-postgres psql -U postgres -d inference -c "SELECT 1" > /dev/null 2>&1; then
+if docker exec ${PLATFORM_PREFIX:-shml}-postgres psql -U postgres -d inference -c "SELECT 1" > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} Inference database (inference)"
 else
     echo -e "${YELLOW}⚠${NC}  Inference database connection failed"
@@ -347,7 +349,7 @@ echo ""
 
 # Test Redis
 echo "Redis:"
-if docker exec ml-platform-redis redis-cli PING > /dev/null 2>&1; then
+if docker exec ${PLATFORM_PREFIX:-shml}-redis redis-cli PING > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} Platform Redis connection"
 else
     echo -e "${YELLOW}⚠${NC}  Redis connection failed"

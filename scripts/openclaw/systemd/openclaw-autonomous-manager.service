@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenClaw Autonomous Service Manager (health remediation + model routing)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+ExecStart=/home/axelofwar/Projects/shml-platform/scripts/openclaw/openclaw_autonomous_manager.sh
+Nice=10
+
+[Install]
+WantedBy=default.target

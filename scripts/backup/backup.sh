@@ -28,7 +28,7 @@ NC='\033[0m'
 
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Backup directories
 DB_BACKUP_DIR="${PROJECT_ROOT}/backups/postgres"
@@ -36,7 +36,14 @@ PLATFORM_BACKUP_DIR="${PROJECT_ROOT}/backups/platform"
 
 # Configuration
 BACKUP_RETENTION=${BACKUP_RETENTION:-10}
+BACKUP_COMPRESSION=${BACKUP_COMPRESSION:-auto}
+BACKUP_COMPRESSION_LEVEL=${BACKUP_COMPRESSION_LEVEL:-1}
+BACKUP_THREADS=${BACKUP_THREADS:-0}
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+if [ "$BACKUP_THREADS" -le 0 ] 2>/dev/null; then
+    BACKUP_THREADS=$(nproc 2>/dev/null || echo 1)
+fi
 
 # =============================================================================
 # Helper Functions
@@ -53,6 +60,92 @@ print_success() { echo -e "${GREEN}✓ $1${NC}"; }
 print_error() { echo -e "${RED}✗ $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
 print_info() { echo -e "${CYAN}ℹ $1${NC}"; }
+
+resolve_compression_mode() {
+    local mode="${BACKUP_COMPRESSION}"
+    case "$mode" in
+        auto)
+            if command -v zstd >/dev/null 2>&1; then
+                BACKUP_COMPRESSION="zstd"
+            elif command -v pigz >/dev/null 2>&1; then
+                BACKUP_COMPRESSION="pigz"
+            elif command -v gzip >/dev/null 2>&1; then
+                BACKUP_COMPRESSION="gzip"
+            else
+                BACKUP_COMPRESSION="none"
+            fi
+            ;;
+        zstd|pigz|gzip|none)
+            ;;
+        *)
+            print_error "Invalid BACKUP_COMPRESSION=${mode}. Use auto|zstd|pigz|gzip|none"
+            exit 1
+            ;;
+    esac
+
+    case "$BACKUP_COMPRESSION" in
+        zstd)
+            command -v zstd >/dev/null 2>&1 || { print_error "zstd not installed"; exit 1; }
+            ;;
+        pigz)
+            command -v pigz >/dev/null 2>&1 || { print_error "pigz not installed"; exit 1; }
+            ;;
+        gzip)
+            command -v gzip >/dev/null 2>&1 || { print_error "gzip not installed"; exit 1; }
+            ;;
+    esac
+}
+
+volume_archive_ext() {
+    case "$BACKUP_COMPRESSION" in
+        zstd) echo "tar.zst" ;;
+        pigz|gzip) echo "tar.gz" ;;
+        none) echo "tar" ;;
+    esac
+}
+
+compress_stdin_to_file() {
+    local output_file="$1"
+    case "$BACKUP_COMPRESSION" in
+        zstd)
+            zstd -q -T"${BACKUP_THREADS}" -"${BACKUP_COMPRESSION_LEVEL}" -o "$output_file"
+            ;;
+        pigz)
+            pigz -p "${BACKUP_THREADS}" -"${BACKUP_COMPRESSION_LEVEL}" > "$output_file"
+            ;;
+        gzip)
+            gzip -"${BACKUP_COMPRESSION_LEVEL}" > "$output_file"
+            ;;
+        none)
+            cat > "$output_file"
+            ;;
+    esac
+}
+
+decompress_file_to_stdout() {
+    local input_file="$1"
+    case "$input_file" in
+        *.tar.zst) zstd -d -q -c "$input_file" ;;
+        *.tar.gz) gzip -d -c "$input_file" ;;
+        *.tar) cat "$input_file" ;;
+        *)
+            print_error "Unsupported archive format: $input_file"
+            return 1
+            ;;
+    esac
+}
+
+strip_archive_ext() {
+    local file_name="$1"
+    file_name="${file_name%.tar.zst}"
+    file_name="${file_name%.tar.gz}"
+    file_name="${file_name%.tar}"
+    echo "$file_name"
+}
+
+get_mlflow_backup_volumes() {
+    docker volume ls --format '{{.Name}}' | grep -E '(^|-)mlflow(-|$)|mlruns|artifacts' | sort -u
+}
 
 check_container() {
     local container=$1
@@ -72,36 +165,36 @@ db_backup() {
 
     mkdir -p "$DB_BACKUP_DIR"
 
-    # Check if shared-postgres container is running
-    if ! check_container "shared-postgres"; then
-        print_warning "Trying individual database containers..."
+    # Check if primary postgres container is running
+    if ! check_container "shml-postgres"; then
+        print_warning "shml-postgres not found, trying alternative container names..."
     fi
 
     local backed_up=0
 
     # Backup MLflow database
-    if docker ps --format '{{.Names}}' | grep -qE "^(shared-postgres|mlflow-postgres)$"; then
-        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shared-postgres|mlflow-postgres)$" | head -1)
+    if docker ps --format '{{.Names}}' | grep -qE "^(shml-postgres|shared-postgres|mlflow-postgres)$"; then
+        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shml-postgres|shared-postgres|mlflow-postgres)$" | head -1)
         echo "Backing up MLflow database from ${container}..."
 
         local backup_file="${DB_BACKUP_DIR}/mlflow_${TIMESTAMP}.sql.gz"
         if docker exec "$container" pg_dump -U mlflow mlflow_db 2>/dev/null | gzip > "$backup_file"; then
             print_success "MLflow database backed up: $(du -h "$backup_file" | cut -f1)"
-            ((backed_up++))
+            backed_up=$((backed_up + 1))
         else
             print_error "Failed to backup MLflow database"
         fi
     fi
 
     # Backup Ray database
-    if docker ps --format '{{.Names}}' | grep -qE "^(shared-postgres|ray-compute-db|ray-postgres)$"; then
-        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shared-postgres|ray-compute-db|ray-postgres)$" | head -1)
+    if docker ps --format '{{.Names}}' | grep -qE "^(shml-postgres|shared-postgres|ray-compute-db|ray-postgres)$"; then
+        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shml-postgres|shared-postgres|ray-compute-db|ray-postgres)$" | head -1)
         echo "Backing up Ray database from ${container}..."
 
         local backup_file="${DB_BACKUP_DIR}/ray_${TIMESTAMP}.sql.gz"
         if docker exec "$container" pg_dump -U ray_compute ray_compute 2>/dev/null | gzip > "$backup_file"; then
             print_success "Ray database backed up: $(du -h "$backup_file" | cut -f1)"
-            ((backed_up++))
+            backed_up=$((backed_up + 1))
         fi
     fi
 
@@ -113,7 +206,7 @@ db_backup() {
         local backup_file="${DB_BACKUP_DIR}/fusionauth_${TIMESTAMP}.sql.gz"
         if docker exec "$container" pg_dump -U fusionauth fusionauth 2>/dev/null | gzip > "$backup_file"; then
             print_success "FusionAuth database backed up: $(du -h "$backup_file" | cut -f1)"
-            ((backed_up++))
+            backed_up=$((backed_up + 1))
         fi
     fi
 
@@ -150,9 +243,9 @@ db_restore() {
     local fusionauth_backup="${DB_BACKUP_DIR}/fusionauth_${timestamp}.sql.gz"
 
     local found=0
-    [ -f "$mlflow_backup" ] && ((found++))
-    [ -f "$ray_backup" ] && ((found++))
-    [ -f "$fusionauth_backup" ] && ((found++))
+    [ -f "$mlflow_backup" ] && found=$((found + 1))
+    [ -f "$ray_backup" ] && found=$((found + 1))
+    [ -f "$fusionauth_backup" ] && found=$((found + 1))
 
     if [ $found -eq 0 ]; then
         print_error "No backups found for timestamp: ${timestamp}"
@@ -170,7 +263,7 @@ db_restore() {
     # Restore MLflow
     if [ -f "$mlflow_backup" ]; then
         echo "Restoring MLflow database..."
-        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shared-postgres|mlflow-postgres)$" | head -1)
+        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shml-postgres|shared-postgres|mlflow-postgres)$" | head -1)
         if [ -n "$container" ]; then
             gunzip -c "$mlflow_backup" | docker exec -i "$container" psql -U mlflow mlflow_db
             print_success "MLflow database restored"
@@ -180,7 +273,7 @@ db_restore() {
     # Restore Ray
     if [ -f "$ray_backup" ]; then
         echo "Restoring Ray database..."
-        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shared-postgres|ray-compute-db|ray-postgres)$" | head -1)
+        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shml-postgres|shared-postgres|ray-compute-db|ray-postgres)$" | head -1)
         if [ -n "$container" ]; then
             gunzip -c "$ray_backup" | docker exec -i "$container" psql -U ray_compute ray_compute
             print_success "Ray database restored"
@@ -190,7 +283,7 @@ db_restore() {
     # Restore FusionAuth
     if [ -f "$fusionauth_backup" ]; then
         echo "Restoring FusionAuth database..."
-        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shared-postgres|shml-postgres|fusionauth-postgres)$" | head -1)
+        local container=$(docker ps --format '{{.Names}}' | grep -E "^(shml-postgres|shared-postgres|fusionauth-postgres)$" | head -1)
         if [ -n "$container" ]; then
             gunzip -c "$fusionauth_backup" | docker exec -i "$container" psql -U fusionauth fusionauth
             print_success "FusionAuth database restored"
@@ -230,10 +323,15 @@ db_cleanup() {
     print_info "Cleaning up old backups (keeping last ${BACKUP_RETENTION})..."
 
     for prefix in mlflow ray fusionauth; do
-        local count=$(ls -1 "${DB_BACKUP_DIR}/${prefix}_"*.sql.gz 2>/dev/null | wc -l)
+        local count
+        count=$(find "${DB_BACKUP_DIR}" -maxdepth 1 -type f -name "${prefix}_*.sql.gz" 2>/dev/null | wc -l)
         if [ "$count" -gt "$BACKUP_RETENTION" ]; then
             local to_delete=$((count - BACKUP_RETENTION))
-            ls -1t "${DB_BACKUP_DIR}/${prefix}_"*.sql.gz | tail -n "$to_delete" | xargs rm -f
+            find "${DB_BACKUP_DIR}" -maxdepth 1 -type f -name "${prefix}_*.sql.gz" -printf '%T@ %p\n' \
+                | sort -nr \
+                | tail -n "$to_delete" \
+                | awk '{print $2}' \
+                | xargs -r rm -f
             print_info "Removed ${to_delete} old ${prefix} backup(s)"
         fi
     done
@@ -256,7 +354,7 @@ platform_backup() {
     echo "📦 Step 1/3: Backing up databases..."
 
     if docker ps --format '{{.Names}}' | grep -qE "postgres"; then
-        db_backup
+        db_backup || print_warning "Some database backups may have failed"
         # Copy DB backups to platform backup
         cp "${DB_BACKUP_DIR}"/*_${TIMESTAMP}.sql.gz "$backup_dir/" 2>/dev/null || true
     else
@@ -266,17 +364,36 @@ platform_backup() {
     # 2. Backup Docker volumes
     echo
     echo "📁 Step 2/3: Backing up Docker volumes..."
+    resolve_compression_mode
+    local archive_ext
+    archive_ext="$(volume_archive_ext)"
+    print_info "Compression: ${BACKUP_COMPRESSION} (level=${BACKUP_COMPRESSION_LEVEL}, threads=${BACKUP_THREADS})"
 
-    for volume in mlflow_artifacts mlflow_data ray_data; do
-        if docker volume ls -q | grep -q "^${volume}$"; then
-            echo "  Backing up volume: ${volume}"
-            docker run --rm \
-                -v "${volume}:/source:ro" \
-                -v "${backup_dir}:/backup" \
-                alpine tar czf "/backup/${volume}.tar.gz" -C /source . 2>/dev/null || \
-                print_warning "Could not backup volume ${volume}"
-        fi
-    done
+    local volume_found=0
+    while IFS= read -r volume; do
+        [ -z "$volume" ] && continue
+        volume_found=1
+        local archive_file="${backup_dir}/${volume}.${archive_ext}"
+        echo "  Backing up volume: ${volume}"
+        docker run --rm \
+            -v "${volume}:/source:ro" \
+            -v "${backup_dir}:/backup" \
+            alpine tar -cf - -C /source . 2>/dev/null | compress_stdin_to_file "${archive_file}" || \
+            print_warning "Could not backup volume ${volume}"
+    done < <(get_mlflow_backup_volumes)
+
+    if [ "$volume_found" -eq 0 ]; then
+        print_warning "No MLflow-related Docker volumes found for backup"
+    fi
+
+    if [ -d "/mlflow/artifacts" ]; then
+        local host_artifact_archive="${backup_dir}/mlflow-artifacts-host.${archive_ext}"
+        echo "  Backing up host path: /mlflow/artifacts"
+        tar -cf - -C /mlflow/artifacts . 2>/dev/null | compress_stdin_to_file "${host_artifact_archive}" || \
+            print_warning "Could not backup host path /mlflow/artifacts"
+    else
+        print_warning "Host path /mlflow/artifacts not found; skipping host artifact backup"
+    fi
 
     # 3. Backup configurations
     echo
@@ -301,7 +418,7 @@ platform_backup() {
     "platform": "shml-platform",
     "contents": {
         "databases": $(ls -1 "${backup_dir}"/*.sql.gz 2>/dev/null | wc -l),
-        "volumes": $(ls -1 "${backup_dir}"/*.tar.gz 2>/dev/null | wc -l),
+        "volumes": $(find "${backup_dir}" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.tar.zst" -o -name "*.tar" \) | wc -l),
         "configs": true
     }
 }
@@ -356,7 +473,7 @@ platform_restore() {
     echo "📦 Step 1/2: Restoring databases..."
 
     # Start only postgres containers
-    docker compose -f "${PROJECT_ROOT}/docker-compose.yml" up -d shared-postgres 2>/dev/null || true
+    docker compose -f "${PROJECT_ROOT}/docker-compose.yml" up -d shml-postgres 2>/dev/null || true
     sleep 5
 
     for backup_file in "${backup_dir}"/*.sql.gz; do
@@ -365,9 +482,9 @@ platform_restore() {
             echo "  Restoring ${db_name}..."
             # Determine correct user and database
             case "$db_name" in
-                mlflow) gunzip -c "$backup_file" | docker exec -i shared-postgres psql -U mlflow mlflow_db ;;
-                ray) gunzip -c "$backup_file" | docker exec -i shared-postgres psql -U ray_compute ray_compute ;;
-                fusionauth) gunzip -c "$backup_file" | docker exec -i shared-postgres psql -U fusionauth fusionauth ;;
+                mlflow) gunzip -c "$backup_file" | docker exec -i shml-postgres psql -U mlflow mlflow_db ;;
+                ray) gunzip -c "$backup_file" | docker exec -i shml-postgres psql -U ray_compute ray_compute ;;
+                fusionauth) gunzip -c "$backup_file" | docker exec -i shml-postgres psql -U fusionauth fusionauth ;;
             esac
         fi
     done
@@ -376,19 +493,32 @@ platform_restore() {
     echo
     echo "📁 Step 2/2: Restoring Docker volumes..."
 
-    for volume_backup in "${backup_dir}"/*.tar.gz; do
+    for volume_backup in "${backup_dir}"/*.tar*; do
         if [ -f "$volume_backup" ]; then
-            local volume_name=$(basename "$volume_backup" .tar.gz)
+            local volume_file
+            volume_file=$(basename "$volume_backup")
+            local volume_name
+            volume_name=$(strip_archive_ext "$volume_file")
+
+            if [[ "$volume_file" == mlflow-artifacts-host.tar* ]]; then
+                echo "  Restoring host path: /mlflow/artifacts"
+                mkdir -p /mlflow/artifacts 2>/dev/null || true
+                decompress_file_to_stdout "$volume_backup" | tar xf - -C /mlflow/artifacts 2>/dev/null || \
+                    print_warning "Could not restore /mlflow/artifacts automatically"
+                continue
+            fi
+
             echo "  Restoring volume: ${volume_name}"
 
             # Create volume if not exists
             docker volume create "$volume_name" 2>/dev/null || true
 
             # Restore
-            docker run --rm \
+            docker run --rm -v "${volume_name}:/target" alpine sh -c "rm -rf /target/*"
+            decompress_file_to_stdout "$volume_backup" | docker run --rm \
+                -i \
                 -v "${volume_name}:/target" \
-                -v "${backup_dir}:/backup:ro" \
-                alpine sh -c "rm -rf /target/* && tar xzf /backup/${volume_name}.tar.gz -C /target"
+                alpine tar xf - -C /target
         fi
     done
 
@@ -493,6 +623,9 @@ show_usage() {
     echo
     echo "Environment Variables:"
     echo "  BACKUP_RETENTION  Number of backups to keep (default: 10)"
+    echo "  BACKUP_COMPRESSION  auto|zstd|pigz|gzip|none (default: auto)"
+    echo "  BACKUP_COMPRESSION_LEVEL  Compression level (default: 1 for speed)"
+    echo "  BACKUP_THREADS  Parallel threads for zstd/pigz (default: all CPUs)"
 }
 
 main() {

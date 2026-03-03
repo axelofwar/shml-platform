@@ -1,0 +1,80 @@
+# =============================================================================
+# Face Detection Training Pipeline — SHML Platform
+# =============================================================================
+# Multi-stage curriculum training for RF-DETR face detection.
+#
+# Stage 1: Coarse training — high LR, large batch, fewer epochs
+# Stage 2: Fine-tuning — lower LR, smaller batch, more epochs
+# Stage 3: Hard-example mining — train on difficult samples only
+#
+# Submit:
+#   python scripts/training/training_pipeline.py --config pipelines/face_detection.yml
+#   python scripts/training/training_pipeline.py --config pipelines/face_detection.yml --dry-run
+# =============================================================================
+
+pipeline:
+  name: face-detection-rfdetr
+  description: "RF-DETR face detection with curriculum learning"
+  mlflow_experiment: face-detection
+  notify_on:
+    - start
+    - stage_complete
+    - failure
+    - complete
+
+  stages:
+    # ------------------------------------------------------------------
+    # Stage 1 — Coarse training (warm-up)
+    # ------------------------------------------------------------------
+    - name: coarse-training
+      entrypoint: "python3 train_rfdetr_face.py"
+      epochs: 15
+      batch_size: 4
+      grad_accum: 4
+      learning_rate: 1.0e-4
+      gpu: 0
+      timeout_hours: 12
+      success_metric: "mAP@50"
+      success_threshold: 0.05
+      runtime_env:
+        working_dir: "/opt/ray/job_workspaces"
+      extra_args:
+        warmup-epochs: 3
+
+    # ------------------------------------------------------------------
+    # Stage 2 — Fine-tuning (lower LR, more epochs)
+    # ------------------------------------------------------------------
+    - name: fine-tuning
+      entrypoint: "python3 train_rfdetr_face.py"
+      epochs: 30
+      batch_size: 2
+      grad_accum: 8
+      learning_rate: 3.0e-5
+      gpu: 0
+      timeout_hours: 24
+      success_metric: "mAP@50"
+      success_threshold: 0.15
+      # resume_from is auto-populated from previous stage checkpoint
+      runtime_env:
+        working_dir: "/opt/ray/job_workspaces"
+      extra_args:
+        cosine-annealing: true
+
+    # ------------------------------------------------------------------
+    # Stage 3 — Hard-example mining
+    # ------------------------------------------------------------------
+    - name: hard-example-mining
+      entrypoint: "python3 train_rfdetr_face.py"
+      epochs: 10
+      batch_size: 2
+      grad_accum: 8
+      learning_rate: 1.0e-5
+      gpu: 0
+      timeout_hours: 12
+      success_metric: "mAP@50"
+      success_threshold: 0.20
+      runtime_env:
+        working_dir: "/opt/ray/job_workspaces"
+      extra_args:
+        hard-mining: true
+        mining-threshold: 0.3

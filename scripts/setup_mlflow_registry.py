@@ -24,7 +24,7 @@ from mlflow.entities.model_registry import ModelVersion
 
 # Configuration
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-nginx:80")
-MODEL_NAME = "face-detection-yolov8"
+MODEL_NAME = os.getenv("MLFLOW_REGISTRY_MODEL_NAME", "face-detection-yolov8l-p2")
 
 
 def setup_registry():
@@ -101,7 +101,7 @@ Face Detection Model (YOLOv8 Architecture)
 def register_model_from_run(
     run_id: str,
     model_path: str = "model",
-    stage: str = "Staging",
+    alias: str = "challenger",
     description: Optional[str] = None,
 ) -> ModelVersion:
     """
@@ -110,7 +110,7 @@ def register_model_from_run(
     Args:
         run_id: MLflow run ID containing the model
         model_path: Path to model artifacts within run
-        stage: Target stage (None, Staging, Production, Archived)
+        alias: Target alias ('challenger', 'champion')
         description: Version description
 
     Returns:
@@ -133,14 +133,14 @@ def register_model_from_run(
             description=description,
         )
 
-    # Transition to target stage
-    if stage and stage != "None":
-        client.transition_model_version_stage(
+    # Assign alias
+    if alias:
+        client.set_registered_model_alias(
             name=MODEL_NAME,
+            alias=alias,
             version=mv.version,
-            stage=stage,
         )
-        print(f"Transitioned to stage: {stage}")
+        print(f"Assigned alias @{alias} to v{mv.version}")
 
     return mv
 
@@ -192,44 +192,47 @@ def compare_model_versions(
 
 def promote_to_production(version: int, archive_previous: bool = True):
     """
-    Promote a model version to Production stage.
+    Promote a model version to Production using @champion alias.
 
-    Optionally archives the previous production version.
+    Optionally demotes the previous champion to @challenger.
     """
     client = MlflowClient()
 
-    # Get current production version
+    # Demote current champion to challenger
     if archive_previous:
-        versions = client.search_model_versions(f"name='{MODEL_NAME}'")
-        for v in versions:
-            if v.current_stage == "Production":
-                print(f"Archiving previous production version: {v.version}")
-                client.transition_model_version_stage(
-                    name=MODEL_NAME,
-                    version=v.version,
-                    stage="Archived",
+        try:
+            current_champion = client.get_model_version_by_alias(MODEL_NAME, "champion")
+            if int(current_champion.version) != version:
+                print(
+                    f"Demoting previous champion v{current_champion.version} to @challenger"
                 )
+                client.set_registered_model_alias(
+                    name=MODEL_NAME,
+                    alias="challenger",
+                    version=current_champion.version,
+                )
+        except Exception:
+            pass  # No current champion
 
     # Promote new version
-    print(f"Promoting version {version} to Production...")
-    client.transition_model_version_stage(
+    print(f"Promoting version {version} to @champion...")
+    client.set_registered_model_alias(
         name=MODEL_NAME,
+        alias="champion",
         version=version,
-        stage="Production",
     )
-    print(f"Version {version} is now in Production")
+    print(f"Version {version} is now @champion")
 
 
 def get_production_model_uri() -> Optional[str]:
-    """Get URI of current production model."""
+    """Get URI of current champion model."""
     client = MlflowClient()
 
-    versions = client.search_model_versions(f"name='{MODEL_NAME}'")
-    for v in versions:
-        if v.current_stage == "Production":
-            return f"models:/{MODEL_NAME}/{v.version}"
-
-    return None
+    try:
+        mv = client.get_model_version_by_alias(MODEL_NAME, "champion")
+        return f"models:/{MODEL_NAME}@champion"
+    except Exception:
+        return None
 
 
 def list_model_versions():
@@ -247,6 +250,15 @@ def list_model_versions():
         print(f"  python setup_mlflow_registry.py --register <run_id>")
         return
 
+    # Resolve current aliases
+    alias_map: Dict[str, str] = {}
+    for alias in ("champion", "challenger"):
+        try:
+            mv = client.get_model_version_by_alias(MODEL_NAME, alias)
+            alias_map[mv.version] = alias
+        except Exception:
+            pass
+
     for v in versions:
         # Get run metrics
         try:
@@ -254,16 +266,50 @@ def list_model_versions():
             mAP50 = run.data.metrics.get("mAP50", "N/A")
             recall = run.data.metrics.get("recall", "N/A")
             precision = run.data.metrics.get("precision", "N/A")
-        except:
+        except Exception:
             mAP50 = recall = precision = "N/A"
 
-        print(f"Version {v.version}:")
-        print(f"  Stage: {v.current_stage}")
+        alias_label = f" @{alias_map[v.version]}" if v.version in alias_map else ""
+        print(f"Version {v.version}{alias_label}:")
         print(f"  Status: {v.status}")
         print(f"  Run ID: {v.run_id[:8]}...")
         print(f"  Metrics: mAP50={mAP50}, recall={recall}, precision={precision}")
         print(f"  Created: {v.creation_timestamp}")
         print()
+
+
+def migrate_stages_to_aliases():
+    """Migrate existing stage assignments to alias-based model management.
+
+    Reads all model versions and creates matching aliases:
+    - Production → @champion
+    - Staging    → @challenger
+
+    This is a one-time migration for moving from the deprecated
+    ``transition_model_version_stage()`` API to ``set_registered_model_alias()``.
+    """
+    client = MlflowClient()
+
+    versions = list(client.search_model_versions(f"name='{MODEL_NAME}'"))
+    if not versions:
+        print("No model versions found — nothing to migrate.")
+        return
+
+    migrated = 0
+    for v in versions:
+        stage = getattr(v, "current_stage", None)
+        if stage == "Production":
+            client.set_registered_model_alias(MODEL_NAME, "champion", v.version)
+            print(f"  v{v.version}: Production → @champion")
+            migrated += 1
+        elif stage == "Staging":
+            client.set_registered_model_alias(MODEL_NAME, "challenger", v.version)
+            print(f"  v{v.version}: Staging → @challenger")
+            migrated += 1
+        else:
+            print(f"  v{v.version}: {stage or 'None'} — skipped")
+
+    print(f"\nMigrated {migrated} version(s) to aliases.")
 
 
 def main():
@@ -274,10 +320,12 @@ def main():
         "--register", metavar="RUN_ID", help="Register model from run ID"
     )
     parser.add_argument(
-        "--stage", default="Staging", help="Target stage (Staging, Production)"
+        "--alias",
+        default="challenger",
+        help="Target alias for registration (default: challenger)",
     )
     parser.add_argument(
-        "--promote", type=int, metavar="VERSION", help="Promote version to Production"
+        "--promote", type=int, metavar="VERSION", help="Promote version to @champion"
     )
     parser.add_argument(
         "--compare",
@@ -287,14 +335,22 @@ def main():
         help="Compare two versions",
     )
     parser.add_argument("--list", action="store_true", help="List all model versions")
+    parser.add_argument(
+        "--migrate-stages",
+        action="store_true",
+        help="One-time migration: convert stage assignments to aliases",
+    )
 
     args = parser.parse_args()
 
     # Always setup registry first
     setup_registry()
 
+    if args.migrate_stages:
+        migrate_stages_to_aliases()
+
     if args.register:
-        register_model_from_run(args.register, stage=args.stage)
+        register_model_from_run(args.register, alias=args.alias)
 
     if args.promote:
         promote_to_production(args.promote)
@@ -310,7 +366,9 @@ def main():
             f"Winner: Version {result['winner'].upper() if result['winner'] else 'Tie'}"
         )
 
-    if args.list or not any([args.register, args.promote, args.compare]):
+    if args.list or not any(
+        [args.register, args.promote, args.compare, args.migrate_stages]
+    ):
         list_model_versions()
 
     print("\n✓ MLflow Registry setup complete")

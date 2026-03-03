@@ -1,0 +1,85 @@
+# ============================================================================
+# Phase 9: RF-DETR Large — Face Detection
+# ============================================================================
+# Fine-tune RF-DETR Large (DINOv2 backbone, 56.5 COCO mAP@50) for face
+# detection. Target: mAP50 >= 94%, Recall >= 95% (PII KPI standards).
+#
+# IMPORTANT: This config uses RF-DETR's native TrainConfig parameters.
+# Do NOT add Ultralytics-specific params (optimizer, nbs, cos_lr, etc.).
+# RF-DETR handles optimizer, augmentation, and scheduling internally.
+#
+# Usage:
+#   python train_phase9_rfdetr_v2.py --epochs 50
+#   python train_phase9_rfdetr_v2.py --dry-run
+# ============================================================================
+
+# Model — RF-DETR (not Ultralytics)
+model: rfdetr-large
+model_type: rfdetr
+
+# Data — Roboflow-style COCO format
+# prepare: yolo_to_rfdetr_coco.py (converts Phase 8 YOLO → COCO)
+# layout: {dataset_dir}/{train,val}/_annotations.coco.json + images
+dataset_dir: /tmp/ray/data/wider_face_rfdetr
+class_names:
+  - face
+
+# RF-DETR TrainConfig parameters
+# These map directly to rfdetr.config.TrainConfig fields
+epochs: 50
+batch_size: 4
+grad_accum_steps: 4         # Effective batch = 4 * 4 = 16
+lr: 0.0001                  # Fine-tuning LR
+lr_encoder: 0.000015        # Lower LR for DINOv2 encoder layers
+weight_decay: 0.0001
+warmup_epochs: 1.0
+lr_vit_layer_decay: 0.8
+lr_component_decay: 0.7
+use_ema: true
+ema_decay: 0.993
+ema_tau: 100
+multi_scale: true
+expanded_scales: true
+num_workers: 2
+early_stopping: false
+group_detr: 13
+ia_bce_loss: true
+cls_loss_coef: 1.0
+
+# RF-DETR handles these internally:
+# - Resolution: 704x704 (set by RFDETRLargeConfig)
+# - Optimizer:  AdamW (hardcoded in RF-DETR main.py)
+# - Scheduler:  cosine or step (via lr_scheduler param)
+# - Augmention: built-in transforms (no external aug config)
+
+# Integrations — FULL suite
+integrations:
+  - mlflow
+  - nessie
+  - fiftyone
+  - features
+  - prometheus
+
+mlflow_experiment: Face-Detection-P9-RFDETR
+nessie_branch_prefix: experiment
+
+# Resources
+gpu_yield: true
+
+# Previous phase baselines
+phase5_baseline:
+  mAP50: 0.8590
+  recall: 0.7691
+  precision: 0.8811
+
+phase8_baseline:
+  mAP50: 0.8120
+  recall: 0.7380
+  precision: 0.8910
+
+# PII KPI targets
+targets:
+  mAP50: 0.94
+  recall: 0.95
+  precision: 0.90
+  hard_mAP50: 0.85

@@ -1,0 +1,50 @@
+# ============================================================================
+# Quick Test Profile
+# ============================================================================
+# Fast sanity check — 2 epochs, small images, minimal augmentation.
+# Use for validating pipeline changes before committing to a full run.
+#
+# Usage:
+#   shml train --profile quick-test
+#   shml train --profile quick-test --epochs 1
+# ============================================================================
+
+model: yolo11x.pt
+data_yaml: wider_face_yolo/data.yaml
+epochs: 2
+batch_size: 8
+imgsz: 640
+patience: 5
+optimizer: AdamW
+lr0: 0.001
+lrf: 0.01
+weight_decay: 0.0005
+warmup_epochs: 1.0
+
+# Integrations — enable all to validate pipeline
+integrations:
+  - mlflow
+  - nessie
+  - prometheus
+
+mlflow_experiment: quick-test
+nessie_branch_prefix: quicktest
+
+# Augmentation — light
+augmentation:
+  hsv_h: 0.01
+  hsv_s: 0.3
+  hsv_v: 0.2
+  degrees: 0.0
+  translate: 0.05
+  scale: 0.2
+  flipud: 0.0
+  fliplr: 0.3
+  mosaic: 0.5
+  mixup: 0.0
+  copy_paste: 0.0
+  erasing: 0.0
+  crop_fraction: 1.0
+
+# Resources
+gpu_yield: false
