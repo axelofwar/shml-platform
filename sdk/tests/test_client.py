@@ -20,7 +20,7 @@ class TestJob:
 
     @pytest.mark.unit
     def test_extra_field(self):
-        job = Job(job_id="x", name="y", status="PENDING", extra={"gpu": 1})
+        job = Job(job_id="x", name="y", status="PENDING", gpu=1)
         assert job.extra["gpu"] == 1
 
 

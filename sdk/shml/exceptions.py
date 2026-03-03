@@ -207,5 +207,10 @@ def raise_for_status(status_code: int, body: dict[str, Any] | str) -> None:
         429: RateLimitError,
     }
 
-    exc_class = exc_map.get(status_code, SHMLError)
-    raise exc_class(message, status_code=status_code, details=details)
+    exc_class = exc_map.get(status_code)
+    if exc_class is not None:
+        if exc_class is RateLimitError:
+            raise exc_class(message)
+        else:
+            raise exc_class(message, details=details)
+    raise SHMLError(message, status_code=status_code, details=details)

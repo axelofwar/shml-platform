@@ -27,8 +27,8 @@ class TestPlatformConfig:
         cfg = PlatformConfig()
         assert cfg is not None
         # Frozen dataclass — should have service URLs
-        assert hasattr(cfg, "mlflow_url")
-        assert hasattr(cfg, "ray_url")
+        assert hasattr(cfg, "mlflow_uri")
+        assert hasattr(cfg, "ray_head_address")
 
     @pytest.mark.unit
     def test_from_env(self):
@@ -117,8 +117,8 @@ class TestDataConfig:
 
     @pytest.mark.unit
     def test_from_dict(self):
-        cfg = DataConfig.from_dict({"local_path": "/data/faces"})
-        assert cfg.local_path == "/data/faces"
+        cfg = DataConfig.from_dict({"dataset": "faces_yolo"})
+        assert cfg.dataset == "faces_yolo"
 
 
 # ── AuthConfig Tests ─────────────────────────────────────────────────────
