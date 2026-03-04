@@ -42,3 +42,58 @@ datasources:
       timeInterval: "15s"
       httpMethod: POST
     version: 1
+
+  # Loki - Log aggregation (queryable in Grafana Explore + Live Tail)
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://shml-loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Link job IDs to Tempo traces
+        - datasourceUid: tempo
+          matcherRegex: "job[_-]([a-zA-Z0-9-]+)"
+          name: JobID
+          url: "$${__value.raw}"
+        # Link trace IDs to Tempo
+        - datasourceUid: tempo
+          matcherRegex: "trace_id=([a-f0-9]+)"
+          name: TraceID
+          url: "$${__value.raw}"
+    version: 1
+
+  # Tempo - Distributed tracing
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://shml-tempo:3200
+    isDefault: false
+    editable: true
+    jsonData:
+      httpMethod: GET
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['job_id', 'service_name']
+        mappedTags: [{ key: 'service.name', value: 'service_name' }]
+        mapTagNamesEnabled: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
+        filterBySpanID: true
+      tracesToMetrics:
+        datasourceUid: global-metrics
+        tags: [{ key: 'service.name', value: 'service_name' }]
+      serviceMap:
+        datasourceUid: global-metrics
+      search:
+        hide: false
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki
+    version: 1

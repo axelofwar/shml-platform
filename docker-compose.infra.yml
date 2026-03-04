@@ -497,14 +497,14 @@ services:
       #
       # ACCESS TIERS:
       # - viewer: Homer, Grafana (dashboards only)
-      # - developer: MLflow, Ray, Dozzle (requires admin registration)
+      # - developer: MLflow, Ray (requires admin registration)
       # - elevated-developer: Agent tools, GitHub actions, model management
       # - admin: All services + admin panels + host access
       # ========================================================================
 
       # Developer-level auth: requires developer, elevated-developer, or admin role
       # Chain: oauth2-auth (authenticate) -> role-auth-developer (check role)
-      # Used for: MLflow, Ray, Dozzle, Chat API
+      # Used for: MLflow, Ray, Chat API
       - "traefik.http.middlewares.role-auth-developer.forwardauth.address=http://role-auth:8080/auth/developer"
       - "traefik.http.middlewares.role-auth-developer.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.role-auth-developer.forwardauth.authResponseHeaders=X-Auth-Role-Check"
@@ -538,7 +538,7 @@ services:
   #
   # Endpoints:
   # - /auth/viewer: Requires viewer, developer, elevated-developer, or admin role
-  # - /auth/developer: Requires developer, elevated-developer, or admin role (for MLflow, Ray, Dozzle)
+  # - /auth/developer: Requires developer, elevated-developer, or admin role (for MLflow, Ray)
   # - /auth/elevated-developer: Requires elevated-developer or admin (for agent tools, GitHub)
   # - /auth/admin: Requires admin role only (for system administration)
   #
@@ -833,45 +833,7 @@ services:
       - "traefik.http.routers.grafana.middlewares=oauth2-errors,oauth2-auth"
 
   # ==========================================================================
-  # OBSERVABILITY STACK - Quick Wins (Coolify-inspired patterns)
   # ==========================================================================
-
-  # --------------------------------------------------------------------------
-  # DOZZLE - Real-time Docker Log Viewer
-  # Aggregates logs from all containers with OAuth protection
-  # --------------------------------------------------------------------------
-  dozzle:
-    image: amir20/dozzle:latest
-    container_name: dozzle
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '${DOZZLE_CPU_LIMIT:-0.25}'
-          memory: ${DOZZLE_MEM_LIMIT:-128M}
-        reservations:
-          cpus: '0.05'
-          memory: 64M
-    environment:
-      DOZZLE_BASE: /logs
-      DOZZLE_LEVEL: info
-      DOZZLE_TAILSIZE: 300
-      DOZZLE_FILTER: "status=running"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - platform
-    healthcheck:
-      # Dozzle image is scratch/distroless, use /healthcheck endpoint via curl from traefik
-      disable: true
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.dozzle.rule=PathPrefix(`/logs`)"
-      - "traefik.http.routers.dozzle.entrypoints=web,websecure"
-      - "traefik.http.services.dozzle.loadbalancer.server.port=8080"
-      - "traefik.http.routers.dozzle.priority=100"
-      # OAuth2 + Developer role required - log viewing requires elevated access
-      - "traefik.http.routers.dozzle.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
 
   # --------------------------------------------------------------------------
   # SBA RESOURCE PORTAL - Gemini AI Document Q&A
@@ -1493,7 +1455,8 @@ services:
       BASE_PATH: "/watchdog"
       WATCHDOG_STATE_DIR: "/var/lib/watchdog"
       WATCHDOG_LOG_DIR: "/var/log/watchdog"
-      DOZZLE_URL: "/logs/"
+      GRAFANA_URL: "/grafana/"
+      GRAFANA_EXPLORE_LOGS_URL: "/grafana/explore?orgId=1&left=%7B%22datasource%22:%22loki%22%7D"
       GRAFANA_DASHBOARD_URL: "/grafana/d/watchdog-overview"
     deploy:
       resources:

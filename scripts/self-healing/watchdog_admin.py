@@ -35,8 +35,14 @@ WATCHDOG_LOG = os.path.join(LOG_DIR, "watchdog.log")
 PLATFORM_STATE = os.path.join(STATE_DIR, "platform_state.json")
 PORT = int(os.getenv("ADMIN_PORT", "8099"))
 BASE_PATH = os.getenv("BASE_PATH", "/watchdog").rstrip("/")
-DOZZLE_URL = os.getenv("DOZZLE_URL", "/logs/")
-GRAFANA_URL = os.getenv("GRAFANA_DASHBOARD_URL", "/grafana/d/watchdog-overview")
+GRAFANA_URL = os.getenv("GRAFANA_URL", "/grafana/")
+GRAFANA_EXPLORE_LOGS_URL = os.getenv(
+    "GRAFANA_EXPLORE_LOGS_URL",
+    "/grafana/explore?orgId=1&left=%7B%22datasource%22:%22loki%22%7D",
+)
+GRAFANA_DASHBOARD_URL = os.getenv(
+    "GRAFANA_DASHBOARD_URL", "/grafana/d/watchdog-overview"
+)
 
 
 def read_file_lines(path, n=100):
@@ -155,8 +161,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   </div>
   <div class="cards">__CARDS_HTML__</div>
   <div class="links">
-    <a href="__GRAFANA_URL__" target="_blank">&#x1F4CA; Grafana Dashboard</a>
-    <a href="__DOZZLE_URL__" target="_blank">&#x1F4CB; Live Logs (Dozzle)</a>
+    <a href="__GRAFANA_DASHBOARD_URL__" target="_blank">&#x1F4CA; Watchdog Dashboard</a>
+    <a href="__GRAFANA_EXPLORE_LOGS_URL__" target="_blank">&#x1F4CB; Live Logs (Loki)</a>
+    <a href="__GRAFANA_URL__" target="_blank">&#x1F4CA; All Dashboards</a>
     <a href="__BASE_PATH__/api/status" target="_blank">&#x1F4C4; Status API</a>
     <a href="__BASE_PATH__/api/audit" target="_blank">&#x1F4DC; Audit API</a>
   </div>
@@ -395,7 +402,8 @@ class WatchdogAdminHandler(http.server.BaseHTTPRequestHandler):
         page = page.replace("__MODE_TEXT__", mode_text)
         page = page.replace("__CARDS_HTML__", cards_html)
         page = page.replace("__GRAFANA_URL__", GRAFANA_URL)
-        page = page.replace("__DOZZLE_URL__", DOZZLE_URL)
+        page = page.replace("__GRAFANA_DASHBOARD_URL__", GRAFANA_DASHBOARD_URL)
+        page = page.replace("__GRAFANA_EXPLORE_LOGS_URL__", GRAFANA_EXPLORE_LOGS_URL)
         page = page.replace("__BASE_PATH__", BASE_PATH)
         page = page.replace("__AUDIT_COUNT__", str(len(audit)))
         page = page.replace("__AUDIT_ROWS__", audit_rows)
