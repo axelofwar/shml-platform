@@ -42,7 +42,7 @@ public_mirror_sync:
         wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
         tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
         chmod +x gitleaks
-        ./gitleaks detect --source "$PUBLIC_MIRROR_OUTPUT_DIR" --redact --verbose
+        ./gitleaks detect --source "$PUBLIC_MIRROR_OUTPUT_DIR" --no-git --redact --verbose
       else
         echo "PUBLIC_MIRROR_PUBLISH=false; skipping pre-publish gitleaks scan."
       fi
