@@ -26,6 +26,9 @@ services:
       - --providers.docker.network=${PLATFORM_PREFIX:-shml}-platform
       - --providers.file.filename=/etc/traefik/dynamic.yml
       - --entrypoints.web.address=:80
+      # All traffic on port 80 comes from Tailscale Serve (TLS-terminated).
+      # Apply middleware so backends see X-Forwarded-Proto: https.
+      - --entrypoints.web.http.middlewares=tailscale-https-proto@file
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
       - --log.level=DEBUG
@@ -935,7 +938,7 @@ services:
           memory: 64M
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api,gitlab
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
       POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
@@ -1076,10 +1079,10 @@ services:
       resources:
         limits:
           cpus: '${GITLAB_CPU_LIMIT:-4.0}'
-          memory: ${GITLAB_MEM_LIMIT:-6G}
+          memory: ${GITLAB_MEM_LIMIT:-8G}
         reservations:
           cpus: '1.0'
-          memory: 2G
+          memory: 3G
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         # --- External URL & path ---
@@ -1095,6 +1098,17 @@ services:
         gitlab_workhorse['listen_network'] = 'tcp'
         gitlab_workhorse['listen_addr'] = '0.0.0.0:8929'
 
+        # --- Reverse proxy: trust Traefik's X-Forwarded-* headers ---
+        # Required so Rails sees HTTPS scheme and sets Secure session cookies.
+        # Without this, CSRF verification fails for OmniAuth/OIDC flows.
+        gitlab_rails['trusted_proxies'] = ['172.30.0.0/16']
+
+        # --- Security hardening defaults ---
+        gitlab_rails['gitlab_signup_enabled'] = false
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['gitlab_default_projects_features_builds'] = true
+        gitlab_rails['gitlab_default_projects_features_issues'] = true
+
         # --- Shared PostgreSQL ---
         gitlab_rails['db_adapter'] = 'postgresql'
         gitlab_rails['db_encoding'] = 'unicode'
@@ -1103,6 +1117,8 @@ services:
         gitlab_rails['db_database'] = 'gitlab'
         gitlab_rails['db_username'] = 'gitlab'
         gitlab_rails['db_password'] = '${SHARED_DB_PASSWORD}'
+        # Reduce connection pressure on shared PostgreSQL
+        gitlab_rails['db_pool'] = 6
 
         # --- Shared Redis (database 8) ---
         gitlab_rails['redis_host'] = 'redis'
@@ -1124,10 +1140,13 @@ services:
         gitlab_exporter['listen_port'] = 9168
 
         # --- Resource tuning ---
-        sidekiq['max_concurrency'] = 5
+        sidekiq['max_concurrency'] = 3
+        puma['worker_timeout'] = 60
         prometheus_monitoring['enable'] = false
 
         # --- FusionAuth OIDC ---
+        # Manual endpoint config because FusionAuth is behind /auth path prefix
+        # but its discovery document returns URLs without the prefix.
         gitlab_rails['omniauth_enabled'] = true
         gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
         gitlab_rails['omniauth_block_auto_created_users'] = false
@@ -1139,15 +1158,20 @@ services:
               name: 'openid_connect',
               scope: ['openid', 'profile', 'email'],
               response_type: 'code',
-              issuer: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth',
+              issuer: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}',
               client_auth_method: 'basic',
-              discovery: true,
+              discovery: false,
               uid_field: 'sub',
               pkce: true,
               client_options: {
                 identifier: '${GITLAB_OIDC_CLIENT_ID}',
                 secret: '${GITLAB_OIDC_CLIENT_SECRET}',
-                redirect_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab/users/auth/openid_connect/callback'
+                redirect_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab/users/auth/openid_connect/callback',
+                authorization_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/authorize',
+                token_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/token',
+                userinfo_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/userinfo',
+                jwks_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/.well-known/jwks.json',
+                end_session_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/logout'
               }
             }
           }
@@ -1184,15 +1208,72 @@ services:
       start_period: 300s
     labels:
       - "traefik.enable=true"
+      # --- GitLab OIDC callback (no OAuth2-Proxy) ---
+      # These paths must bypass OAuth2-Proxy so FusionAuth OIDC redirects can complete.
+      # Higher priority (200) ensures this matches before the catch-all gitlab router (100).
+      - "traefik.http.routers.gitlab-oidc.rule=PathPrefix(`/gitlab/users/auth/`)"
+      - "traefik.http.routers.gitlab-oidc.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab-oidc.priority=200"
+      - "traefik.http.routers.gitlab-oidc.service=gitlab"
       # --- GitLab Web UI ---
       - "traefik.http.routers.gitlab.rule=PathPrefix(`/gitlab`)"
       - "traefik.http.routers.gitlab.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab.priority=100"
       - "traefik.http.services.gitlab.loadbalancer.server.port=8929"
-      # SECURITY: Developer-level OAuth protection
+      # SECURITY: Developer-level OAuth protection (all paths except OIDC callbacks)
       - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
       # --- Container Registry (port 5050, direct access via Tailscale) ---
       # Registry is accessed directly at <tailscale-ip>:5050, not through Traefik
       # Docker login: docker login shml-platform.tail38b60a.ts.net:5050
+
+  # --------------------------------------------------------------------------
+  # GITLAB RUNNER - Persistent CI runner for mirror/security pipelines
+  # --------------------------------------------------------------------------
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >
+      set -eu;
+      if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q 'token = "glrt-' /etc/gitlab-runner/config.toml; then
+        if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
+          echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2;
+          exit 1;
+        fi;
+        gitlab-runner register --non-interactive
+          --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}"
+          --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}"
+          --executor "docker"
+          --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}"
+          --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}"
+          --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}"
+          --run-untagged "true"
+          --locked "false";
+      fi;
+      if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
+        sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml;
+      fi;
+      if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
+        sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml;
+      fi;
+      exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_RUNNER_TAGS:-docker,shml}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
 
   # ==========================================================================
   # CV DATASET CURATION (FiftyOne)
@@ -1415,6 +1496,8 @@ services:
       MEMORY_LEAK_THRESHOLD: "100"
       # Agent service URL for autonomous cross-service resolution
       AGENT_SERVICE_URL: "http://agent-service:8000"
+      # GitLab application-level health probe (beyond container health)
+      GITLAB_INTERNAL_HEALTH_URL: "http://gitlab:8929/gitlab/users/sign_in"
       # Max OOM restarts before escalating to agent
       OOM_RESTART_BUDGET: "5"
       # Pushgateway for Prometheus metrics export
@@ -1583,6 +1666,8 @@ volumes:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
   gitlab-data:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-data
+  gitlab-runner-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-config
 
   # Nightly test runner
   test-runner-data:
