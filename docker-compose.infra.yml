@@ -1233,31 +1233,33 @@ services:
     image: gitlab/gitlab-runner:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-lc"]
-    command: >
-      set -eu;
-      if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q 'token = "glrt-' /etc/gitlab-runner/config.toml; then
-        if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
-          echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2;
-          exit 1;
-        fi;
-        gitlab-runner register --non-interactive
-          --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}"
-          --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}"
-          --executor "docker"
-          --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}"
-          --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}"
-          --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}"
-          --run-untagged "true"
-          --locked "false";
-      fi;
-      if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
-        sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml;
-      fi;
-      if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
-        sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml;
-      fi;
-      exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -eu
+        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
+          if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
+            echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2
+            exit 1
+          fi
+          gitlab-runner register --non-interactive \
+            --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}" \
+            --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}" \
+            --executor "docker" \
+            --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}" \
+            --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}" \
+            --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}" \
+            --run-untagged="true" \
+            --locked="false"
+        fi
+        if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
+        fi
+        exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
