@@ -1,0 +1,42 @@
+# Public mirror denylist patterns (glob)
+#
+# Any file matching these patterns must never be published.
+
+# Secrets and credentials
+.env
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+**/secrets/**
+**/*secret*.txt
+**/*password*.txt
+**/*token*.txt
+**/*credential*.txt
+
+# Key and certificate material
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.cer
+**/*.jks
+
+# Runtime and state artifacts
+logs/**
+data/**
+runs/**
+backups/**
+**/node_modules/**
+**/.venv/**
+**/__pycache__/**
+
+# Private/internal documentation and archives
+docs/internal/**
+archived/**
+
+# Explicitly private trees
+sfml-platform/**
+sfml-platform-original/**

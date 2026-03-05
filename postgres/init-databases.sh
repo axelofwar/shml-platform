@@ -70,6 +70,10 @@ create_database "fusionauth" "fusionauth"
 # Create Nessie catalog database (Iceberg metadata + version control)
 create_database "nessie" "nessie"
 
+# Create GitLab database (self-hosted GitLab CE)
+create_database "gitlab" "gitlab"
+enable_extensions "gitlab" "pg_trgm" "btree_gist"
+
 echo "========================================"
 echo "All databases initialized successfully!"
 echo "========================================"

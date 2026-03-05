@@ -61,6 +61,43 @@
     "response-message": "User registration notification processed"
   },
   {
+    "id": "gitlab-mirror-sync",
+    "execute-command": "/scripts/webhook/deploy.sh",
+    "command-working-directory": "/opt/shml-platform",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "project.path_with_namespace" },
+      { "source": "payload", "name": "ref" },
+      { "source": "payload", "name": "commits.0.message" },
+      { "source": "payload", "name": "user_username" }
+    ],
+    "trigger-rule": {
+      "and": [
+        {
+          "match": {
+            "type": "value",
+            "value": "{{ getenv \"GITLAB_WEBHOOK_SECRET\" }}",
+            "parameter": {
+              "source": "header",
+              "name": "X-Gitlab-Token"
+            }
+          }
+        },
+        {
+          "match": {
+            "type": "value",
+            "value": "refs/heads/main",
+            "parameter": {
+              "source": "payload",
+              "name": "ref"
+            }
+          }
+        }
+      ]
+    },
+    "include-command-output-in-response": true,
+    "response-message": "GitLab mirror sync triggered"
+  },
+  {
     "id": "health",
     "execute-command": "/bin/echo",
     "pass-arguments-to-command": [
