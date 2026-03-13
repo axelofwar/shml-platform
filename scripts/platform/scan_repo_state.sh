@@ -260,7 +260,7 @@ if [[ -f "$GITLAB_UTIL" ]]; then
         export GITLAB_API_TOKEN
     fi
     # Use Docker network URL (accessible from host or containers)
-    export GITLAB_BASE_URL="${GITLAB_BASE_URL:-http://172.30.0.7:8929/gitlab}"
+    export GITLAB_BASE_URL="${GITLAB_BASE_URL:-http://shml-gitlab:8929/gitlab}"
 
     if [[ -n "$GITLAB_API_TOKEN" ]]; then
         # 1. Autoresearch completed → close issue if exists
