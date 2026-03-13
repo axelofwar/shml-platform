@@ -1,6 +1,6 @@
 # ML Platform - Shared Infrastructure
 # Contains: API Gateway, Shared Databases, Unified Monitoring, Auth
-# Can be started independently or via main docker-compose.yml
+# Can be started independently or via main deploy/compose/docker-compose.yml
 
 services:
   # ==========================================================================
@@ -50,14 +50,14 @@ services:
       - "127.0.0.1:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      - ./logs/traefik:/var/log/traefik
+      - ../../monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ../../logs/traefik:/var/log/traefik
       # TLS certs from Tailscale - DEPLOYMENT-SPECIFIC PATHS
       # When using a different Tailscale domain, update these volume paths
       # and the corresponding paths in monitoring/traefik/dynamic.yml
       # Generate new certs: tailscale cert <your-domain>
-      - ./secrets/shml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt:ro
-      - ./secrets/shml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.key:ro
+      - ../../secrets/shml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt:ro
+      - ../../secrets/shml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.key:ro
     networks:
       - platform
     healthcheck:
@@ -124,7 +124,7 @@ services:
   # ==========================================================================
   postgres:
     build:
-      context: ./postgres
+      context: ../../postgres
       dockerfile: Dockerfile
     image: ${PLATFORM_PREFIX:-shml}-postgres:15-pgvector
     container_name: ${PLATFORM_PREFIX:-shml}-postgres
@@ -144,8 +144,8 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
-      - ./backups/postgres:/backups
+      - ../../postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+      - ../../backups/postgres:/backups
     secrets:
       - shared_db_password
     healthcheck:
@@ -458,7 +458,7 @@ services:
       # Custom templates directory for error pages
       OAUTH2_PROXY_CUSTOM_TEMPLATES_DIR: "/templates"
     volumes:
-      - ./oauth2-proxy/templates:/templates:ro
+      - ../../oauth2-proxy/templates:/templates:ro
     networks:
       - platform
     depends_on:
@@ -553,7 +553,7 @@ services:
   # ==========================================================================
   role-auth:
     build:
-      context: ./scripts/role-auth
+      context: ../../scripts/role-auth
       dockerfile: Dockerfile
     image: ${PLATFORM_PREFIX:-shml}-platform/role-auth:latest
     container_name: ${PLATFORM_PREFIX:-shml}-role-auth
@@ -599,7 +599,7 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
-      - ./monitoring/prometheus:/textfile:ro
+      - ../../monitoring/prometheus:/textfile:ro
     networks:
       - platform
     expose:
@@ -675,8 +675,8 @@ services:
       - '--web.enable-lifecycle'
       - '--web.enable-admin-api'
     volumes:
-      - ./monitoring/global-prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
+      - ../../monitoring/global-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
       - global-prometheus-data:/prometheus
     expose:
       - "9090"
@@ -731,7 +731,7 @@ services:
 
   # ML SLO Exporter - periodically queries MLflow/Ray for SLO metrics
   ml-slo-exporter:
-    build: ./monitoring/ml-slo-exporter
+    build: ../../monitoring/ml-slo-exporter
     container_name: ${PLATFORM_PREFIX:-shml}-ml-slo-exporter
     restart: unless-stopped
     deploy:
@@ -743,7 +743,7 @@ services:
           cpus: '0.05'
           memory: 64M
     env_file:
-      - ./config/mlflow.env
+      - ../../config/mlflow.env
     environment:
       RAY_API_URI: http://ray-compute-api:8000
       SCRAPE_INTERVAL: "60"
@@ -810,9 +810,9 @@ services:
       # X-Auth-Request-Groups contains comma-separated roles from FusionAuth
       GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN: "false"
     volumes:
-      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-      - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
-      - ./monitoring/grafana/dashboards/:/var/lib/grafana/dashboards/:ro
+      - ../../monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../../monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../../monitoring/grafana/dashboards/:/var/lib/grafana/dashboards/:ro
       - unified-grafana-data:/var/lib/grafana
     secrets:
       - grafana_password
@@ -844,7 +844,7 @@ services:
   # --------------------------------------------------------------------------
   sba-resource-portal:
     build:
-      context: ./sba-resource-portal
+      context: ../../sba-resource-portal
       dockerfile: Dockerfile
       args:
         GEMINI_API_KEY: ${BNCCYBERSPACE_GOOGLE_API_KEY:-}
@@ -902,7 +902,7 @@ services:
     environment:
       INIT_ASSETS: "0"  # Don't overwrite our config
     volumes:
-      - ./monitoring/homer:/www/assets:ro
+      - ../../monitoring/homer:/www/assets:ro
     networks:
       - platform
     healthcheck:
@@ -952,7 +952,7 @@ services:
       WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
       WEBHOOK_EXTRA_ARGS: ""
     volumes:
-      - ./backups/postgres:/backups
+      - ../../backups/postgres:/backups
     secrets:
       - shared_db_password
     networks:
@@ -990,8 +990,8 @@ services:
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
       DEPLOY_EMAIL: "${DEPLOY_NOTIFICATION_EMAIL:-}"
     volumes:
-      - ./scripts/webhook:/etc/webhook:ro
-      - ./scripts:/scripts:ro
+      - ../../scripts/webhook:/etc/webhook:ro
+      - ../../scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
       - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
     networks:
@@ -1259,6 +1259,17 @@ services:
         if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
           sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
         fi
+        if ! grep -q '^  limit = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  name =/a\  limit = 1' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^  request_concurrency = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  limit =/a\  request_concurrency = 1' /etc/gitlab-runner/config.toml
+        fi
+        if grep -q '^concurrent = ' /etc/gitlab-runner/config.toml; then
+          sed -i 's/^concurrent = .*/concurrent = 1/' /etc/gitlab-runner/config.toml
+        else
+          sed -i '1i concurrent = 1' /etc/gitlab-runner/config.toml
+        fi
         exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
@@ -1303,9 +1314,9 @@ services:
       - fiftyone-data:/fiftyone
       - fiftyone-datasets:/fiftyone/datasets
       # Dynamic entrypoint patches index.html for any Python version
-      - ./config/fiftyone:/opt/fiftyone-entrypoint:ro
+      - ../../config/fiftyone:/opt/fiftyone-entrypoint:ro
       # Share ray data directory so FiftyOne can serve images stored by ray-head
-      - ./ray_compute/data/ray:/tmp/ray:ro
+      - ../../ray_compute/data/ray:/tmp/ray:ro
     expose:
       - "5151"
     networks:
@@ -1376,8 +1387,8 @@ services:
           cpus: '0.1'
           memory: 64M
     volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - ../../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../../monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
       - alertmanager-data:/alertmanager
     expose:
       - "9093"
@@ -1424,7 +1435,7 @@ services:
           memory: 32M
     volumes:
       - alertmanager-telegram-data:/data
-      - ./monitoring/alertmanager/templates:/templates:ro
+      - ../../monitoring/alertmanager/templates:/templates:ro
     expose:
       - "9087"
     networks:
@@ -1463,7 +1474,7 @@ services:
           cpus: '0.02'
           memory: 16M
     volumes:
-      - ./scripts:/scripts:ro
+      - ../../scripts:/scripts:ro
     networks:
       - platform
     healthcheck:
@@ -1514,7 +1525,7 @@ services:
           memory: 32M
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./scripts:/scripts:ro
+      - ../../scripts:/scripts:ro
       - watchdog-data:/var/lib/watchdog
       - watchdog-logs:/var/log/watchdog
     networks:
@@ -1552,7 +1563,7 @@ services:
           cpus: '0.02'
           memory: 16M
     volumes:
-      - ./scripts:/scripts:ro
+      - ../../scripts:/scripts:ro
       - watchdog-data:/var/lib/watchdog
       - watchdog-logs:/var/log/watchdog:ro
     networks:
@@ -1608,15 +1619,15 @@ services:
 
 secrets:
   shared_db_password:
-    file: ./secrets/shared_db_password.txt
+    file: ../../secrets/shared_db_password.txt
   grafana_password:
-    file: ./secrets/grafana_password.txt
+    file: ../../secrets/grafana_password.txt
   fusionauth_db_password:
-    file: ./secrets/fusionauth_db_password.txt
+    file: ../../secrets/fusionauth_db_password.txt
   oauth2_proxy_cookie_secret:
-    file: ./secrets/oauth2_proxy_cookie_secret.txt
+    file: ../../secrets/oauth2_proxy_cookie_secret.txt
   gitlab_root_password:
-    file: ./secrets/gitlab_root_password.txt
+    file: ../../secrets/gitlab_root_password.txt
 
 volumes:
   # Shared Data

@@ -21,6 +21,7 @@
 #   WATCHDOG_GPU           — GPU index watchdog prefers (default: 1)
 #   MEMORY_LEAK_THRESHOLD  — MB growth per hour to flag leak (default: 100)
 #   AGENT_SERVICE_URL      — Agent service for cross-svc resolution
+#   GITLAB_INTERNAL_HEALTH_URL — Internal GitLab endpoint probe URL
 #   TELEGRAM_BOT_TOKEN     — Telegram bot API token
 #   TELEGRAM_CHAT_ID       — Telegram chat/group ID
 # =============================================================================
@@ -36,10 +37,14 @@ COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-900}"
 PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://global-prometheus:9090}"
 AGENT_SERVICE_URL="${AGENT_SERVICE_URL:-http://agent-service:8000}"
+# shl-nano Phase-1 fast diagnosis endpoint (T8.5) — leave empty to disable
+NANO_SERVICE_URL="${NANO_SERVICE_URL:-}"
+GITLAB_INTERNAL_HEALTH_URL="${GITLAB_INTERNAL_HEALTH_URL:-http://gitlab:8929/gitlab/users/sign_in}"
 
 # GPU isolation — NEVER touch the training GPU
 TRAINING_GPU="${TRAINING_GPU:-0}"       # RTX 3090 Ti — hands off
 WATCHDOG_GPU="${WATCHDOG_GPU:-1}"       # RTX 2070 — watchdog uses this first
+TRAINING_SENSITIVE_CONTAINERS="${TRAINING_SENSITIVE_CONTAINERS:-ray-head,ray-compute-api,mlflow-server,${PLATFORM_PREFIX}-postgres,${PLATFORM_PREFIX}-redis,inference-gateway}"
 
 # Memory leak detection
 MEMORY_LEAK_THRESHOLD_MB="${MEMORY_LEAK_THRESHOLD:-100}"  # MB growth/hour = leak
@@ -83,6 +88,7 @@ CRITICAL_CONTAINERS=(
     "unified-grafana"
     "${PLATFORM_PREFIX}-redis"
     "${PLATFORM_PREFIX}-postgres"
+    "${PLATFORM_PREFIX}-gitlab"
     "fusionauth"
     "${PLATFORM_PREFIX}-alertmanager"
 )
@@ -102,6 +108,10 @@ STANDARD_CONTAINERS=(
     "${PLATFORM_PREFIX}-agent-service"
     "inference-gateway"
     "ray-head"
+    "${PLATFORM_PREFIX}-infisical"
+    "${PLATFORM_PREFIX}-nessie"
+    "${PLATFORM_PREFIX}-loki"
+    "dozzle"
 )
 
 # Containers with known memory-growth patterns (watch closely)
@@ -116,16 +126,43 @@ MEMORY_WATCH_CONTAINERS=(
 # User-facing UIs (for state discovery)
 UI_SERVICES=(
     "homer|/|Landing Page"
-    "chat-ui|/chat-ui/|AI Chat Interface"
+    "${PLATFORM_PREFIX}-chat-ui|/chat-ui/|AI Chat Interface"
     "unified-grafana|/grafana|Monitoring Dashboards"
-    "code-server|/ide|VS Code IDE"
+    "${PLATFORM_PREFIX}-code-server|/ide|VS Code IDE"
     "ray-compute-ui|/ray/ui|Ray Compute UI"
     "dozzle|/logs|Log Viewer"
     "sba-resource-portal|/sba-portal|SBA Resource Portal"
-    "fiftyone|/fiftyone|Dataset Curation"
+    "${PLATFORM_PREFIX}-fiftyone|/fiftyone|Dataset Curation"
     "pii-ui|/pii|PII Blur Demo"
     "mlflow-nginx|/mlflow|ML Experiment Tracking"
-    "traefik|/traefik|API Gateway Dashboard"
+    "${PLATFORM_PREFIX}-traefik|/traefik|API Gateway Dashboard"
+)
+
+# HTTP-level health probes — container|internal_health_url|display_name
+# The watchdog runs on the platform network so it can resolve container names.
+# Format: restart_target (container to restart)|url|human label for log/alert
+#
+# Probe logic:
+#   - 2xx = healthy
+#   - timeout (>8s) or 5xx = unhealthy → restart restart_target
+#   - 401/403 = OAuth gate active = healthy (service is running)
+HTTP_SERVICES=(
+    "mlflow-server|http://mlflow-server:5000/health|MLflow Server"
+    "mlflow-nginx|http://mlflow-nginx:80/mlflow/|MLflow Nginx"
+    "homer|http://homer:8080/|Homer Dashboard"
+    "${PLATFORM_PREFIX}-agent-service|http://${PLATFORM_PREFIX}-agent-service:8000/health|Agent Service"
+    "inference-gateway|http://inference-gateway:8000/health|Inference Gateway"
+    "${PLATFORM_PREFIX}-chat-ui|http://${PLATFORM_PREFIX}-chat-ui:80/|Chat UI"
+    "${PLATFORM_PREFIX}-chat-api|http://${PLATFORM_PREFIX}-chat-api:8000/health|Chat API"
+    "${PLATFORM_PREFIX}-nessie|http://${PLATFORM_PREFIX}-nessie:9000/q/health|Nessie Catalog"
+    "${PLATFORM_PREFIX}-loki|http://${PLATFORM_PREFIX}-loki:3100/ready|Loki"
+    "${PLATFORM_PREFIX}-infisical|http://${PLATFORM_PREFIX}-infisical:8080/api/status|Infisical"
+    "${PLATFORM_PREFIX}-fiftyone|http://${PLATFORM_PREFIX}-fiftyone:5151/|FiftyOne"
+    "ray-compute-ui|http://ray-compute-ui:3000/ray/ui/|Ray Compute UI"
+    "dozzle|http://dozzle:8080/logs/|Dozzle Logs"
+    "pii-blur-api|http://pii-blur-api:8000/health|PII Blur API"
+    "audio-copyright-api|http://audio-copyright-api:8000/health|Audio Copyright API"
+    "mlflow-api|http://mlflow-api:8000/health|MLflow API"
 )
 
 if [[ -n "${PROTECTED_CONTAINERS:-}" ]]; then
@@ -161,11 +198,136 @@ send_telegram() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# GitLab issue creation (idempotent — won't duplicate issues for same alert)
+# ---------------------------------------------------------------------------
+GITLAB_API_URL="${GITLAB_API_URL:-http://shml-gitlab:8929/gitlab/api/v4}"
+GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
+GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}}"
+
+create_gitlab_issue() {
+    # Usage: create_gitlab_issue "title" "description" "label1,label2"
+    local title="$1"
+    local description="${2:-}"
+    local labels="${3:-source::watchdog}"
+
+    if [[ -z "${GITLAB_API_TOKEN:-}" ]]; then
+        log "WARN: No GITLAB_API_TOKEN — skipping issue creation"
+        return
+    fi
+
+    # Check for existing open issue with same title (avoid duplicates)
+    local search_encoded
+    search_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$title'))" 2>/dev/null || echo "$title")
+    local existing
+    existing=$(curl -sf --max-time 10 \
+        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues?state=opened&search=${search_encoded}&per_page=5" \
+        2>/dev/null || echo "[]")
+
+    if echo "$existing" | grep -q "\"title\""; then
+        # Issue already open — add a comment instead of creating a duplicate
+        local iid
+        iid=$(echo "$existing" | python3 -c "
+import sys, json
+issues = json.load(sys.stdin)
+for i in issues:
+    if '$(echo "$title" | sed "s/'/\\\\'/g")'.lower() in i['title'].lower():
+        print(i['iid']); break
+" 2>/dev/null || true)
+
+        if [[ -n "$iid" ]]; then
+            local ts
+            ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+            curl -sf --max-time 10 -X POST \
+                -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"body\": \"**Watchdog update** ($ts):\\n\\n$description\"}" \
+                "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}/notes" \
+                > /dev/null 2>&1 || log "WARN: GitLab comment failed on #${iid}"
+            log "GitLab: Commented on existing issue #${iid} — ${title}"
+            return
+        fi
+    fi
+
+    # Create new issue
+    local payload
+    payload=$(python3 -c "
+import json
+print(json.dumps({
+    'title': '''$title''',
+    'description': '''$description''',
+    'labels': '$labels'
+}))
+" 2>/dev/null || echo "{\"title\":\"$title\",\"labels\":\"$labels\"}")
+
+    local resp
+    resp=$(curl -sf --max-time 10 -X POST \
+        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues" \
+        2>/dev/null || echo "")
+
+    if [[ -n "$resp" ]]; then
+        local new_iid
+        new_iid=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('iid','?'))" 2>/dev/null || echo "?")
+        log "GitLab: Created issue #${new_iid} — ${title}"
+    else
+        log "WARN: GitLab issue creation failed for: ${title}"
+    fi
+}
+
 is_excluded() {
     local name="$1"
     for excl in "${EXCLUDED[@]}"; do
         [[ "$name" == "$excl" ]] && return 0
     done
+    return 1
+}
+
+is_training_active() {
+    local gpu_active=0
+    local ray_active=0
+
+    if command -v nvidia-smi &>/dev/null; then
+        if nvidia-smi --id="${TRAINING_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q "[0-9]"; then
+            gpu_active=1
+        fi
+    fi
+
+    if curl -sf --max-time 4 "http://ray-head:8265/api/jobs/" >/dev/null 2>&1; then
+        local running_jobs
+        running_jobs=$(curl -sf --max-time 4 "http://ray-head:8265/api/jobs/" 2>/dev/null | \
+            jq '[.[] | select(.status == "RUNNING" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
+        if [[ "$running_jobs" =~ ^[0-9]+$ ]] && (( running_jobs > 0 )); then
+            ray_active=1
+        fi
+    fi
+
+    if (( gpu_active == 1 || ray_active == 1 )); then
+        TRAINING_PROTECTED=1
+        return 0
+    fi
+
+    return 1
+}
+
+is_training_sensitive_container() {
+    local container="$1"
+    local short_name="${container#${PLATFORM_PREFIX}-}"
+    IFS=',' read -ra protected <<< "$TRAINING_SENSITIVE_CONTAINERS"
+
+    for entry in "${protected[@]}"; do
+        local target
+        target=$(echo "$entry" | xargs)
+        [[ -z "$target" ]] && continue
+
+        if [[ "$container" == "$target" || "$short_name" == "$target" ]]; then
+            return 0
+        fi
+    done
+
     return 1
 }
 
@@ -319,6 +481,10 @@ Growth: ${growth_per_hour} MB/hr
 Now: ${mem_mb} MB (was ${prev_mb} MB)
 Window: $((elapsed / 60)) minutes"
                     audit "MEMORY_LEAK" "$container" "Growth=${growth_per_hour}MB/hr Now=${mem_mb}MB"
+                    create_gitlab_issue \
+                        "Memory Leak: ${container}" \
+                        "Container \`${container}\` is leaking memory.\n\nGrowth: ${growth_per_hour} MB/hr\nCurrent: ${mem_mb} MB (was ${prev_mb} MB)\nWindow: $((elapsed / 60)) minutes\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                        "type::bug,priority::high,source::watchdog,component::infra"
                     handle_memory_leak "$container" "$mem_mb" "$growth_per_hour"
                 fi
 
@@ -349,7 +515,7 @@ handle_memory_leak() {
         log "PREEMPTIVE: ${container} at ${current_mb}/${limit_mb} MB (${growth_rate} MB/hr)"
         send_telegram "🔄 *Preemptive Restart*: \`${container}\` at $((current_mb * 100 / limit_mb))% memory"
         audit "PREEMPTIVE_RESTART" "$container" "Mem=${current_mb}/${limit_mb}MB Growth=${growth_rate}MB/hr"
-        restart_container "$container" "memory-leak-preemptive"
+        restart_container "$container" "memory-leak-preemptive" || true
         return
     fi
 
@@ -357,7 +523,7 @@ handle_memory_leak() {
     if [[ "$container" == *"agent-service"* ]]; then
         if (( growth_rate > MEMORY_LEAK_THRESHOLD_MB * 2 )); then
             log "REMEDIATE: agent-service aggressive leak (${growth_rate} MB/hr) — restarting"
-            restart_container "$container" "agent-service-memory-leak"
+            restart_container "$container" "agent-service-memory-leak" || true
         fi
     fi
 
@@ -365,7 +531,7 @@ handle_memory_leak() {
     if [[ "$container" == *"inference-gateway"* ]]; then
         if (( growth_rate > MEMORY_LEAK_THRESHOLD_MB )); then
             log "REMEDIATE: inference-gateway connection pool leak — restarting"
-            restart_container "$container" "gateway-connection-pool-leak"
+            restart_container "$container" "gateway-connection-pool-leak" || true
         fi
     fi
 }
@@ -384,6 +550,10 @@ check_oom_killed() {
             send_telegram "💀 *OOM Kill*: \`${name}\`
 Status: ${status}"
             audit "OOM_KILLED" "$name" "$status"
+            create_gitlab_issue \
+                "OOM Kill: ${name}" \
+                "Container \`${name}\` was OOM-killed.\n\nStatus: ${status}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                "type::bug,priority::high,source::watchdog,component::infra"
 
             # Check if container uses training GPU exclusively
             local gpu_info
@@ -394,7 +564,7 @@ Status: ${status}"
                 send_telegram "⏸️ *Skipped*: \`${name}\` uses training GPU. Restart after training."
                 audit "OOM_SKIP_TRAINING" "$name" "Uses GPU ${TRAINING_GPU}"
             else
-                restart_container "$name" "oom-killed"
+                restart_container "$name" "oom-killed" || true
             fi
         done <<< "$oom_containers"
     fi
@@ -436,6 +606,84 @@ check_prometheus() {
     return 1
 }
 
+check_gitlab_application_health() {
+    if curl -fsS --max-time 8 "${GITLAB_INTERNAL_HEALTH_URL}" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    log "ALERT: GitLab application endpoint unhealthy at ${GITLAB_INTERNAL_HEALTH_URL}"
+    send_telegram "⚠️ *GitLab App Health*: Endpoint check failed"
+    audit "GITLAB_APP_UNHEALTHY" "${PLATFORM_PREFIX}-gitlab" "URL=${GITLAB_INTERNAL_HEALTH_URL}"
+    create_gitlab_issue \
+        "GitLab Application Health Check Failed" \
+        "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is not responding.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+        "type::bug,priority::critical,source::watchdog,component::infra"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# HTTP-level health probes for all platform services
+# ---------------------------------------------------------------------------
+# Checks the HTTP_SERVICES array (container|url|label).
+# HTTP 2xx = healthy.  401/403 = OAuth gate active = healthy.
+# Timeout or 5xx = unhealthy → restart the container.
+# Returns 0 if all healthy, 1 if any probe failed.
+check_http_services() {
+    local failed=0
+    local http_fail_list=""
+
+    for entry in "${HTTP_SERVICES[@]}"; do
+        IFS='|' read -r restart_target probe_url label <<< "$entry"
+
+        # Skip if container is not running (container-level watchdog handles that)
+        local cstatus
+        cstatus=$(docker inspect --format='{{.State.Status}}' "$restart_target" 2>/dev/null) || cstatus="missing"
+        if [[ "$cstatus" != "running" ]]; then
+            continue
+        fi
+
+        # Probe the HTTP endpoint
+        # Docker's embedded DNS (127.0.0.11) works via getent but not via
+        # musl/curl's c-ares resolver on Alpine (Tailscale search domains interfere).
+        # Resolve hostname first via getent, then probe with --resolve.
+        local http_code resolved_ip probe_host probe_port
+        probe_host=$(echo "$probe_url" | sed -E 's|https?://([^:/]+).*|\1|')
+        probe_port=$(echo "$probe_url" | sed -E 's|https?://[^:/]+:([0-9]+).*|\1|')
+        resolved_ip=$(getent hosts "$probe_host" 2>/dev/null | awk '{print $1; exit}')
+        if [[ -z "$resolved_ip" ]]; then
+            http_code="000"
+        else
+            http_code=$(curl -s --max-time 8 --resolve "${probe_host}:${probe_port}:${resolved_ip}" -o /dev/null -w "%{http_code}" "$probe_url" 2>/dev/null) || http_code="000"
+        fi
+
+        # 2xx = healthy; 401/403 = OAuth gate (service is up); anything else = problem
+        if [[ "$http_code" =~ ^(2[0-9][0-9]|3[0-9][0-9]|401|403)$ ]]; then
+            continue
+        fi
+
+        # Failed probe
+        log "HTTP-PROBE: ${label} (${restart_target}) returned ${http_code} from ${probe_url}"
+        failed=1
+        http_fail_list="${http_fail_list} ${label}(${http_code})"
+
+        if (( IS_PAUSED == 0 )); then
+            if ! is_excluded "$restart_target"; then
+                send_telegram "🌐 *HTTP Probe Failed*: \`${label}\` — HTTP ${http_code}
+URL: \`${probe_url}\`
+Restarting \`${restart_target}\`..."
+                audit "HTTP_PROBE_FAIL" "$restart_target" "Code=${http_code} URL=${probe_url}"
+                restart_container "$restart_target" "http-probe-${http_code}" || true
+            fi
+        fi
+    done
+
+    if (( failed == 1 )); then
+        log "HTTP-PROBE: Failed services:${http_fail_list}"
+    fi
+
+    return "$failed"
+}
+
 check_gpu_health() {
     if ! command -v nvidia-smi &>/dev/null; then
         return 0
@@ -471,6 +719,52 @@ request_agent_resolution() {
 
     log "AGENT: Requesting autonomous resolution for ${issue_type}"
 
+    # ── Phase 1: Try shl-nano fast diagnosis (T8.5) ───────────────────────
+    # shl-nano is a small domain model running on GPU 1 at port 8021.
+    # It provides a fast JSON diagnosis in < 2s without triggering the full
+    # ACE agent workflow. Only escalate to Phase 2 if requires_escalation=true.
+    if [[ -n "${NANO_SERVICE_URL:-}" ]]; then
+        local nano_prompt="Watchdog alert: ACTION=${issue_type} TARGET=${containers_affected} DETAIL=${description} Time=$(date -u '+%Y-%m-%dT%H:%M:%SZ'). Diagnose and respond with JSON."
+        local nano_response
+        nano_response=$(curl -sf -X POST "${NANO_SERVICE_URL}/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"shl-nano\",\"messages\":[{\"role\":\"user\",\"content\":$(printf '%s' "$nano_prompt" | jq -Rs '.' 2>/dev/null || echo '\"watchdog alert\"')}],\"max_tokens\":256,\"temperature\":0.1}" \
+            --max-time 5 2>/dev/null) || nano_response=""
+
+        if [[ -n "$nano_response" ]]; then
+            local nano_text
+            nano_text=$(echo "$nano_response" | jq -r '.choices[0].message.content // ""' 2>/dev/null) || nano_text=""
+            local nano_requires_escalation
+            nano_requires_escalation=$(echo "$nano_text" | jq -r '.requires_escalation // false' 2>/dev/null) || nano_requires_escalation="false"
+            local nano_severity
+            nano_severity=$(echo "$nano_text" | jq -r '.severity // "info"' 2>/dev/null) || nano_severity="info"
+            local nano_action
+            nano_action=$(echo "$nano_text" | jq -r '.recommended_action // ""' 2>/dev/null) || nano_action=""
+            local nano_restart
+            nano_restart=$(echo "$nano_text" | jq -r '.restart_order // [] | join(" ")' 2>/dev/null) || nano_restart=""
+
+            log "NANO DIAGNOSIS: severity=${nano_severity} escalate=${nano_requires_escalation}"
+            audit "NANO_DIAGNOSIS" "$issue_type" "sev=${nano_severity} action=${nano_action:0:80}"
+
+            if [[ "$nano_requires_escalation" == "false" && "$nano_severity" != "critical" ]]; then
+                # nano handled it — execute recommended action without full agent
+                send_telegram "⚡ *Nano Diagnosis* [${issue_type}]: ${nano_action:-see audit log}"
+                if [[ -n "$nano_restart" ]]; then
+                    log "NANO: Restart order: ${nano_restart}"
+                    for container in $nano_restart; do
+                        restart_container "$container" "nano-directed-${issue_type}" || true
+                        sleep 10
+                    done
+                fi
+                audit "NANO_RESOLVED" "$issue_type" "No escalation needed"
+                return 0
+            fi
+
+            log "AGENT: Nano flagged escalation (sev=${nano_severity}) — calling full agent"
+        fi
+    fi
+
+    # ── Phase 2: Full agent-service resolution (original behavior) ────────
     local task="You are the platform watchdog autonomous agent. A cross-service issue detected.
 
 Issue: ${issue_type}
@@ -521,14 +815,14 @@ Executing..."
         audit "AGENT_RESTART_ORDER" "$issue_type" "Order: ${restart_order}"
 
         for container in $restart_order; do
-            restart_container "$container" "agent-directed-${issue_type}"
+            restart_container "$container" "agent-directed-${issue_type}" || true
             sleep 10
         done
     else
         log "AGENT: No restart order extracted — falling back to sequential restart"
         # Fallback: restart affected containers in dependency order
         for container in $containers_affected; do
-            restart_container "$container" "cascading-${issue_type}"
+            restart_container "$container" "cascading-${issue_type}" || true
             sleep 10
         done
     fi
@@ -638,6 +932,13 @@ restart_container() {
     local container="$1"
     local reason="${2:-unhealthy}"
 
+    if is_training_sensitive_container "$container" && is_training_active; then
+        log "PROTECT: Deferring restart of ${container} (${reason}) — training activity detected on GPU ${TRAINING_GPU}"
+        send_telegram "🛡️ *Training Protected*: Deferred \`${container}\` restart (${reason}) while training is active"
+        audit "RESTART_DEFER_TRAINING" "$container" "Reason=${reason} GPU=${TRAINING_GPU}"
+        return 1
+    fi
+
     # GPU safety — never restart something that disrupts training GPU
     local gpu_info
     gpu_info=$(docker inspect --format='{{range .HostConfig.DeviceRequests}}{{.DeviceIDs}}{{end}}' "$container" 2>/dev/null || echo "")
@@ -659,6 +960,10 @@ restart_container() {
         log "THROTTLE: ${container} hit ${count}/${MAX_RESTARTS} restarts"
         send_telegram "🛑 *Throttle*: \`${container}\` — ${count}/${MAX_RESTARTS}. Manual intervention needed."
         audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
+        create_gitlab_issue \
+            "Container Throttled: ${container}" \
+            "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,source::watchdog,component::infra"
         return 1
     fi
 
@@ -684,6 +989,10 @@ restart_container() {
         log "ERROR: Failed to restart ${container}"
         send_telegram "❌ *Restart Failed*: \`${container}\`"
         audit "RESTART_FAILED" "$container" "Docker restart failed"
+        create_gitlab_issue \
+            "Restart Failed: ${container}" \
+            "Docker restart command failed for \`${container}\`.\nReason: ${reason}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,source::watchdog,component::infra"
     fi
 }
 
@@ -777,6 +1086,7 @@ log "  Max restarts/hour: ${MAX_RESTARTS}"
 log "  Training GPU: ${TRAINING_GPU} (PROTECTED)"
 log "  Watchdog GPU: ${WATCHDOG_GPU} (preferred)"
 log "  Memory leak threshold: ${MEMORY_LEAK_THRESHOLD_MB} MB/hr"
+log "  Training-sensitive restarts deferred for: ${TRAINING_SENSITIVE_CONTAINERS}"
 log "  Agent service: ${AGENT_SERVICE_URL}"
 log "  Critical: ${#CRITICAL_CONTAINERS[@]}"
 log "  Standard: ${#STANDARD_CONTAINERS[@]}"
@@ -840,7 +1150,7 @@ while true; do
             action_count=$((action_count + 1))
         elif (( unhealthy_count > 0 )); then
             for container in $unhealthy_list; do
-                restart_container "$container" "unhealthy"
+                restart_container "$container" "unhealthy" || true
                 action_count=$((action_count + 1))
             done
         fi
@@ -869,6 +1179,25 @@ while true; do
     # --- Prometheus connectivity (every 3 cycles) ---
     if (( cycle % 3 == 0 )); then
         check_prometheus || true
+    fi
+
+    # --- GitLab app-level health (every 2 cycles) ---
+    if (( cycle % 2 == 0 )); then
+        if ! check_gitlab_application_health; then
+            if (( IS_PAUSED == 0 )); then
+                restart_container "${PLATFORM_PREFIX}-gitlab" "gitlab-app-health" || true
+                action_count=$((action_count + 1))
+            else
+                log "PAUSED: GitLab unhealthy but remediation paused by admin"
+            fi
+        fi
+    fi
+
+    # --- HTTP endpoint probes for ALL services (every 2 cycles) ---
+    # Catches cases where containers are "running" but the app is wedged
+    # (crashed, OOM'd internally, DB connection lost, etc.)
+    if (( cycle % 2 == 0 )); then
+        check_http_services || action_count=$((action_count + 1))
     fi
 
     # --- Full state discovery (every 30 cycles ≈ 30 min) ---

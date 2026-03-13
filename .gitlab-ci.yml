@@ -1,9 +1,391 @@
+# =============================================================================
+# SHML Platform — GitLab CI/CD Pipeline
+# =============================================================================
+# Migrated from GitHub Actions (5 workflows → 1 pipeline).
+# Runner is on the Docker network, so it can reach all services directly.
+# =============================================================================
+
 stages:
-  - secrets
+  - lint
+  - test
+  - security
+  - integration
+  - build
   - mirror
 
+# ---------------------------------------------------------------------------
+# Default settings — shared across all jobs
+# ---------------------------------------------------------------------------
+default:
+  image: python:3.11
+  tags:
+    - docker
+    - shml
+
+# ---------------------------------------------------------------------------
+# Variables — common environment
+# ---------------------------------------------------------------------------
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  DOCKER_BUILDKIT: "1"
+
+# ---------------------------------------------------------------------------
+# Reusable before_script for Python test jobs
+# ---------------------------------------------------------------------------
+.python_test_setup: &python_test_setup
+  before_script:
+    - python -m pip install --upgrade pip
+    - |
+      for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
+        [ -f "$req" ] && pip install -r "$req" || true
+      done
+
+# ===========================================================================
+# STAGE: lint
+# ===========================================================================
+
+yaml_lint:
+  stage: lint
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install yamllint
+    - |
+      yamllint -d '{extends: relaxed, rules: {line-length: disable, truthy: disable, document-start: disable, comments: disable, trailing-spaces: disable}}' \
+        .gitlab-ci.yml \
+        $(find .github/workflows -name '*.yml' 2>/dev/null) \
+        $(find deploy -name 'docker-compose*.yml' 2>/dev/null) || true
+
+config_validation:
+  stage: lint
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - |
+      # Ensure no .env files are committed
+      if find . -name ".env" -not -name ".env.example" -type f -not -path "./.git/*" | grep -q .; then
+        echo "ERROR: .env files should not be committed!"
+        find . -name ".env" -not -name ".env.example" -type f -not -path "./.git/*"
+        exit 1
+      fi
+      echo "✓ No .env files found in repository"
+    - |
+      # Ensure no secret files are committed
+      if [ -d "secrets" ] && find secrets -type f -name "*.txt" | grep -q .; then
+        echo "ERROR: Secret files should not be committed!"
+        find secrets -type f -name "*.txt"
+        exit 1
+      fi
+      echo "✓ No secret files found in repository"
+
+docs_check:
+  stage: lint
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - |
+      [ ! -f "README.md" ] && echo "ERROR: README.md is required" && exit 1
+      echo "✓ README.md exists"
+    - |
+      find . -name "*.md" -not -path "./.git/*" -not -path "./archived/*" | while read f; do
+        dir=$(dirname "$f")
+        grep -oE '\[.*\]\([^http][^)]+\)' "$f" 2>/dev/null | grep -oE '\([^)]+\)' | tr -d '()' | while read link; do
+          link_file="${link%%#*}"
+          if [ -n "$link_file" ] && [ ! -f "$dir/$link_file" ] && [ ! -f "$link_file" ]; then
+            echo "Potential broken link in $f: $link"
+          fi
+        done
+      done || true
+
+# ===========================================================================
+# STAGE: test
+# ===========================================================================
+
+unit_tests:
+  stage: test
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
+    - |
+      if [ -d "tests/unit" ]; then
+        pytest tests/unit/ -v --tb=short -x
+      else
+        echo "No unit tests directory found — OK"
+      fi
+
+chat_api_tests:
+  stage: test
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install pytest pytest-asyncio httpx aiohttp pydantic fastapi starlette requests
+    - |
+      [ -f "tests/chat-api/requirements-test.txt" ] && pip install -r tests/chat-api/requirements-test.txt
+      [ -f "inference/chat-api/requirements.txt" ] && pip install -r inference/chat-api/requirements.txt || true
+    - |
+      if [ -d "tests/chat-api" ]; then
+        if python -c "from inference.chat_api.app import auth" 2>/dev/null; then
+          pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py \
+            tests/chat-api/test_security_config.py -v --tb=short
+        else
+          echo "⚠️ inference.chat_api not available — running config-only tests"
+          EXIT_CODE=0
+          pytest tests/chat-api/test_security_config.py -v --tb=short \
+            -k "not chat_ui and not all_chat_interfaces and not coding_model_primary and not compose_valid and not non_admin" \
+            || EXIT_CODE=$?
+          if [ "$EXIT_CODE" -eq 5 ]; then
+            echo "No matching config tests — OK"
+          elif [ "$EXIT_CODE" -ne 0 ]; then
+            exit "$EXIT_CODE"
+          fi
+        fi
+      fi
+
+rbac_tests:
+  stage: test
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install pytest pytest-asyncio httpx pyyaml requests
+    - |
+      if [ -f "tests/chat-api/test_traefik_config.py" ]; then
+        EXIT_CODE=0
+        pytest tests/chat-api/test_traefik_config.py -v --tb=short \
+          -k "not chat_ui and not coding_model_routes" \
+          || EXIT_CODE=$?
+        if [ "$EXIT_CODE" -eq 5 ]; then
+          echo "No matching RBAC tests — OK"
+        elif [ "$EXIT_CODE" -ne 0 ]; then
+          exit "$EXIT_CODE"
+        fi
+      fi
+    - |
+      if [ -d "scripts/role-auth" ]; then
+        echo "✓ role-auth service directory exists"
+        cat scripts/role-auth/nginx.conf | grep -E "auth/(viewer|developer|admin)" && echo "✓ Role endpoints configured"
+      fi
+    - |
+      if [ -f "deploy/compose/docker-compose.infra.yml" ]; then
+        grep -A 20 "oauth2-proxy:" deploy/compose/docker-compose.infra.yml | grep -E "OAUTH2_PROXY|X-Auth-Request" && echo "✓ OAuth2-Proxy configured"
+      fi
+
+integration_tests_mocked:
+  stage: test
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install pytest pytest-asyncio httpx aiohttp requests pyyaml
+    - |
+      if [ -d "tests/integration" ]; then
+        EXIT_CODE=0
+        pytest tests/integration/ -v --tb=short \
+          -k "not live and not running" \
+          --ignore=tests/integration/test_chat_api_live.py \
+          --ignore=tests/integration/test_full_stack.py \
+          --ignore=tests/integration/test_api_endpoints.py \
+          --ignore=tests/integration/test_new_services.py \
+          --ignore=tests/integration/test_observability.py \
+          --ignore=tests/integration/test_inference_stack.py \
+          --ignore=tests/integration/test_traefik_routing.py \
+          || EXIT_CODE=$?
+        if [ "$EXIT_CODE" -eq 5 ]; then
+          echo "No mocked integration tests — OK"
+        elif [ "$EXIT_CODE" -ne 0 ]; then
+          exit "$EXIT_CODE"
+        fi
+      fi
+
+# ===========================================================================
+# STAGE: security
+# ===========================================================================
+
+secret_scan:
+  stage: security
+  image: python:3.11-slim
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends wget git ca-certificates
+    - |
+      GITLEAKS_VERSION="8.24.3"
+      wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      chmod +x gitleaks
+    - ./gitleaks detect --source . --redact -v --no-git || echo "⚠️ Gitleaks found findings (review above)"
+
+dependency_scan:
+  stage: security
+  image: python:3.11-slim
+  timeout: 10 minutes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  allow_failure: true
+  script:
+    - pip install pip-audit
+    - |
+      FAILED=""
+      SCANNED=0
+      while IFS= read -r req; do
+        echo "Auditing: $req"
+        SCANNED=$((SCANNED + 1))
+        if ! timeout 60 pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012 2>/dev/null; then
+          echo "⚠️ Vulnerabilities found in $req"
+          FAILED="$FAILED $req"
+        fi
+      done < <(find . -name "requirements*.txt" -type f -not -path "./.git/*")
+      echo "Scanned $SCANNED requirements files"
+      [ -n "$FAILED" ] && echo "⚠️ Issues in:$FAILED" || echo "✓ No vulnerabilities found"
+
+hardcoded_secret_scan:
+  stage: security
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - |
+      if grep -rn --include="*.py" --include="*.sh" --include="*.yml" --include="*.yaml" \
+        -E "(password|secret|api_key|token|credential)\s*=\s*['\"][^'\"]+['\"]" \
+        --exclude-dir=".git" --exclude-dir="archived" --exclude-dir=".venv" . | \
+        grep -v "example" | grep -v "placeholder" | grep -v "getenv" | grep -v "\.example" | \
+        grep -v "your.password" | grep -v "<.*>" | head -20; then
+        echo ""
+        echo "⚠️ Potential hardcoded secrets found (review above)"
+      else
+        echo "✓ No obvious hardcoded secrets detected"
+      fi
+
+# ===========================================================================
+# STAGE: integration  (live tests — runner is on the Docker network)
+# ===========================================================================
+
+chat_api_live_tests:
+  stage: integration
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - pip install pytest pytest-asyncio httpx requests
+    - |
+      # Runner is on the Docker network — no Tailscale needed
+      CHAT_URL="${CHAT_API_URL:-http://shml-chat-api:8000}"
+      echo "Testing Chat API at: $CHAT_URL"
+      if curl -sf "$CHAT_URL/health" > /dev/null 2>&1; then
+        echo "Chat API is accessible!"
+        CHAT_API_DIRECT_URL="$CHAT_URL" \
+        CHAT_API_TEST_KEY="$FUSIONAUTH_DEVELOPER_KEY" \
+        CHAT_API_ADMIN_KEY="$FUSIONAUTH_API_KEY" \
+        CHAT_API_VIEWER_KEY="$FUSIONAUTH_VIEWER_KEY" \
+        pytest tests/integration/test_chat_api_live.py -v --tb=short -m integration -x
+      else
+        echo "⚠️ Chat API not accessible — skipping live tests"
+      fi
+
+fusionauth_live_tests:
+  stage: integration
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - pip install pytest httpx pydantic tenacity python-dotenv requests
+    - |
+      FA_URL="${FUSIONAUTH_URL:-http://fusionauth:9011}"
+      echo "Testing FusionAuth at: $FA_URL"
+      if curl -sf -H "Authorization: $FUSIONAUTH_API_KEY" "$FA_URL/api/status" > /dev/null 2>&1; then
+        echo "FusionAuth is accessible!"
+        FUSIONAUTH_URL="$FA_URL" \
+        FUSIONAUTH_API_KEY="$FUSIONAUTH_API_KEY" \
+        pytest tests/platform_sdk/test_integration.py -v --tb=short
+      else
+        echo "⚠️ FusionAuth not accessible — skipping live tests"
+      fi
+
+full_stack_live_tests:
+  stage: integration
+  <<: *python_test_setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - pip install pytest requests
+    - |
+      DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+      echo "Testing service health on Docker network..."
+      # Test services directly via container names (no external access needed)
+      for svc_url in \
+        "http://mlflow-server:5000/health|MLflow" \
+        "http://unified-grafana:3000/grafana/|Grafana" \
+        "http://ray-compute-ui:3000/ray/ui/|Ray UI"; do
+        url="${svc_url%%|*}"
+        name="${svc_url#*|}"
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+        if echo "$STATUS" | grep -qE "^(200|302|401|403)$"; then
+          echo "✓ $name OK (status: $STATUS)"
+        else
+          echo "⚠️ $name returned status: $STATUS"
+        fi
+      done
+    - |
+      if [ -f "tests/integration/test_full_stack.py" ]; then
+        PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}" \
+        SKIP_LAN_TESTS="true" \
+        pytest tests/integration/test_full_stack.py -v --tb=short -m "external or security" -x || true
+      fi
+
+# ===========================================================================
+# STAGE: build
+# ===========================================================================
+
+compose_validate:
+  stage: build
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+  script:
+    - pip install pyyaml
+    - |
+      python3 -c "
+      import yaml, sys
+      files = [
+        'deploy/compose/docker-compose.yml',
+        'deploy/compose/docker-compose.infra.yml',
+      ]
+      ok = True
+      for f in files:
+        try:
+          with open(f) as fh:
+            data = yaml.safe_load(fh)
+          if 'services' not in data:
+            print(f'⚠️ {f}: no services key found')
+          else:
+            print(f'✓ {f}: {len(data[\"services\"])} services validated')
+        except FileNotFoundError:
+          print(f'⚠️ {f}: file not found (may be in different path)')
+        except yaml.YAMLError as e:
+          print(f'✗ {f}: YAML parse error: {e}')
+          ok = False
+      sys.exit(0 if ok else 1)
+      "
+
+# ===========================================================================
+# STAGE: mirror
+# ===========================================================================
+
 path_a_sync_gitlab_variables:
-  stage: secrets
+  stage: mirror
   image: alpine:3.20
   rules:
     - if: '$PATH_A_SYNC_ENABLED == "true" && ($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web")'
