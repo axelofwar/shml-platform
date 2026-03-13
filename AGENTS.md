@@ -10,8 +10,8 @@ If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out w
 
 Before doing anything else:
 
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
+1. Read `docs/internal/agent-context/SOUL.md` — this is who you are
+2. Read `docs/internal/agent-context/USER.md` — this is who you're helping
 3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
 
@@ -41,7 +41,7 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
 - "Mental notes" don't survive session restarts. Files do.
 - When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
+- When you learn a lesson → update `AGENTS.md`, `docs/internal/agent-context/TOOLS.md`, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain** 📝
 
@@ -115,7 +115,7 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 ## Tools
 
-Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `docs/internal/agent-context/TOOLS.md`.
 
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
@@ -130,9 +130,9 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 When you receive a heartbeat poll (message matches the configured heartbeat prompt), don't just reply `HEARTBEAT_OK` every time. Use heartbeats productively!
 
 Default heartbeat prompt:
-`Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
+`Read docs/internal/agent-context/HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
 
-You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+You are free to edit `docs/internal/agent-context/HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
 
 ### Heartbeat vs Cron: When to Use Each
 
@@ -151,7 +151,7 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 - One-shot reminders ("remind me in 20 minutes")
 - Output should deliver directly to a channel without main session involvement
 
-**Tip:** Batch similar periodic checks into `HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
+**Tip:** Batch similar periodic checks into `docs/internal/agent-context/HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
 
 **Things to check (rotate through these, 2-4 times per day):**
 
@@ -206,6 +206,40 @@ Periodically (every few days), use a heartbeat to:
 Think of it like a human reviewing their journal and updating their mental model. Daily files are raw notes; MEMORY.md is curated wisdom.
 
 The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
+
+## Project Tracking — GitLab Issues
+
+Task tracking uses GitLab Issues as the single source of truth.
+
+**GitLab Issues** (primary): Self-hosted GitLab CE at `/gitlab/` (Traefik). Issues, milestones, labels, boards. Use for all task management — training, infrastructure, platform improvements, agent coordination.
+
+**Kanban** (legacy/quick-view): `docs/obsidian-vault/50-Projects/KANBAN.md` — Obsidian board for quick visual status.
+**T8 detail board:** `docs/obsidian-vault/50-Projects/TRACK-8-NANOCHAT.md` (auto-synced every 10min)
+
+### Rules
+
+1. **Before starting any task** — create/find a GitLab Issue. Assign yourself and move to "Doing".
+2. **When a task is done** — close the GitLab Issue. Move to ✅ Done in KANBAN.md.
+3. **When blocked** — add the `blocked` label in GitLab. Move to 🚧 Blocked in KANBAN.md.
+4. **Adding new tasks** — create a GitLab Issue first. Optionally mirror in KANBAN.md 📋 Backlog.
+5. **Deprecated files** — `70-Internal/IMPLEMENTATION_TASK_BOARD.md` is deleted. KANBAN.md is the quick-view fallback.
+
+### Tag Conventions
+
+`#training` `#nanochat` #infra` `#agent` `#monitoring` `#automation` `#vault` `#platform`
+
+### Auto-Sync
+
+- Every 10min: `shl-nano-kanban.timer` → `update_kanban.sh` → rewrites TRACK-8-NANOCHAT.md based on state files
+- Every 30min: `shl-platform-scan.timer` → `scan_repo_state.sh` → detects task completion via code/process/container evidence
+- Nightly 02:00: `shl-nano-pipeline.timer` → full T8 training pipeline
+
+### To update the board manually (agent action)
+
+```bash
+bash scripts/platform/scan_repo_state.sh   # re-scan + update KANBAN.md
+bash scripts/data/update_kanban.sh         # resync T8 sub-board only
+```
 
 ## Make It Yours
 

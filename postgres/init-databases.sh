@@ -74,6 +74,8 @@ create_database "nessie" "nessie"
 create_database "gitlab" "gitlab"
 enable_extensions "gitlab" "pg_trgm" "btree_gist"
 
+# NOTE: Paperclip database removed — service decommissioned in favour of GitLab Issues
+
 echo "========================================"
 echo "All databases initialized successfully!"
 echo "========================================"
