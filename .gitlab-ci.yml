@@ -225,6 +225,7 @@ secret_scan:
 dependency_scan:
   stage: security
   image: python:3.11-slim
+  timeout: 10 minutes
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
   allow_failure: true
@@ -232,13 +233,16 @@ dependency_scan:
     - pip install pip-audit
     - |
       FAILED=""
+      SCANNED=0
       while IFS= read -r req; do
         echo "Auditing: $req"
-        if ! pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012 2>/dev/null; then
+        SCANNED=$((SCANNED + 1))
+        if ! timeout 60 pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012 2>/dev/null; then
           echo "⚠️ Vulnerabilities found in $req"
           FAILED="$FAILED $req"
         fi
       done < <(find . -name "requirements*.txt" -type f -not -path "./.git/*")
+      echo "Scanned $SCANNED requirements files"
       [ -n "$FAILED" ] && echo "⚠️ Issues in:$FAILED" || echo "✓ No vulnerabilities found"
 
 hardcoded_secret_scan:

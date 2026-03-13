@@ -209,36 +209,78 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 
 ## Project Tracking — GitLab Issues
 
-Task tracking uses GitLab Issues as the single source of truth.
+Task tracking uses **GitLab Issues** as the single source of truth.
 
-**GitLab Issues** (primary): Self-hosted GitLab CE at `/gitlab/` (Traefik). Issues, milestones, labels, boards. Use for all task management — training, infrastructure, platform improvements, agent coordination.
+### Architecture
 
-**Kanban** (legacy/quick-view): `docs/obsidian-vault/50-Projects/KANBAN.md` — Obsidian board for quick visual status.
-**T8 detail board:** `docs/obsidian-vault/50-Projects/TRACK-8-NANOCHAT.md` (auto-synced every 10min)
+- **GitLab CE** (primary): Self-hosted at `/gitlab/` (Traefik). Issues, milestones, labels, boards. Use for all task management — training, infrastructure, platform improvements, agent coordination.
+- **GitHub** (public mirror): `axelofwar/shml-platform`. Read-only public mirror. GitHub CI runs on push for external visibility.
+- **Kanban** (legacy/quick-view): `docs/obsidian-vault/50-Projects/KANBAN.md` — Obsidian board for quick visual status.
+- **T8 detail board:** `docs/obsidian-vault/50-Projects/TRACK-8-NANOCHAT.md` (auto-synced every 10min)
+
+### Programmatic Access
+
+All scripts use `scripts/platform/gitlab_utils.py` for GitLab API operations:
+
+```bash
+# CLI usage:
+python3 scripts/platform/gitlab_utils.py create-issue "Title" --labels "type::bug"
+python3 scripts/platform/gitlab_utils.py upsert-issue "Search Title" --comment "Update"
+python3 scripts/platform/gitlab_utils.py list-issues --state opened
+python3 scripts/platform/gitlab_utils.py setup-board  # Create labels + milestones
+
+# Python import:
+from scripts.platform.gitlab_utils import create_issue, upsert_issue, list_issues
+```
+
+**Environment:** `GITLAB_API_TOKEN` or `GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN` in `.env`.
+**Internal URL:** `http://shml-gitlab:8929/gitlab/api/v4/` (Docker network, no OAuth2-proxy).
+**Project ID:** 2
+
+### Labels (scoped)
+
+| Scope | Labels |
+|-------|--------|
+| **type::** | `bug`, `feature`, `chore`, `training`, `security` |
+| **priority::** | `critical`, `high`, `medium`, `low` |
+| **status::** | `blocked`, `stale` |
+| **component::** | `watchdog`, `ci-cd`, `autoresearch`, `agent-service`, `chat-ui`, `fusionauth`, `infra` |
+| **source::** | `watchdog`, `scan`, `autoresearch`, `ci` |
+
+### Automated Issue Creation
+
+| System | When | What |
+|--------|------|------|
+| **Watchdog** | OOM kill, memory leak, restart failure, throttle | Creates `source::watchdog` issue (idempotent) |
+| **scan_repo_state** | Agent down, GPU low memory, autoresearch progress | Creates/updates `source::scan` issue |
+| **CI Pipeline** | Test failures, security scan findings | Creates `source::ci` issue |
+| **Autoresearch** | Training milestone, completion, failure | Creates `source::autoresearch` issue |
 
 ### Rules
 
 1. **Before starting any task** — create/find a GitLab Issue. Assign yourself and move to "Doing".
 2. **When a task is done** — close the GitLab Issue. Move to ✅ Done in KANBAN.md.
-3. **When blocked** — add the `blocked` label in GitLab. Move to 🚧 Blocked in KANBAN.md.
-4. **Adding new tasks** — create a GitLab Issue first. Optionally mirror in KANBAN.md 📋 Backlog.
-5. **Deprecated files** — `70-Internal/IMPLEMENTATION_TASK_BOARD.md` is deleted. KANBAN.md is the quick-view fallback.
-
-### Tag Conventions
-
-`#training` `#nanochat` #infra` `#agent` `#monitoring` `#automation` `#vault` `#platform`
+3. **When blocked** — add the `status::blocked` label in GitLab.
+4. **Adding new tasks** — create a GitLab Issue first.
+5. **Agent-created issues** — always include a `source::*` label.
 
 ### Auto-Sync
 
 - Every 10min: `shl-nano-kanban.timer` → `update_kanban.sh` → rewrites TRACK-8-NANOCHAT.md based on state files
-- Every 30min: `shl-platform-scan.timer` → `scan_repo_state.sh` → detects task completion via code/process/container evidence
+- Every 30min: `shl-platform-scan.timer` → `scan_repo_state.sh` → detects task completion + syncs to GitLab
 - Nightly 02:00: `shl-nano-pipeline.timer` → full T8 training pipeline
+
+### Skills
+
+The agent service has a `gitlab-integration` skill at `inference/agent-service/skills/gitlab-integration/SKILL.md`.
+Use it for conversational issue management: "create a bug for the GPU thermal issue", "show me open watchdog alerts", etc.
 
 ### To update the board manually (agent action)
 
 ```bash
-bash scripts/platform/scan_repo_state.sh   # re-scan + update KANBAN.md
+bash scripts/platform/scan_repo_state.sh   # re-scan + update KANBAN.md + sync GitLab
 bash scripts/data/update_kanban.sh         # resync T8 sub-board only
+python3 scripts/platform/gitlab_utils.py list-issues  # see all open issues
 ```
 
 ## Make It Yours

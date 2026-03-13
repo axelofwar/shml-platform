@@ -198,6 +198,86 @@ send_telegram() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# GitLab issue creation (idempotent — won't duplicate issues for same alert)
+# ---------------------------------------------------------------------------
+GITLAB_API_URL="${GITLAB_API_URL:-http://shml-gitlab:8929/gitlab/api/v4}"
+GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
+GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}}"
+
+create_gitlab_issue() {
+    # Usage: create_gitlab_issue "title" "description" "label1,label2"
+    local title="$1"
+    local description="${2:-}"
+    local labels="${3:-source::watchdog}"
+
+    if [[ -z "${GITLAB_API_TOKEN:-}" ]]; then
+        log "WARN: No GITLAB_API_TOKEN — skipping issue creation"
+        return
+    fi
+
+    # Check for existing open issue with same title (avoid duplicates)
+    local search_encoded
+    search_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$title'))" 2>/dev/null || echo "$title")
+    local existing
+    existing=$(curl -sf --max-time 10 \
+        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues?state=opened&search=${search_encoded}&per_page=5" \
+        2>/dev/null || echo "[]")
+
+    if echo "$existing" | grep -q "\"title\""; then
+        # Issue already open — add a comment instead of creating a duplicate
+        local iid
+        iid=$(echo "$existing" | python3 -c "
+import sys, json
+issues = json.load(sys.stdin)
+for i in issues:
+    if '$(echo "$title" | sed "s/'/\\\\'/g")'.lower() in i['title'].lower():
+        print(i['iid']); break
+" 2>/dev/null || true)
+
+        if [[ -n "$iid" ]]; then
+            local ts
+            ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+            curl -sf --max-time 10 -X POST \
+                -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"body\": \"**Watchdog update** ($ts):\\n\\n$description\"}" \
+                "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}/notes" \
+                > /dev/null 2>&1 || log "WARN: GitLab comment failed on #${iid}"
+            log "GitLab: Commented on existing issue #${iid} — ${title}"
+            return
+        fi
+    fi
+
+    # Create new issue
+    local payload
+    payload=$(python3 -c "
+import json
+print(json.dumps({
+    'title': '''$title''',
+    'description': '''$description''',
+    'labels': '$labels'
+}))
+" 2>/dev/null || echo "{\"title\":\"$title\",\"labels\":\"$labels\"}")
+
+    local resp
+    resp=$(curl -sf --max-time 10 -X POST \
+        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues" \
+        2>/dev/null || echo "")
+
+    if [[ -n "$resp" ]]; then
+        local new_iid
+        new_iid=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('iid','?'))" 2>/dev/null || echo "?")
+        log "GitLab: Created issue #${new_iid} — ${title}"
+    else
+        log "WARN: GitLab issue creation failed for: ${title}"
+    fi
+}
+
 is_excluded() {
     local name="$1"
     for excl in "${EXCLUDED[@]}"; do
@@ -401,6 +481,10 @@ Growth: ${growth_per_hour} MB/hr
 Now: ${mem_mb} MB (was ${prev_mb} MB)
 Window: $((elapsed / 60)) minutes"
                     audit "MEMORY_LEAK" "$container" "Growth=${growth_per_hour}MB/hr Now=${mem_mb}MB"
+                    create_gitlab_issue \
+                        "Memory Leak: ${container}" \
+                        "Container \`${container}\` is leaking memory.\n\nGrowth: ${growth_per_hour} MB/hr\nCurrent: ${mem_mb} MB (was ${prev_mb} MB)\nWindow: $((elapsed / 60)) minutes\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                        "type::bug,priority::high,source::watchdog,component::infra"
                     handle_memory_leak "$container" "$mem_mb" "$growth_per_hour"
                 fi
 
@@ -466,6 +550,10 @@ check_oom_killed() {
             send_telegram "💀 *OOM Kill*: \`${name}\`
 Status: ${status}"
             audit "OOM_KILLED" "$name" "$status"
+            create_gitlab_issue \
+                "OOM Kill: ${name}" \
+                "Container \`${name}\` was OOM-killed.\n\nStatus: ${status}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                "type::bug,priority::high,source::watchdog,component::infra"
 
             # Check if container uses training GPU exclusively
             local gpu_info
@@ -526,6 +614,10 @@ check_gitlab_application_health() {
     log "ALERT: GitLab application endpoint unhealthy at ${GITLAB_INTERNAL_HEALTH_URL}"
     send_telegram "⚠️ *GitLab App Health*: Endpoint check failed"
     audit "GITLAB_APP_UNHEALTHY" "${PLATFORM_PREFIX}-gitlab" "URL=${GITLAB_INTERNAL_HEALTH_URL}"
+    create_gitlab_issue \
+        "GitLab Application Health Check Failed" \
+        "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is not responding.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+        "type::bug,priority::critical,source::watchdog,component::infra"
     return 1
 }
 
@@ -868,6 +960,10 @@ restart_container() {
         log "THROTTLE: ${container} hit ${count}/${MAX_RESTARTS} restarts"
         send_telegram "🛑 *Throttle*: \`${container}\` — ${count}/${MAX_RESTARTS}. Manual intervention needed."
         audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
+        create_gitlab_issue \
+            "Container Throttled: ${container}" \
+            "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,source::watchdog,component::infra"
         return 1
     fi
 
@@ -893,6 +989,10 @@ restart_container() {
         log "ERROR: Failed to restart ${container}"
         send_telegram "❌ *Restart Failed*: \`${container}\`"
         audit "RESTART_FAILED" "$container" "Docker restart failed"
+        create_gitlab_issue \
+            "Restart Failed: ${container}" \
+            "Docker restart command failed for \`${container}\`.\nReason: ${reason}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,source::watchdog,component::infra"
     fi
 }
 
