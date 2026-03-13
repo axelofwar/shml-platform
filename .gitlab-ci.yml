@@ -139,8 +139,11 @@ chat_api_tests:
           pytest tests/chat-api/test_security_config.py -v --tb=short \
             -k "not chat_ui and not all_chat_interfaces and not coding_model_primary and not compose_valid and not non_admin" \
             || EXIT_CODE=$?
-          [ "$EXIT_CODE" -eq 5 ] && echo "No matching config tests — OK" && exit 0
-          [ "$EXIT_CODE" -ne 0 ] && exit "$EXIT_CODE"
+          if [ "$EXIT_CODE" -eq 5 ]; then
+            echo "No matching config tests — OK"
+          elif [ "$EXIT_CODE" -ne 0 ]; then
+            exit "$EXIT_CODE"
+          fi
         fi
       fi
 
@@ -157,8 +160,11 @@ rbac_tests:
         pytest tests/chat-api/test_traefik_config.py -v --tb=short \
           -k "not chat_ui and not coding_model_routes" \
           || EXIT_CODE=$?
-        [ "$EXIT_CODE" -eq 5 ] && echo "No matching RBAC tests — OK" && exit 0
-        [ "$EXIT_CODE" -ne 0 ] && exit "$EXIT_CODE"
+        if [ "$EXIT_CODE" -eq 5 ]; then
+          echo "No matching RBAC tests — OK"
+        elif [ "$EXIT_CODE" -ne 0 ]; then
+          exit "$EXIT_CODE"
+        fi
       fi
     - |
       if [ -d "scripts/role-auth" ]; then
@@ -190,8 +196,11 @@ integration_tests_mocked:
           --ignore=tests/integration/test_inference_stack.py \
           --ignore=tests/integration/test_traefik_routing.py \
           || EXIT_CODE=$?
-        [ "$EXIT_CODE" -eq 5 ] && echo "No mocked integration tests — OK" && exit 0
-        [ "$EXIT_CODE" -ne 0 ] && exit "$EXIT_CODE"
+        if [ "$EXIT_CODE" -eq 5 ]; then
+          echo "No mocked integration tests — OK"
+        elif [ "$EXIT_CODE" -ne 0 ]; then
+          exit "$EXIT_CODE"
+        fi
       fi
 
 # ===========================================================================
