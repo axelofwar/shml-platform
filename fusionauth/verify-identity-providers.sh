@@ -73,7 +73,7 @@ echo ""
 echo -e "${BLUE}Manual Verification Required:${NC}"
 echo ""
 echo "1. Open FusionAuth Admin:"
-echo "   https://shml-platform.tail38b60a.ts.net/admin"
+echo "   https://${PUBLIC_DOMAIN}/admin"
 echo ""
 echo "2. Go to: Settings → Identity Providers"
 echo ""
@@ -134,22 +134,22 @@ cat <<EOF
 Test each sign-in method to verify JWT lambda is working:
 
 ${BLUE}Test 1: Google Sign-In${NC}
-  1. Open incognito window: https://shml-platform.tail38b60a.ts.net/
+  1. Open incognito window: https://${PUBLIC_DOMAIN}/
   2. Click "Sign in with Google"
   3. Should reach Homer dashboard without redirect loop ✓
 
 ${BLUE}Test 2: GitHub Sign-In${NC}
-  1. Open new incognito window: https://shml-platform.tail38b60a.ts.net/
+  1. Open new incognito window: https://${PUBLIC_DOMAIN}/
   2. Click "Sign in with GitHub"
   3. Should reach Homer dashboard without redirect loop ✓
 
 ${BLUE}Test 3: Twitter Sign-In${NC}
-  1. Open new incognito window: https://shml-platform.tail38b60a.ts.net/
+  1. Open new incognito window: https://${PUBLIC_DOMAIN}/
   2. Click "Sign in with Twitter"
   3. Should reach Homer dashboard without redirect loop ✓
 
 ${BLUE}Test 4: Email/Password Registration${NC}
-  1. Open new incognito window: https://shml-platform.tail38b60a.ts.net/
+  1. Open new incognito window: https://${PUBLIC_DOMAIN}/
   2. Click "Create account" (if available)
   3. Register with email/password
   4. Should reach Homer dashboard with 'viewer' role ✓
@@ -187,7 +187,7 @@ ${YELLOW}If sign-in fails for specific provider:${NC}
    - Twitter: https://developer.twitter.com/en/portal/dashboard
 
 3. Check redirect URLs are correct:
-   Must include: https://shml-platform.tail38b60a.ts.net/auth/callback
+   Must include: https://${PUBLIC_DOMAIN}/auth/callback
 
 4. Verify 'createRegistration' is enabled:
    If disabled, user won't get OAuth2-Proxy registration

@@ -340,14 +340,14 @@ echo -e "${CYAN}━━━ Docker Compose Validation ━━━${NC}"
 cd "$PROJECT_DIR"
 
 # Validate infra compose
-if docker compose -f docker-compose.infra.yml config --quiet 2>/dev/null; then
-    pass "docker-compose.infra.yml valid"
+if docker compose -f deploy/compose/docker-compose.infra.yml config --quiet 2>/dev/null; then
+    pass "deploy/compose/docker-compose.infra.yml valid"
 else
-    fail "docker-compose.infra.yml has errors"
+    fail "deploy/compose/docker-compose.infra.yml has errors"
 fi
 
 # Check new services are defined
-SERVICES=$(docker compose -f docker-compose.infra.yml config --services 2>/dev/null || echo "")
+SERVICES=$(docker compose -f deploy/compose/docker-compose.infra.yml config --services 2>/dev/null || echo "")
 for svc in nessie fiftyone fiftyone-mongodb ml-slo-exporter; do
     if echo "$SERVICES" | grep -q "^${svc}$"; then
         pass "Service '$svc' defined in compose"

@@ -49,7 +49,7 @@ CICD_VIEWER_KEY = os.getenv("CICD_VIEWER_KEY") or os.getenv(
 
 # Public URL for authentication (what users see)
 PUBLIC_AUTH_URL = os.getenv(
-    "PUBLIC_AUTH_URL", "https://shml-platform.tail38b60a.ts.net/auth"
+    "PUBLIC_AUTH_URL", "http://localhost:8000/auth"
 )
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "platform administrator")
 

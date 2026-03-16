@@ -23,6 +23,12 @@ secrets/
 .env.*
 !.env.example
 
+# Obsidian editor config (personal workspace settings)
+docs/obsidian-vault/.obsidian/
+
+# MCP config (contains local filesystem paths)
+mcp/mcp-config.json
+
 # SSH keys
 id_rsa
 id_rsa.pub
@@ -411,3 +417,7 @@ monitoring/grafana/dashboards/archived/
 
 # Generated outputs (not source code)
 ray_compute/evaluation_results/
+
+# Embedded/vendored git repositories (use submodules if needed)
+inference/llama-cpp/llama-src/
+inference/llama-cpp/llama.cpp/

@@ -192,7 +192,7 @@ optimizeForTmux = true
 
 [remote]
 # Tailscale configuration
-tailscaleIP = "100.66.26.115"
+tailscaleIP = "${TAILSCALE_IP}"
 sshPort = 22
 
 # Mobile terminal recommendations:

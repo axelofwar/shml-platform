@@ -171,7 +171,7 @@ artifacts = client.download_artifacts(
 ### Server Setup (One-Time)
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 
 # 1. Install NVIDIA drivers (requires reboot)
 sudo bash scripts/install_nvidia_drivers.sh
@@ -207,7 +207,7 @@ bash scripts/check_status.sh
 
 ```bash
 # Copy client library
-scp user@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/api/client_remote.py .
+scp user@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/api/client_remote.py .
 
 # Or install from this repo
 pip install requests  # Only dependency
@@ -219,7 +219,7 @@ Run this **from your remote machine**:
 
 ```bash
 # Copy test script
-scp user@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/test_remote_compute.py .
+scp user@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/test_remote_compute.py .
 
 # Run validation
 python3 test_remote_compute.py http://100.69.227.36:8266
@@ -498,7 +498,7 @@ for job in jobs:
 ### 1. Initial Setup ✅
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 sudo bash scripts/install_nvidia_drivers.sh  # Reboot required
 sudo bash scripts/install_docker_nvidia.sh
 sudo bash scripts/install_ray_cluster.sh
@@ -577,7 +577,7 @@ job_id = client.submit_job(..., cleanup_after=False)
 ### Check Status
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 bash scripts/check_status.sh
 ```
 
@@ -619,6 +619,6 @@ Your MLflow server now has **complete remote job orchestration** with:
 **Ready to begin setup!** Start with:
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 sudo bash scripts/install_nvidia_drivers.sh
 ```

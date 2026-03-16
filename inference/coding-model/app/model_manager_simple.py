@@ -44,7 +44,7 @@ class SimpleModelManager:
     """Manages a single model on a single GPU with idle timeout support."""
 
     def __init__(self):
-        # Read config from environment (set in docker-compose.yml)
+        # Read config from environment (set in deploy/compose/docker-compose.yml)
         self.model_id = os.getenv("MODEL_ID", "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ")
         self.model_mode = os.getenv("MODEL_MODE", "fallback")  # "primary" or "fallback"
         self.max_model_len = int(os.getenv("MAX_MODEL_LEN", "8192"))

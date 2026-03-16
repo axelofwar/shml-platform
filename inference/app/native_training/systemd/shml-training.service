@@ -1,6 +1,6 @@
 [Unit]
 Description=SHML Native Training Job
-Documentation=file:///home/axelofwar/Projects/shml-platform/inference/app/native_training/README.md
+Documentation=file:///opt/shml-platform/inference/app/native_training/README.md
 After=network-online.target docker.service
 Wants=network-online.target
 # Can be started independently or by coordinator
@@ -12,10 +12,10 @@ User=axelofwar
 Group=axelofwar
 
 # Working directory
-WorkingDirectory=/home/axelofwar/Projects/shml-platform/inference/app/native_training
+WorkingDirectory=/opt/shml-platform/inference/app/native_training
 
 # Environment for GPU training
-Environment=PYTHONPATH=/home/axelofwar/Projects/shml-platform/inference/app:/home/axelofwar/Projects/shml-platform/inference/training_library
+Environment=PYTHONPATH=/opt/shml-platform/inference/app:/opt/shml-platform/inference/training_library
 Environment=CUDA_VISIBLE_DEVICES=0
 Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
 Environment=PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
@@ -24,7 +24,7 @@ Environment=MLFLOW_TRACKING_URI=http://172.30.0.11:5000
 Environment=CUDA_MPS_PIPE_DIRECTORY=
 
 # Main process - sandboxed training
-ExecStart=/home/axelofwar/Projects/shml-platform/inference/app/native_training/sandbox_training.sh \
+ExecStart=/opt/shml-platform/inference/app/native_training/sandbox_training.sh \
     --model yolov8n.pt \
     --data wider_face \
     --epochs 100 \

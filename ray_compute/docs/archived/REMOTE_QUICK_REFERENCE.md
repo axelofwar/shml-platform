@@ -3,7 +3,7 @@
 ## Server Setup (One-Time)
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 
 # 1. Install system dependencies (reboot required)
 sudo bash scripts/install_nvidia_drivers.sh
@@ -23,7 +23,7 @@ cd .. && bash start_all_remote.sh
 ### Start/Stop Services
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 
 # Start
 bash start_all_remote.sh
@@ -204,10 +204,10 @@ print(run.data.metrics)
 
 ```bash
 # API logs
-tail -f /home/axelofwar/Projects/mlflow-server/ray_compute/logs/api_remote.log
+tail -f /home/$USER/Projects/mlflow-server/ray_compute/logs/api_remote.log
 
 # Ray logs
-tail -f /home/axelofwar/Projects/mlflow-server/ray_compute/logs/ray_head.log
+tail -f /home/$USER/Projects/mlflow-server/ray_compute/logs/ray_head.log
 
 # Job logs (on server)
 ls -la /opt/ray/logs/jobs/

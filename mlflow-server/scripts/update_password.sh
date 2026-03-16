@@ -125,7 +125,7 @@ fi
 # 5. Update documentation files with placeholder
 echo "[5/6] Updating documentation files..."
 DOCS_UPDATED=0
-for doc in /home/axelofwar/Projects/mlflow-server/mlflow_server/*.md; do
+for doc in /home/$USER/Projects/mlflow-server/mlflow_server/*.md; do
     if [ -f "$doc" ]; then
         if grep -q "mlflowpass123" "$doc" 2>/dev/null; then
             sed -i "s/mlflowpass123/<YOUR_PASSWORD>/g" "$doc"
@@ -212,7 +212,7 @@ echo "   pgcli -h localhost -U mlflow mlflow_db"
 echo "   Password: (use new password when prompted)"
 echo ""
 echo "3. Database info script (already uses new password):"
-echo "   Edit /home/axelofwar/Projects/mlflow-server/mlflow_server/db_info.sh"
+echo "   Edit /home/$USER/Projects/mlflow-server/mlflow_server/db_info.sh"
 echo "   Update line: PGPASSWORD='<YOUR_PASSWORD>'"
 echo ""
 echo "======================================================================"

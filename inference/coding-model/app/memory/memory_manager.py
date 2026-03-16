@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class MemoryConfig:
     """Configuration for memory manager."""
 
-    # Database - reads from environment variable set in docker-compose.yml
+    # Database - reads from environment variable set in deploy/compose/docker-compose.yml
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
         "postgresql://inference:inference@shared-postgres:5432/inference",

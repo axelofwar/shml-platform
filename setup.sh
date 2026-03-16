@@ -905,9 +905,9 @@ preflight_checks() {
     # Docker config validation (main compose with all includes)
     print_section "Docker Configuration"
     if sudo docker compose config >/dev/null 2>&1; then
-        check_pass "Unified docker-compose.yml valid (includes infra, MLflow, Ray)"
+        check_pass "Unified deploy/compose/docker-compose.yml valid (includes infra, MLflow, Ray)"
     else
-        check_fail "Unified docker-compose.yml has errors"
+        check_fail "Unified deploy/compose/docker-compose.yml has errors"
         echo ""
         echo "Running detailed validation to identify issue:"
         sudo docker compose config 2>&1 | head -10
@@ -1138,8 +1138,8 @@ start_services() {
     # Start GPU monitoring
     print_section "Phase 3.5: GPU Monitoring"
     echo "Starting: DCGM Exporter (NVIDIA GPU metrics)..."
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
-        sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d 2>&1 | tail -5
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
+        sudo docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml up -d 2>&1 | tail -5
 
         # Wait for DCGM to start
         sleep 5
@@ -1159,7 +1159,7 @@ start_services() {
     print_section "Phase 4: Global Monitoring"
     echo "Starting: Global Prometheus (federation), Unified Grafana..."
     # Note: Don't use --remove-orphans here as it would remove Ray/MLflow containers
-    sudo docker compose -f docker-compose.infra.yml up -d global-prometheus unified-grafana 2>&1 | tail -10
+    sudo docker compose -f deploy/compose/docker-compose.infra.yml up -d global-prometheus unified-grafana 2>&1 | tail -10
 
     echo "Waiting for global monitoring (20 seconds)..."
     sleep 20

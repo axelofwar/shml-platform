@@ -1,7 +1,7 @@
 # Container Security Hardening - Inference Services
 # =================================================
 # Apply this overlay to harden all inference containers:
-#   docker compose -f docker-compose.yml -f docker-compose.hardening.yml up -d
+#   docker compose -f deploy/compose/docker-compose.yml -f docker-compose.hardening.yml up -d
 #
 # Security controls applied:
 #   - no-new-privileges: Prevents privilege escalation via setuid/setgid

@@ -6,7 +6,7 @@ set -e
 
 FUSIONAUTH_URL="${FUSIONAUTH_URL:-http://localhost:9011}"
 FUSIONAUTH_API_KEY="${FUSIONAUTH_API_KEY:?ERROR: FUSIONAUTH_API_KEY environment variable must be set}"
-OAUTH2_PROXY_APP_ID="acda34f0-7cf2-40eb-9cba-7cb0048857d3"
+OAUTH2_PROXY_APP_ID="${FUSIONAUTH_PROXY_CLIENT_ID:?ERROR: FUSIONAUTH_PROXY_CLIENT_ID must be set (check .env)}"
 ELEVATED_DEV_ROLE_ID="b8d14b7f-84a7-4707-8b79-cb6929be0edd"
 
 echo "======================================="

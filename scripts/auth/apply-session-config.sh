@@ -75,13 +75,13 @@ else
     echo -e "${YELLOW}⚠${NC} OAuth2-Proxy container not running (will be started)"
 fi
 
-# Check docker-compose.infra.yml has session config
-if grep -q "OAUTH2_PROXY_COOKIE_REFRESH" docker-compose.infra.yml; then
-    echo -e "${GREEN}✓${NC} Enhanced session configuration found in docker-compose.infra.yml"
+# Check deploy/compose/docker-compose.infra.yml has session config
+if grep -q "OAUTH2_PROXY_COOKIE_REFRESH" deploy/compose/docker-compose.infra.yml; then
+    echo -e "${GREEN}✓${NC} Enhanced session configuration found in deploy/compose/docker-compose.infra.yml"
 else
     echo -e "${RED}✗${NC} Enhanced session configuration NOT found"
     echo "   Configuration should have been added automatically"
-    echo "   Check docker-compose.infra.yml for OAUTH2_PROXY_COOKIE_REFRESH"
+    echo "   Check deploy/compose/docker-compose.infra.yml for OAUTH2_PROXY_COOKIE_REFRESH"
     exit 1
 fi
 
@@ -92,7 +92,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 echo "Restarting OAuth2-Proxy with enhanced session management..."
-docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
 
 echo ""
 echo -e "${GREEN}✓${NC} OAuth2-Proxy restarted with new configuration"
@@ -107,7 +107,7 @@ cat <<EOF
 ${YELLOW}You must configure FusionAuth JWT settings manually:${NC}
 
 ${BLUE}Step 1: Configure JWT Duration${NC}
-  1. Open: https://shml-platform.tail38b60a.ts.net/admin
+  1. Open: https://${PUBLIC_DOMAIN}/admin
   2. Go to: Tenants → Default → Edit
   3. Click: JWT tab
   4. Set:
@@ -149,15 +149,15 @@ echo ""
 
 cat <<EOF
 ${BLUE}Test 1: Session Persistence (Browser Restart)${NC}
-  1. Open incognito window: https://shml-platform.tail38b60a.ts.net/
+  1. Open incognito window: https://${PUBLIC_DOMAIN}/
   2. Sign in with any method
   3. Close browser completely
   4. Reopen browser
-  5. Go to: https://shml-platform.tail38b60a.ts.net/
+  5. Go to: https://${PUBLIC_DOMAIN}/
   6. ${GREEN}✓ Should NOT prompt for login${NC} (session persists)
 
 ${BLUE}Test 2: Cross-Service SSO${NC}
-  1. Sign in to Homer: https://shml-platform.tail38b60a.ts.net/
+  1. Sign in to Homer: https://${PUBLIC_DOMAIN}/
   2. Click link to Grafana
   3. ${GREEN}✓ Should NOT prompt for login${NC}
   4. Click link to MLflow

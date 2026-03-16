@@ -2,6 +2,7 @@
 
 import pytest
 import asyncio
+from pathlib import Path
 from typing import AsyncGenerator, Dict, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -69,7 +70,7 @@ def sample_user_developer():
     """Sample developer user."""
     import sys
 
-    sys.path.insert(0, "/home/axelofwar/Projects/shml-platform/inference/chat-api")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inference" / "chat-api"))
     from app.schemas import User, UserRole
 
     return User(
@@ -87,7 +88,7 @@ def sample_user_admin():
     """Sample admin user."""
     import sys
 
-    sys.path.insert(0, "/home/axelofwar/Projects/shml-platform/inference/chat-api")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inference" / "chat-api"))
     from app.schemas import User, UserRole
 
     return User(
@@ -105,7 +106,7 @@ def sample_user_viewer():
     """Sample viewer user."""
     import sys
 
-    sys.path.insert(0, "/home/axelofwar/Projects/shml-platform/inference/chat-api")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inference" / "chat-api"))
     from app.schemas import User, UserRole
 
     return User(
@@ -123,7 +124,7 @@ def sample_api_key_user():
     """Sample user authenticated via API key."""
     import sys
 
-    sys.path.insert(0, "/home/axelofwar/Projects/shml-platform/inference/chat-api")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "inference" / "chat-api"))
     from app.schemas import User, UserRole
 
     return User(

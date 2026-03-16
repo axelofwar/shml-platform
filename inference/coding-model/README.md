@@ -74,7 +74,7 @@ Similar to GitHub Copilot's change approval:
 ### 1. Build and Start
 
 ```bash
-cd /home/axelofwar/Projects/shml-platform/inference/coding-model
+cd /opt/shml-platform/inference/coding-model
 docker compose build
 docker compose up -d
 ```

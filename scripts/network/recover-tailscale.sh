@@ -59,7 +59,7 @@ echo "  Hostname set to: $NEW_HOSTNAME"
 echo ""
 echo -e "${YELLOW}Step 3: Enabling Tailscale Funnel...${NC}"
 PUBLIC_DOMAIN=$(grep "^PUBLIC_DOMAIN=" "$PROJECT_DIR/.env" | cut -d'=' -f2)
-PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-${PUBLIC_DOMAIN}}"
 tailscale funnel --set-path=/ --bg 80
 echo "  Funnel enabled: https://$PUBLIC_DOMAIN → port 80"
 
@@ -100,7 +100,7 @@ FUSIONAUTH_API_KEY=$(grep "^FUSIONAUTH_API_KEY=" "$ENV_FILE" | cut -d'=' -f2)
 OAUTH_APP_ID=$(grep "^OAUTH2_PROXY_APP_ID=" "$ENV_FILE" | cut -d'=' -f2)
 OAUTH_APP_ID="${OAUTH_APP_ID:-}"
 PUBLIC_DOMAIN=$(grep "^PUBLIC_DOMAIN=" "$ENV_FILE" | cut -d'=' -f2)
-PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-${PUBLIC_DOMAIN}}"
 
 if [ -n "$FUSIONAUTH_API_KEY" ] && [ -n "$OAUTH_APP_ID" ]; then
     # Check if FusionAuth is accessible

@@ -4,7 +4,7 @@
 #   source /path/to/shml-platform/cli/aliases.sh
 
 # Project directory
-export SHML_DIR="${SHML_DIR:-/home/axelofwar/Projects/shml-platform}"
+export SHML_DIR="${SHML_DIR:-${PLATFORM_ROOT:-.}}"
 
 # === Core Shortcuts ===
 alias shml='python3 $SHML_DIR/cli/shml.py'

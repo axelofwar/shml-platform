@@ -81,7 +81,7 @@ chmod 600 secrets/*.txt
 Secrets are mounted as Docker secrets:
 
 ```yaml
-# docker-compose.infra.yml
+# deploy/compose/docker-compose.infra.yml
 secrets:
   shared_db_password:
     file: ./secrets/shared_db_password.txt

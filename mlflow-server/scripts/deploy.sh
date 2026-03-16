@@ -92,7 +92,7 @@ DB_PASSWORD=$(cat secrets/db_password.txt)
 
 # Deployment settings
 COMPOSE_PROJECT_NAME=mlflow-production
-COMPOSE_FILE=docker-compose.yml
+COMPOSE_FILE=deploy/compose/docker-compose.yml
 
 # Performance settings (optimized for 24-core system)
 POSTGRES_MAX_CONNECTIONS=100

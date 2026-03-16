@@ -37,7 +37,7 @@ This guide outlines the complete implementation of Ray Compute V2 with:
 ### 1.1 Run Setup Script
 
 ```bash
-cd /home/axelofwar/Desktop/Projects/ray_compute
+cd /opt/shml-platform/ray_compute
 chmod +x scripts/setup_enhanced.sh
 ./scripts/setup_enhanced.sh
 ```

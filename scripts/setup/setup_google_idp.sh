@@ -9,7 +9,7 @@
 # 1. Create Google OAuth credentials at: https://console.cloud.google.com/apis/credentials
 # 2. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file
 # 3. Add authorized redirect URI in Google Console:
-#    https://shml-platform.tail38b60a.ts.net/oauth2/callback
+#    https://${PUBLIC_DOMAIN}/oauth2/callback
 #    OR your FusionAuth instance: http://localhost:9011/oauth2/callback
 #
 # Usage:
@@ -65,7 +65,7 @@ if [[ -z "$GOOGLE_CLIENT_ID" ]]; then
     echo "1. Go to https://console.cloud.google.com/apis/credentials"
     echo "2. Create a new 'OAuth 2.0 Client ID' (Web application)"
     echo "3. Add authorized redirect URI:"
-    echo "   - https://shml-platform.tail38b60a.ts.net/oauth2/callback"
+    echo "   - https://${PUBLIC_DOMAIN}/oauth2/callback"
     echo "   - http://localhost:9011/oauth2/callback (for local testing)"
     echo "4. Copy Client ID and Client Secret to your .env file:"
     echo "   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com"
@@ -155,10 +155,10 @@ if [[ $? -eq 0 ]]; then
     echo ""
     echo -e "${YELLOW}Next Steps:${NC}"
     echo "1. Verify Google Console has these redirect URIs:"
-    echo "   - https://shml-platform.tail38b60a.ts.net/oauth2/callback"
+    echo "   - https://${PUBLIC_DOMAIN}/oauth2/callback"
     echo "   - http://localhost:9011/oauth2/callback"
     echo ""
-    echo "2. Test by visiting: https://shml-platform.tail38b60a.ts.net/"
+    echo "2. Test by visiting: https://${PUBLIC_DOMAIN}/"
     echo "   You should see 'Sign in with Google' button"
     echo ""
     echo "3. To grant users access to MLflow/Ray after Google sign-in:"

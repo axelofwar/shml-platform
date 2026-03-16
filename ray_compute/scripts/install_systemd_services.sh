@@ -37,14 +37,14 @@ case $api_choice in
         ;;
     2)
         sed "s/axelofwar/$CURRENT_USER/g" config/ray-compute-api-remote.service | \
-            sed "s|/home/axelofwar/Projects/mlflow-server/ray_compute|$WORKDIR|g" | \
+            sed "s|/home/$USER/Projects/mlflow-server/ray_compute|$WORKDIR|g" | \
             sudo tee /etc/systemd/system/ray-compute-api-remote.service > /dev/null
         API_SERVICE="ray-compute-api-remote"
         ;;
     *)
         echo "Invalid choice. Using Remote API (default)"
         sed "s/axelofwar/$CURRENT_USER/g" config/ray-compute-api-remote.service | \
-            sed "s|/home/axelofwar/Projects/mlflow-server/ray_compute|$WORKDIR|g" | \
+            sed "s|/home/$USER/Projects/mlflow-server/ray_compute|$WORKDIR|g" | \
             sudo tee /etc/systemd/system/ray-compute-api-remote.service > /dev/null
         API_SERVICE="ray-compute-api-remote"
         ;;

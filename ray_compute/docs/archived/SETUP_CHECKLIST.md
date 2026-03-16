@@ -14,7 +14,7 @@
 ### 1.1 Install NVIDIA Drivers
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 sudo bash scripts/install_nvidia_drivers.sh
 ```
 
@@ -109,7 +109,7 @@ mlflow-compute-cpu    latest    def789ghi012    ...    1.8GB
 ### 3.1 Start Ray Cluster
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 bash start_all_remote.sh
 ```
 
@@ -165,7 +165,7 @@ curl http://localhost:8266/resources
 ### 4.1 Copy Client Library (on remote machine)
 
 ```bash
-scp user@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/api/client_remote.py .
+scp user@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/api/client_remote.py .
 ```
 
 - [ ] File copied successfully
@@ -185,7 +185,7 @@ curl http://100.69.227.36:8266/health
 ### 5.1 Copy Test Script (to remote machine)
 
 ```bash
-scp user@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/test_remote_compute.py .
+scp user@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/test_remote_compute.py .
 ```
 
 - [ ] File copied successfully
@@ -365,7 +365,7 @@ sudo systemctl restart ray-head
 pgrep -f "ray start"
 
 # Check logs
-tail -f /home/axelofwar/Projects/mlflow-server/ray_compute/logs/ray_head.log
+tail -f /home/$USER/Projects/mlflow-server/ray_compute/logs/ray_head.log
 
 # Restart
 bash stop_all_remote.sh && bash start_all_remote.sh
@@ -485,6 +485,6 @@ If you encounter issues:
 **Start Command**:
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 sudo bash scripts/install_nvidia_drivers.sh
 ```

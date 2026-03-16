@@ -131,7 +131,7 @@ See [../scripts/README.md](../scripts/README.md) for:
 
 ### Configuration
 - `.env.example` - Environment variable template
-- `docker-compose.yml` - Service definitions
+- `deploy/compose/docker-compose.yml` - Service definitions
 - `config/` - Configuration templates
 
 ### Legacy Documentation
@@ -154,7 +154,7 @@ Additional resources in `mlflow_server/docs/`:
 ### For Administrators
 1. Review [SECURITY.md](SECURITY.md)
 2. Understand [DEPLOYMENT_SUMMARY.md](DEPLOYMENT_SUMMARY.md)
-3. Configure backups (see `docker-compose.yml`)
+3. Configure backups (see `deploy/compose/docker-compose.yml`)
 4. Setup monitoring (Grafana at :3000)
 
 ### For Remote Users

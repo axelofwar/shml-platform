@@ -473,7 +473,7 @@ platform_restore() {
     echo "📦 Step 1/2: Restoring databases..."
 
     # Start only postgres containers
-    docker compose -f "${PROJECT_ROOT}/docker-compose.yml" up -d shml-postgres 2>/dev/null || true
+    docker compose -f "${PROJECT_ROOT}/deploy/compose/docker-compose.yml" up -d shml-postgres 2>/dev/null || true
     sleep 5
 
     for backup_file in "${backup_dir}"/*.sql.gz; do

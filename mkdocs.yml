@@ -130,4 +130,7 @@ nav:
     - Backup & Restore: admin/backup-restore.md
     - Platform Operations: admin/platform-operations.md
     - Secrets Management: admin/secrets-management.md
+    - Infisical Path A: admin/infisical-path-a.md
+    - Repository Publication Policy: admin/repository-publication-policy.md
+    - GitLab Bootstrap & Mirror Setup: admin/gitlab-bootstrap-mirroring.md
   - Contributing: contributing.md

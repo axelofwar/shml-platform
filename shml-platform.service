@@ -1,8 +1,8 @@
 [Unit]
 Description=SFML Platform (MLflow + Ray + Auth Services)
 Documentation=https://github.com/axelofwar/shml-platform
-After=docker.service network-online.target tailscaled.service
-Requires=docker.service
+After=docker.service network-online.target tailscaled.service shml-tailscale-funnel.service
+Requires=docker.service shml-tailscale-funnel.service
 Wants=network-online.target tailscaled.service
 
 # Give time for network and Tailscale to fully initialize
@@ -13,23 +13,23 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=axelofwar
+User=${PLATFORM_USER:-axelofwar}
 Group=docker
 
 # Working directory for docker-compose
-WorkingDirectory=/home/axelofwar/Projects/shml-platform
+WorkingDirectory=/opt/shml-platform
 
 # Wait for dependencies before starting
 ExecStartPre=/bin/sleep 10
 ExecStartPre=/bin/bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
-ExecStartPre=/bin/bash -c 'until tailscale status >/dev/null 2>&1; do sleep 2; done || true'
+ExecStartPre=/bin/bash -c 'until tailscale status >/dev/null 2>&1; do sleep 2; done'
 
 # Start all services using the safe startup script
 # The script handles all internal dependencies (Postgres -> FusionAuth -> OAuth2 Proxy -> Services)
-ExecStart=/home/axelofwar/Projects/shml-platform/start_all_safe.sh start
+ExecStart=/opt/shml-platform/start_all_safe.sh start
 
 # Stop all services gracefully
-ExecStop=/home/axelofwar/Projects/shml-platform/stop_all.sh
+ExecStop=/opt/shml-platform/stop_all.sh
 
 # Restart policy
 Restart=on-failure
@@ -40,8 +40,9 @@ TimeoutStartSec=600
 TimeoutStopSec=120
 
 # Environment
-Environment=HOME=/home/axelofwar
+Environment=HOME=/home/$USER
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=OPTIONAL_AI_STACK_ENABLED=false
 
 # Logging
 StandardOutput=journal

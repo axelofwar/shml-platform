@@ -5,7 +5,7 @@
 set -e
 
 JOB_ID=${1:-"latest"}
-HOST_CHECKPOINT_DIR="/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints"
+HOST_CHECKPOINT_DIR="${PLATFORM_ROOT:-.}/ray_compute/data/ray/checkpoints"
 CONTAINER_CHECKPOINT_DIR="/tmp/ray/checkpoints"
 
 echo "╔════════════════════════════════════════════════════════╗"

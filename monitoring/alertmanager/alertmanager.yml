@@ -4,7 +4,7 @@
 # Routes Prometheus alerts to Telegram via webhook receiver.
 # Supports severity-based routing: critical → immediate, warning → batched.
 #
-# Environment variables (set in docker-compose.infra.yml):
+# Environment variables (set in deploy/compose/docker-compose.infra.yml):
 #   TELEGRAM_BOT_TOKEN  — Telegram bot API token
 #   TELEGRAM_CHAT_ID    — Chat/group ID for notifications
 # =============================================================================
@@ -41,6 +41,26 @@ route:
       group_wait: 10s
       group_interval: 1m
       repeat_interval: 1h
+      continue: false
+
+    # NemoClaw security events (egress blocked, filesystem violation) → critical path
+    - receiver: 'telegram-critical'
+      match:
+        component: nemoclaw
+        severity: critical
+      group_wait: 5s        # Even faster for security events
+      group_interval: 30s
+      repeat_interval: 30m
+      continue: false
+
+    # NemoClaw warnings (slow sandbox, high count) → warning path
+    - receiver: 'telegram-warnings'
+      match:
+        component: nemoclaw
+        severity: warning
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
       continue: false
 
     # Warning alerts → batched delivery

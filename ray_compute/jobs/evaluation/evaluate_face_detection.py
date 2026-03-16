@@ -60,6 +60,9 @@ except ImportError:
     MLFLOW_AVAILABLE = False
     print("⚠️ MLflow not available - metrics will not be logged")
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 
 # ============================================================================
 # Configuration
@@ -72,11 +75,11 @@ class EvaluationConfig:
 
     # Model paths
     model_path: str = (
-        "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt"
+        f"{PLATFORM_ROOT}/ray_compute/data/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt"
     )
 
     # Dataset paths (WIDER Face structure)
-    dataset_root: str = "/home/axelofwar/Projects/shml-platform/data"
+    dataset_root: str = f"{PLATFORM_ROOT}/data"
     dataset_name: str = "wider_face"
 
     # Evaluation settings
@@ -96,7 +99,7 @@ class EvaluationConfig:
 
     # Output
     output_dir: str = (
-        "/home/axelofwar/Projects/shml-platform/ray_compute/evaluation_results"
+        f"{PLATFORM_ROOT}/ray_compute/evaluation_results"
     )
 
     # MLflow
@@ -847,21 +850,21 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt",
+        default=f"{PLATFORM_ROOT}/ray_compute/data/ray/checkpoints/face_detection/phase_3_phase_3/weights/best.pt",
         help="Path to trained model checkpoint",
     )
 
     parser.add_argument(
         "--dataset-root",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/data",
+        default=f"{PLATFORM_ROOT}/data",
         help="Root directory for dataset",
     )
 
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/ray_compute/evaluation_results",
+        default=f"{PLATFORM_ROOT}/ray_compute/evaluation_results",
         help="Output directory for results",
     )
 

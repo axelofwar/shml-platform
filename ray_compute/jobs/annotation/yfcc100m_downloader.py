@@ -49,6 +49,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 # YFCC100M Constants
 YFCC_BUCKET = "multimedia-commons"
 YFCC_METADATA_PREFIX = "yfcc100m/set_"
@@ -594,7 +597,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/ray_compute/data/datasets/yfcc100m",
+        default=f"{PLATFORM_ROOT}/ray_compute/data/datasets/yfcc100m",
         help="Output directory for downloaded images",
     )
     parser.add_argument(

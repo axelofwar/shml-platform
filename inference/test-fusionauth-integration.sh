@@ -102,7 +102,7 @@ echo ""
 
 echo "7️⃣ Checking Grafana Dashboard"
 echo "--------------------------------"
-if [ -f "/home/axelofwar/Projects/shml-platform/monitoring/grafana/dashboards/agent-usage-analytics.json" ]; then
+if [ -f "${PLATFORM_ROOT:-.}/monitoring/grafana/dashboards/agent-usage-analytics.json" ]; then
     echo -e "${GREEN}✓ Grafana dashboard JSON created${NC}"
     echo "Access at: http://localhost:3000/d/agent-usage-analytics"
 else
@@ -112,7 +112,7 @@ echo ""
 
 echo "8️⃣ Testing Frontend Auth Store"
 echo "---------------------------------"
-if [ -f "/home/axelofwar/Projects/shml-platform/chat-ui-v2/src/stores/authStore.ts" ]; then
+if [ -f "${PLATFORM_ROOT:-.}/chat-ui-v2/src/stores/authStore.ts" ]; then
     echo -e "${GREEN}✓ Auth store created${NC}"
     echo "Features:"
     echo "  - fetchUser() from /api/agent/user/me"

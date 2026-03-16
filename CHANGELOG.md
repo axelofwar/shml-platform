@@ -44,9 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **docker-compose.infra.yml** — 6 new services: alertmanager, alertmanager-telegram, feature-scheduler, watchdog, watchdog-admin, nightly-test-runner
+- **deploy/compose/docker-compose.infra.yml** — 6 new services: alertmanager, alertmanager-telegram, feature-scheduler, watchdog, watchdog-admin, nightly-test-runner
 - **monitoring/homer/config.yml** — Added Watchdog Ops Center and Watchdog Dashboard entries
 - **Test suite** — Expanded from 114 → 223 tests (109 new tests for Phase 5)
+- **Repository structure cleanup** (2026-03-05)
+  - Moved root compose files into `deploy/compose/` and updated scripts, CI, tests, and docs to use the new paths
+  - Moved `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `TOOLS.md`, and `USER.md` into `docs/internal/agent-context/`
+  - Kept `AGENTS.md` at repo root for agent-tool discoverability; updated references to relocated agent-context docs
 
 ### Fixed
 
@@ -479,8 +483,8 @@ DRY_RUN=true ./scripts/launch_phase1_training.sh balanced
   - GitHub OAuth integration
   - Twitter OAuth integration
 - **Public HTTPS Access**: Configured Tailscale Funnel
-  - Public URL: `https://shml-platform.tail38b60a.ts.net/`
-  - FusionAuth accessible at `https://shml-platform.tail38b60a.ts.net/auth/admin/`
+  - Public URL: `https://${PUBLIC_DOMAIN}/`
+  - FusionAuth accessible at `https://${PUBLIC_DOMAIN}/auth/admin/`
   - Automatic SSL/TLS termination via Tailscale
 
 ### Removed
@@ -899,7 +903,7 @@ DRY_RUN=true ./scripts/launch_phase1_training.sh balanced
   - Custom `/api/session` endpoint reading OAuth2-Proxy headers (X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Groups, Authorization)
   - Sign out redirects to OAuth2-Proxy endpoint with return URL
   - Role-based access requiring developer, elevated-developer, or admin roles
-  - Accessible via Tailscale Funnel: `https://shml-platform.tail38b60a.ts.net/ray/ui`
+  - Accessible via Tailscale Funnel: `https://${PUBLIC_DOMAIN}/ray/ui`
 
 ### Changed
 
@@ -1277,7 +1281,7 @@ A production-ready ML platform combining MLflow experiment tracking and Ray dist
 
 #### Network Access
 
-- Tailscale VPN: ${TAILSCALE_IP} (axelofwar-dev-terminal-1.tail38b60a.ts.net)
+- Tailscale VPN: ${TAILSCALE_IP} (<hostname>.<tailnet-id>.ts.net)
 - LAN: ${SERVER_IP}
 - Localhost: 127.0.0.1
 - Firewall: UFW configured for required ports

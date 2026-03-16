@@ -11,7 +11,8 @@ scripts/
 ├── gpu/            # GPU management & monitoring
 ├── monitoring/     # Metrics, dashboards, resources
 ├── network/        # Tailscale, funnel, remote access
-├── openclaw/       # OpenClaw governance and control utilities
+├── self-healing/   # Native watchdog + autonomous remediation
+├── security/       # Security checks and publication boundary tooling
 ├── setup/          # One-time setup scripts
 ├── training/       # Training orchestration & outputs
 └── webhook/        # Webhook deployment
@@ -70,18 +71,21 @@ scripts/
 | `manage_funnel.sh` | Tailscale Funnel management | `./manage_funnel.sh start` |
 | `recover-tailscale.sh` | Tailscale recovery | `./recover-tailscale.sh` |
 
-### OpenClaw (`openclaw/`)
+### Self-Healing (`self-healing/` + `monitoring/`)
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `openclaw_governor.sh` | Budget/cancel/override governance for OpenClaw | `./openclaw/openclaw_governor.sh status` |
-| `openclaw_autonomous_manager.sh` | 5-minute health remediation + model routing (local Nemotron first, Copilot fallback) | `./openclaw/openclaw_autonomous_manager.sh` |
-| `install_autonomous_manager_timer.sh` | Install user-level systemd timer for always-on autonomous manager | `./openclaw/install_autonomous_manager_timer.sh` |
+| `watchdog.sh` | Native GPU-aware self-healing watchdog orchestrated via agent-service | `./self-healing/watchdog.sh` |
+| `watchdog_admin.py` | Watchdog operations dashboard/API | `python ./self-healing/watchdog_admin.py` |
+| `autonomous_service_guard.sh` | 5-minute resource-aware remediation + config drift restarts | `./monitoring/autonomous_service_guard.sh remediate` |
+| `install_guard_timer.sh` | Install user-level systemd timer for always-on autonomous guard remediation | `./monitoring/install_guard_timer.sh` |
 
-Environment tuning for `openclaw_autonomous_manager.sh`:
-- `CONSECUTIVE_DEGRADE_THRESHOLD` (default: `2`)
-- `MAX_NEMOTRON_HEALTH_LATENCY_MS` (default: `2500`)
-- `NEMOTRON_HEALTH_TIMEOUT_SECONDS` (default: `8`)
+Environment tuning for `autonomous_service_guard.sh`:
+- `MIN_MEM_MB` (default: `2048`)
+- `MIN_BUILD_MEM_MB` (default: `3072`)
+- `TRAINING_GPU` (default: `0`)
+- `TRAINING_SENSITIVE_SERVICES` (default: `ray-head,ray-compute-api,mlflow-server,postgres,redis,inference-gateway`)
+- `CONFIG_WATCH_MAP` (default includes infra + MLflow compose mappings)
 
 ### Setup (`setup/`)
 
@@ -91,12 +95,22 @@ Environment tuning for `openclaw_autonomous_manager.sh`:
 | `migrate_sfml_to_shml.sh` | Migration script | `./migrate_sfml_to_shml.sh` |
 | `init_mlflow.py` | Initialize MLflow | `python init_mlflow.py` |
 
+### Security (`security/`)
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `validate_security.sh` | Runtime hardening validation checks | `./validate_security.sh` |
+| `export_public_mirror.sh` | Build sanitized public mirror using allowlist/denylist policy | `bash scripts/security/export_public_mirror.sh --output .public-mirror` |
+| `sync_infisical_to_gitlab_vars.sh` | Path A: sync selected Infisical secrets to GitLab masked/protected CI variables | `bash scripts/security/sync_infisical_to_gitlab_vars.sh` |
+| `render_infisical_secret_files.sh` | Path A: render selected Infisical secrets into local `secrets/*.txt` files | `bash scripts/security/render_infisical_secret_files.sh` |
+
 ### Training (`training/`)
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `training_orchestrator.py` | Training job management | `python training_orchestrator.py` |
 | `check_training_outputs.sh` | Check training results | `./check_training_outputs.sh` |
+| `run_phase10_safe.sh` | Sync phase10 + `gpu_yield` into `ray-head` before execution (persistent fix for missing module) | `./run_phase10_safe.sh --dry-run` |
 
 ### Webhook (`webhook/`)
 

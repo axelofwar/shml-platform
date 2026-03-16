@@ -11,16 +11,14 @@ Differences from chat-api:
 - OAuth2 authentication (no API keys)
 """
 
+import asyncio
 import json
+import logging
 import time
 import uuid
-import logging
-import asyncio
-from typing import AsyncGenerator, Optional, List, Dict, Any
-from datetime import datetime
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 

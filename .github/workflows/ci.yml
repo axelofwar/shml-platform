@@ -143,8 +143,8 @@ jobs:
       - name: Validate OAuth2-Proxy config
         run: |
           # Check that OAuth2-Proxy is configured for role-based access
-          if [ -f "docker-compose.infra.yml" ]; then
-            grep -A 20 "oauth2-proxy:" docker-compose.infra.yml | grep -E "OAUTH2_PROXY|X-Auth-Request" && echo "✓ OAuth2-Proxy configured"
+          if [ -f "deploy/compose/docker-compose.infra.yml" ]; then
+            grep -A 20 "oauth2-proxy:" deploy/compose/docker-compose.infra.yml | grep -E "OAUTH2_PROXY|X-Auth-Request" && echo "✓ OAuth2-Proxy configured"
           fi
 
   # Integration tests (mocked - no live services)
@@ -227,7 +227,7 @@ jobs:
             exit 0
           fi
 
-          URL="${CHAT_API_URL:-https://shml-platform.tail38b60a.ts.net/api/chat}"
+          URL="${CHAT_API_URL:-https://${PUBLIC_DOMAIN}/api/chat}"
 
           echo "Testing Chat API at: $URL"
           if curl -sf "$URL/health" > /dev/null 2>&1; then
@@ -242,7 +242,7 @@ jobs:
         if: steps.check_chat_api.outputs.skip != 'true'
         env:
           # Use /api/chat as the base URL - test appends /v1/chat/completions etc
-          CHAT_API_DIRECT_URL: https://shml-platform.tail38b60a.ts.net/api/chat
+          CHAT_API_DIRECT_URL: https://${PUBLIC_DOMAIN}/api/chat
           # Reuse existing FusionAuth CI/CD keys
           CHAT_API_TEST_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
           CHAT_API_ADMIN_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
@@ -260,7 +260,7 @@ jobs:
           echo "⚠️ Live Chat API tests skipped - API not accessible from CI"
           echo ""
           echo "To enable live tests, ensure these GitHub secrets are set:"
-          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://shml-platform.tail38b60a.ts.net/api/chat)"
+          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://${PUBLIC_DOMAIN}/api/chat)"
           echo "  - FUSIONAUTH_DEVELOPER_KEY: CI/CD Developer key from FusionAuth"
           echo "  - FUSIONAUTH_API_KEY: CI/CD Superkey from FusionAuth (admin)"
           echo "  - FUSIONAUTH_VIEWER_KEY: CI/CD Viewer key from FusionAuth"
@@ -301,7 +301,7 @@ jobs:
         env:
           PUBLIC_DOMAIN: ${{ secrets.PUBLIC_DOMAIN }}
         run: |
-          DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+          DOMAIN="${PUBLIC_DOMAIN}"
 
           echo "Testing Tailscale Funnel at: https://$DOMAIN"
           if curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/mlflow/health" | grep -qE "200|302|401|403"; then
@@ -430,7 +430,7 @@ jobs:
             exit 0
           fi
 
-          URL="${FUSIONAUTH_URL:-https://shml-platform.tail38b60a.ts.net/fusionauth}"
+          URL="${FUSIONAUTH_URL:-https://${PUBLIC_DOMAIN}/fusionauth}"
 
           echo "Testing FusionAuth at: $URL"
           if curl -sf -H "Authorization: $FUSIONAUTH_API_KEY" "$URL/api/status" > /dev/null 2>&1; then
@@ -492,8 +492,8 @@ jobs:
 
       - name: Validate compose files
         run: |
-          docker compose -f docker-compose.yml config -q
-          docker compose -f docker-compose.infra.yml config -q
+          docker compose -f deploy/compose/docker-compose.yml config -q
+          docker compose -f deploy/compose/docker-compose.infra.yml config -q
 
       - name: Build MLflow containers (dry-run)
         run: |

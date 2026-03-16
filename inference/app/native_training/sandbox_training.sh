@@ -27,7 +27,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="/home/axelofwar/Projects/shml-platform"
+PROJECT_ROOT="${PLATFORM_ROOT:-.}"
 
 # Paths that need write access
 CHECKPOINT_DIR="${PROJECT_ROOT}/data/checkpoints"

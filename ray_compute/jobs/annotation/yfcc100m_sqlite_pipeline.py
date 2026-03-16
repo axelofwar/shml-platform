@@ -23,6 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
@@ -76,7 +79,7 @@ FACE_TAGS = {
 }
 
 DEFAULT_OUTPUT_DIR = (
-    "/home/axelofwar/Projects/shml-platform/ray_compute/data/datasets/yfcc100m"
+    f"{PLATFORM_ROOT}/ray_compute/data/datasets/yfcc100m"
 )
 DEFAULT_DB_NAME = "yfcc100m_faces"
 

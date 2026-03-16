@@ -18,7 +18,7 @@ if curl -sf "$DEV_SERVER/health" > /dev/null 2>&1; then
     echo "   ✅ Dev server (3.x) is running at $DEV_SERVER"
 else
     echo "   ❌ Dev server not running. Start with:"
-    echo "      cd mlflow-server && docker compose -f docker-compose.dev.yml up -d"
+    echo "      cd mlflow-server && docker compose -f deploy/compose/docker-compose.dev.yml up -d"
     exit 1
 fi
 

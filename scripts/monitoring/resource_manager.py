@@ -74,7 +74,7 @@ class ResourceManager:
         "authentik-worker": "low",
     }
 
-    def __init__(self, compose_file: str = "docker-compose.yml"):
+    def __init__(self, compose_file: str = "deploy/compose/docker-compose.yml"):
         self.compose_file = Path(compose_file)
         if not self.compose_file.exists():
             raise FileNotFoundError(f"Docker Compose file not found: {compose_file}")
@@ -357,7 +357,7 @@ class ResourceManager:
             print(report)
 
             if dry_run:
-                print("\n[DRY RUN] No changes were made to docker-compose.yml")
+                print("\n[DRY RUN] No changes were made to deploy/compose/docker-compose.yml")
                 return True, report
 
             # Apply allocations
@@ -392,8 +392,8 @@ def main():
     )
     parser.add_argument(
         "--compose-file",
-        default="docker-compose.yml",
-        help="Path to docker-compose.yml file",
+        default="deploy/compose/docker-compose.yml",
+        help="Path to deploy/compose/docker-compose.yml file",
     )
     parser.add_argument(
         "--dry-run",

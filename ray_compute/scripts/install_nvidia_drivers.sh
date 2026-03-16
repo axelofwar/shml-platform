@@ -129,6 +129,6 @@ else
     echo "  sudo reboot"
     echo ""
     echo "After reboot, continue with:"
-    echo "  cd /home/axelofwar/Projects/mlflow-server/ray_compute"
+    echo "  cd /home/$USER/Projects/mlflow-server/ray_compute"
     echo "  sudo bash scripts/install_docker_nvidia.sh"
 fi

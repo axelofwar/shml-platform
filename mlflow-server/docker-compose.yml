@@ -6,7 +6,7 @@
 # Stop:   ./start_all_safe.sh stop mlflow
 # Status: ./start_all_safe.sh status
 #
-# This file uses external networks/volumes created by docker-compose.infra.yml.
+# This file uses external networks/volumes created by deploy/compose/docker-compose.infra.yml.
 # Running standalone will fail unless infrastructure is already running.
 
 services:
@@ -37,14 +37,17 @@ services:
       # Server Configuration
       MLFLOW_HOST: "0.0.0.0"
       MLFLOW_PORT: "5000"
-      MLFLOW_WORKERS: "8"
+      MLFLOW_WORKERS: "4"
       MLFLOW_WORKER_CONNECTIONS: "2000"
       MLFLOW_WORKER_TIMEOUT: "3600"
+      MLFLOW_SQLALCHEMYSTORE_POOL_SIZE: "2"
+      MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW: "1"
+      MLFLOW_SQLALCHEMYSTORE_POOL_RECYCLE: "3600"
       # MLflow 3.x - Static prefix for remote access (ensures correct asset paths)
       MLFLOW_STATIC_PREFIX: "/mlflow"
       # MLflow 3.x Security Settings - allow internal Docker network hosts AND Tailscale domain
       # IMPORTANT: Include both hostname AND hostname:port variants (MLflow 3.x is strict about exact Host header match)
-      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-server:5000,mlflow-nginx,mlflow-nginx:80,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-server:5000,mlflow-nginx,mlflow-nginx:80,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN}"
       # Schema & Validation
       MLFLOW_SCHEMA_VALIDATION: "true"
       MLFLOW_REQUIRE_METADATA: "true"

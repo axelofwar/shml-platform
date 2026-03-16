@@ -27,13 +27,13 @@ from typing import Dict, Optional, Tuple
 
 def get_lan_ip() -> str:
     """Get the host's LAN IP for testing through Traefik"""
-    return os.getenv("LAN_IP", "10.0.0.163")
+    return os.getenv("LAN_IP", "127.0.0.1")
 
 
 def get_config() -> Dict[str, str]:
     """Test configuration"""
     lan_ip = get_lan_ip()
-    domain = os.getenv("PUBLIC_DOMAIN", "shml-platform.tail38b60a.ts.net")
+    domain = os.getenv("PUBLIC_DOMAIN", "localhost")
 
     return {
         # LAN endpoints (Traefik on host IP)

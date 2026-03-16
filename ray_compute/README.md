@@ -11,10 +11,10 @@ OAuth-enabled GPU platform with Ray 2.9.0-gpu, FastAPI, FusionAuth, Next.js Web 
 
 | Service | URL | Auth Required |
 |---------|-----|---------------|
-| Ray Compute UI | https://shml-platform.tail38b60a.ts.net/ray/ui | OAuth (developer+) |
-| Ray Dashboard | https://shml-platform.tail38b60a.ts.net/ray/ | OAuth (developer+) |
-| Ray API | https://shml-platform.tail38b60a.ts.net/api/ray | API Key or OAuth |
-| Grafana | https://shml-platform.tail38b60a.ts.net/grafana | OAuth (developer+) |
+| Ray Compute UI | https://${PUBLIC_DOMAIN}/ray/ui | OAuth (developer+) |
+| Ray Dashboard | https://${PUBLIC_DOMAIN}/ray/ | OAuth (developer+) |
+| Ray API | https://${PUBLIC_DOMAIN}/api/ray | API Key or OAuth |
+| Grafana | https://${PUBLIC_DOMAIN}/grafana | OAuth (developer+) |
 
 ### Prerequisites
 
@@ -71,7 +71,7 @@ OAuth is handled automatically when accessing UIs via browser. Requires:
 ```bash
 # Via API
 curl -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/users/me
+  https://${PUBLIC_DOMAIN}/api/ray/users/me
 
 # Response
 {
@@ -90,7 +90,7 @@ curl -H "X-API-Key: \$SHML_API_KEY" \\
 
 ```bash
 # All-in-one platform health
-curl https://shml-platform.tail38b60a.ts.net/api/ray/health
+curl https://${PUBLIC_DOMAIN}/api/ray/health
 
 # Expected response
 {
@@ -106,10 +106,10 @@ curl https://shml-platform.tail38b60a.ts.net/api/ray/health
 
 ```bash
 # Ray Compute API
-curl https://shml-platform.tail38b60a.ts.net/api/ray/health
+curl https://${PUBLIC_DOMAIN}/api/ray/health
 
 # MLflow
-curl https://shml-platform.tail38b60a.ts.net/mlflow/health
+curl https://${PUBLIC_DOMAIN}/mlflow/health
 
 # Direct container health (local only)
 curl http://172.30.0.25:8000/health   # Ray API
@@ -148,7 +148,7 @@ python submit_face_detection_job.py --resume-phase1 --api-key \$SHML_API_KEY
 
 ```bash
 # Submit a simple job
-curl -X POST https://shml-platform.tail38b60a.ts.net/api/ray/jobs \\
+curl -X POST https://${PUBLIC_DOMAIN}/api/ray/jobs \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: \$SHML_API_KEY" \\
   -d '{
@@ -193,7 +193,7 @@ python submit_face_detection_job.py --status job-abc123 --api-key \$SHML_API_KEY
 
 # Via curl
 curl -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123
+  https://${PUBLIC_DOMAIN}/api/ray/jobs/job-abc123
 
 # Via Ray CLI (local only)
 docker exec ray-head ray job status job-abc123
@@ -207,7 +207,7 @@ python submit_face_detection_job.py --logs job-abc123 --api-key \$SHML_API_KEY
 
 # Via curl
 curl -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123/logs
+  https://${PUBLIC_DOMAIN}/api/ray/jobs/job-abc123/logs
 
 # Via Ray CLI (local only, real-time)
 docker exec ray-head ray job logs job-abc123 --follow
@@ -224,7 +224,7 @@ python submit_face_detection_job.py --list --api-key \$SHML_API_KEY
 
 # Via curl
 curl -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/jobs
+  https://${PUBLIC_DOMAIN}/api/ray/jobs
 
 # Via Ray CLI (local only)
 docker exec ray-head ray job list
@@ -235,7 +235,7 @@ docker exec ray-head ray job list
 ```bash
 # Via curl
 curl -X DELETE -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/jobs/job-abc123
+  https://${PUBLIC_DOMAIN}/api/ray/jobs/job-abc123
 
 # Via Ray CLI (local only)
 docker exec ray-head ray job stop job-abc123
@@ -247,8 +247,8 @@ docker exec ray-head ray job stop job-abc123
 
 ### Grafana Dashboards
 
-- **Face Detection Training**: https://shml-platform.tail38b60a.ts.net/grafana/d/face-detection-training
-- **Ray Cluster**: https://shml-platform.tail38b60a.ts.net/grafana/d/ray-cluster
+- **Face Detection Training**: https://${PUBLIC_DOMAIN}/grafana/d/face-detection-training
+- **Ray Cluster**: https://${PUBLIC_DOMAIN}/grafana/d/ray-cluster
 
 ### Container Logs
 
@@ -301,7 +301,7 @@ docker exec ray-head ray resources
 ```bash
 # Test API key
 curl -H "X-API-Key: \$SHML_API_KEY" \\
-  https://shml-platform.tail38b60a.ts.net/api/ray/users/me
+  https://${PUBLIC_DOMAIN}/api/ray/users/me
 
 # Check OAuth2-proxy logs
 docker logs oauth2-proxy 2>&1 | tail -50

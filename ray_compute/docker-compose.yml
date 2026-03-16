@@ -6,7 +6,7 @@
 # Stop:   ./start_all_safe.sh stop ray
 # Status: ./start_all_safe.sh status
 #
-# This file uses external networks/volumes created by docker-compose.infra.yml.
+# This file uses external networks/volumes created by deploy/compose/docker-compose.infra.yml.
 # Running standalone will fail unless infrastructure is already running.
 
 services:
@@ -28,13 +28,13 @@ services:
       --dashboard-port=8265
       --metrics-export-port=8080
       --num-cpus=8
-      --num-gpus=2
+      --num-gpus=${RAY_NUM_GPUS:-1}
       --object-store-memory=536870912
       --block
     environment:
       - RAY_memory_monitor_refresh_ms=0
-      - CUDA_VISIBLE_DEVICES=0,1
-      - NVIDIA_VISIBLE_DEVICES=0,1
+      - CUDA_VISIBLE_DEVICES=${RAY_VISIBLE_GPUS:-0}
+      - NVIDIA_VISIBLE_DEVICES=${RAY_VISIBLE_GPUS:-0}
       # =======================================================================
       # CUDA/PyTorch Configuration
       # Disable NVML warnings - container has GPU compute but not monitoring libs
@@ -77,7 +77,7 @@ services:
       # Grafana endpoint for head node health checks (internal Docker network)
       - RAY_GRAFANA_HOST=http://unified-grafana:3000
       # Grafana endpoint for browser iframes (external URL via reverse proxy)
-      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/grafana
+      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN}/grafana
       # Grafana organization ID (default: 1)
       - RAY_GRAFANA_ORG_ID=1
     volumes:
@@ -102,7 +102,7 @@ services:
           memory: 16G  # Increased baseline reservation
           devices:
             - driver: nvidia
-              device_ids: ['0', '1']
+              device_ids: ['${RAY_PRIMARY_GPU_ID:-0}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "ray", "status"]
@@ -294,9 +294,10 @@ services:
       # CRITICAL: Do NOT set NEXT_PUBLIC_API_URL - it causes mixed content errors
       # The frontend uses relative URLs (/api/ray) which work with both HTTP and HTTPS
       - NODE_ENV=production
-    # SECURITY: Bind Ray UI to localhost only (was 0.0.0.0)
-    ports:
-      - "127.0.0.1:3002:3000"
+    # SECURITY: No direct port binding — all access goes through Traefik + OAuth
+    # Port 3002 was previously bound here but Docker ignored 127.0.0.1 and
+    # exposed on 0.0.0.0, bypassing OAuth. Removed to close the security gap.
+    # Access via: https://<host>/ray/ui  (OAuth2 + role-auth-developer)
     networks:
       - platform
     depends_on:

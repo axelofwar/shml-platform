@@ -29,9 +29,9 @@ class TestFiftyOneCompose:
 
     @pytest.fixture
     def compose_content(self):
-        path = os.path.join(_root, "docker-compose.infra.yml")
+        path = os.path.join(_root, "deploy/compose/docker-compose.infra.yml")
         if not os.path.exists(path):
-            pytest.skip("docker-compose.infra.yml not found")
+            pytest.skip("deploy/compose/docker-compose.infra.yml not found")
         with open(path) as f:
             return f.read()
 

@@ -7,25 +7,32 @@ Exposes platform capabilities as MCP tools for OpenCode integration:
 - mlflow_query: Query MLflow experiments and runs
 - vision_analyze: Analyze images with Qwen3-VL (RTX 2070)
 
+NemoClaw Sandbox Management (Phase 5):
+- create_sandbox: Provision OpenShell sandbox for user+role
+- list_sandboxes: Show active sandboxes
+- destroy_sandbox: Tear down a sandbox
+- get_sandbox_policy: Read current network/filesystem policy
+- update_sandbox_policy: Hot-reload policy (network only)
+
 ⚠️ TRAINING SAFETY:
 - Code generation tools are DISABLED while RTX 3090 is busy with training
 - Vision tools use RTX 2070, always safe to call
 - Status/query tools are read-only, always safe
+- Sandbox management tools are always safe (CPU-only)
 
 MCP Protocol Reference: https://opencode.ai/docs/mcp-servers
 """
 
-import asyncio
+from pathlib import Path
+
+import logging
 import os
 import subprocess
-import json
-import base64
-import httpx
-import logging
-from typing import Dict, Any, List, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import httpx
 from pydantic import BaseModel, Field
-from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +177,10 @@ class MCPToolExecutor:
             "MLFLOW_TRACKING_URI", "http://mlflow-nginx:80"
         )
         self.ray_api_url = "http://ray-compute-api:8000"
+        # NemoClaw sandbox factory (Phase 5)
+        self.nemoclaw_factory_url = os.environ.get(
+            "NEMOCLAW_FACTORY_URL", "http://nemoclaw-sandbox-factory:9095"
+        )
 
     async def execute(self, tool_name: str, args: Dict[str, Any]) -> MCPToolResult:
         """Execute a tool by name with arguments"""
@@ -183,6 +194,12 @@ class MCPToolExecutor:
                 "mlflow_query": self._mlflow_query,
                 "vision_analyze": self._vision_analyze,
                 "vision_then_code": self._vision_then_code,
+                # NemoClaw sandbox management (Phase 5)
+                "create_sandbox": self._create_sandbox,
+                "list_sandboxes": self._list_sandboxes,
+                "destroy_sandbox": self._destroy_sandbox,
+                "get_sandbox_policy": self._get_sandbox_policy,
+                "update_sandbox_policy": self._update_sandbox_policy,
             }
 
             handler = handlers.get(tool_name)
@@ -257,7 +274,7 @@ class MCPToolExecutor:
             # Check for local training logs
             import os
 
-            log_dir = "/home/axelofwar/Projects/shml-platform/logs"
+            log_dir = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3])) + "/logs"
             results_file = None
 
             # Find latest training run results
@@ -386,9 +403,7 @@ class MCPToolExecutor:
             metric: Optional metric to retrieve
         """
         experiment_name = args.get("experiment_name")
-        run_id = args.get("run_id")
-        metric = args.get("metric")
-
+        # run_id and metric retained for future filtering
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # List experiments
@@ -397,10 +412,13 @@ class MCPToolExecutor:
                 )
 
                 if resp.status_code != 200:
-                    # Try fallback URL (direct container)
-                    resp = await client.get(
-                        "http://172.30.0.19:5000/api/2.0/mlflow/experiments/list"
-                    )
+                    # Try fallback URLs via Docker DNS (no hardcoded container IPs)
+                    for fallback_base in ("http://mlflow-nginx:80", "http://mlflow-server:5000"):
+                        resp = await client.get(
+                            f"{fallback_base}/api/2.0/mlflow/experiments/list"
+                        )
+                        if resp.status_code == 200:
+                            break
 
                 if resp.status_code == 200:
                     experiments = resp.json().get("experiments", [])
@@ -531,6 +549,106 @@ class MCPToolExecutor:
             "hint": "After Phase 5 training, coding model will be available on RTX 3090",
         }
 
+    # -------------------------------------------------------------------------
+    # NemoClaw Sandbox Management (Phase 5)
+    # -------------------------------------------------------------------------
+
+    async def _nemoclaw_request(
+        self,
+        method: str,
+        path: str,
+        json: Optional[Dict] = None,
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
+        """Make a request to the NemoClaw sandbox factory."""
+        url = f"{self.nemoclaw_factory_url}{path}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                resp = await getattr(client, method)(url, json=json)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.ConnectError:
+                return {
+                    "error": "NemoClaw factory unavailable",
+                    "hint": "Ensure docker-compose.nemoclaw.yml services are running",
+                    "_offline": True,
+                }
+            except Exception as e:
+                return {"error": str(e)}
+
+    async def _create_sandbox(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Provision a NemoClaw OpenShell sandbox for a user+role.
+
+        Args:
+            user_id:    User identifier (email or ID)
+            user_role:  Role tier (viewer/developer/elevated-developer/admin)
+            session_id: Optional session identifier
+        """
+        return await self._nemoclaw_request("post", "/sandbox", json={
+            "user_id": args.get("user_id", "mcp-caller"),
+            "user_role": args.get("user_role", "developer"),
+            "session_id": args.get("session_id"),
+        })
+
+    async def _list_sandboxes(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        List active NemoClaw sandboxes.
+
+        Args:
+            (no required args — returns sandboxes visible to caller role)
+        """
+        result = await self._nemoclaw_request("get", "/sandbox")
+        # result is a list — wrap in dict for MCPToolResult
+        if isinstance(result, list):
+            return {"sandboxes": result, "count": len(result)}
+        return result
+
+    async def _destroy_sandbox(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Destroy a NemoClaw sandbox.
+
+        Args:
+            sandbox_name: Name of sandbox to destroy (from create_sandbox response)
+        """
+        name = args.get("sandbox_name")
+        if not name:
+            return {"error": "sandbox_name is required"}
+        return await self._nemoclaw_request("delete", f"/sandbox/{name}")
+
+    async def _get_sandbox_policy(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get sandbox health and policy state.
+
+        Args:
+            sandbox_name: Sandbox to inspect
+        """
+        name = args.get("sandbox_name")
+        if not name:
+            return {"error": "sandbox_name is required"}
+        return await self._nemoclaw_request("get", f"/sandbox/{name}")
+
+    async def _update_sandbox_policy(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Hot-reload network policy for a running sandbox.
+
+        Args:
+            sandbox_name: Target sandbox
+            allowlist:    List of hostnames to allow (added to current policy)
+            blocklist:    List of hostnames to block
+        """
+        name = args.get("sandbox_name")
+        if not name:
+            return {"error": "sandbox_name is required"}
+        return await self._nemoclaw_request(
+            "post",
+            f"/sandbox/{name}/policy",
+            json={
+                "allowlist": args.get("allowlist", []),
+                "blocklist": args.get("blocklist", []),
+            },
+        )
+
 
 # ============================================================================
 # MCP Server / Router
@@ -642,6 +760,99 @@ class MCPServer:
                 ],
                 gpu_required="cuda:0",  # RTX 3090 Ti - Training GPU (blocked during training)
                 safe_during_training=False,
+            ),
+            # -----------------------------------------------------------------
+            # NemoClaw Sandbox Management (Phase 5)
+            # -----------------------------------------------------------------
+            MCPTool(
+                name="create_sandbox",
+                description="Provision a NemoClaw OpenShell sandbox for a user+role. Returns sandbox_name for subsequent execute calls. Requires elevated-developer+.",
+                parameters=[
+                    MCPToolParameter(
+                        name="user_id",
+                        type="string",
+                        description="User identifier (email or ID)",
+                        required=True,
+                    ),
+                    MCPToolParameter(
+                        name="user_role",
+                        type="string",
+                        description="Role tier: viewer | developer | elevated-developer | admin",
+                        required=False,
+                        default="developer",
+                    ),
+                    MCPToolParameter(
+                        name="session_id",
+                        type="string",
+                        description="Optional session ID to associate sandbox with",
+                        required=False,
+                    ),
+                ],
+                gpu_required=None,
+                safe_during_training=True,
+            ),
+            MCPTool(
+                name="list_sandboxes",
+                description="List active NemoClaw sandboxes for the current user (admin sees all).",
+                parameters=[],
+                gpu_required=None,
+                safe_during_training=True,
+            ),
+            MCPTool(
+                name="destroy_sandbox",
+                description="Destroy a NemoClaw sandbox and release resources.",
+                parameters=[
+                    MCPToolParameter(
+                        name="sandbox_name",
+                        type="string",
+                        description="Sandbox name (from create_sandbox response)",
+                        required=True,
+                    ),
+                ],
+                gpu_required=None,
+                safe_during_training=True,
+            ),
+            MCPTool(
+                name="get_sandbox_policy",
+                description="Get sandbox health and current network/filesystem policy state.",
+                parameters=[
+                    MCPToolParameter(
+                        name="sandbox_name",
+                        type="string",
+                        description="Sandbox name to inspect",
+                        required=True,
+                    ),
+                ],
+                gpu_required=None,
+                safe_during_training=True,
+            ),
+            MCPTool(
+                name="update_sandbox_policy",
+                description="Hot-reload network policy for a running sandbox (add/remove egress rules). Network policy only — filesystem is locked at creation.",
+                parameters=[
+                    MCPToolParameter(
+                        name="sandbox_name",
+                        type="string",
+                        description="Target sandbox name",
+                        required=True,
+                    ),
+                    MCPToolParameter(
+                        name="allowlist",
+                        type="array",
+                        description="Hostnames to allow (e.g. ['api.example.com'])",
+                        required=False,
+                        default=[],
+                    ),
+                    MCPToolParameter(
+                        name="blocklist",
+                        type="array",
+                        description="Hostnames to block",
+                        required=False,
+                        default=[],
+                    ),
+                ],
+                gpu_required=None,
+                safe_during_training=True,
             ),
         ]
 

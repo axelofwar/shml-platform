@@ -18,10 +18,10 @@ secrets/
 ├── authentik_secret_key.txt            # Authentik encryption key (legacy)
 ├── authentik_db_password.txt           # Authentik database password (legacy)
 ├── authentik_bootstrap_password.txt    # Authentik initial admin password (legacy)
-├── shml-platform.tail38b60a.ts.net.crt # Tailscale TLS certificate
-├── shml-platform.tail38b60a.ts.net.key # Tailscale TLS private key
-├── sfml-platform.tail38b60a.ts.net.crt # Legacy TLS certificate
-├── sfml-platform.tail38b60a.ts.net.key # Legacy TLS private key
+├── ${PUBLIC_DOMAIN}.crt # Tailscale TLS certificate
+├── ${PUBLIC_DOMAIN}.key # Tailscale TLS private key
+├── <legacy-domain>.<tailnet-id>.ts.net.crt # Legacy TLS certificate
+├── <legacy-domain>.<tailnet-id>.ts.net.key # Legacy TLS private key
 └── certs/                              # Additional certificates
 ```
 
@@ -127,11 +127,11 @@ docker restart unified-grafana
 
 ```bash
 # Regenerate Tailscale certs
-tailscale cert shml-platform.tail38b60a.ts.net
+tailscale cert ${PUBLIC_DOMAIN}
 
 # Copy to secrets/
-cp shml-platform.tail38b60a.ts.net.crt secrets/
-cp shml-platform.tail38b60a.ts.net.key secrets/
+cp ${PUBLIC_DOMAIN}.crt secrets/
+cp ${PUBLIC_DOMAIN}.key secrets/
 
 # Restart Traefik
 docker restart shml-traefik

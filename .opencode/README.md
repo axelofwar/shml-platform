@@ -13,7 +13,7 @@ mkdir -p ~/.config/opencode
 cp -r .opencode/* ~/.config/opencode/
 
 # Or use per-project
-cd /home/axelofwar/Projects/shml-platform
+cd /opt/shml-platform
 opencode
 ```
 
@@ -82,7 +82,7 @@ timeout = 120000
 ### Start OpenCode
 
 ```bash
-cd /home/axelofwar/Projects/shml-platform
+cd /opt/shml-platform
 opencode
 ```
 

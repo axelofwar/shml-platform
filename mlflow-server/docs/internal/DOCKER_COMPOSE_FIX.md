@@ -77,7 +77,7 @@ docker-compose up -d
 
 ### Safe Restart (Preserves Data)
 ```bash
-cd /home/axelofwar/Desktop/Projects/mlflow-server
+cd /opt/shml-platform/mlflow-server
 docker-compose down --remove-orphans
 docker-compose up -d
 ```

@@ -34,7 +34,7 @@ fi
 
 # Configuration
 FUSIONAUTH_API_KEY="${FUSIONAUTH_API_KEY:-}"
-OAUTH2_PROXY_APP_ID="${OAUTH2_PROXY_APP_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}"
+OAUTH2_PROXY_APP_ID="${OAUTH2_PROXY_APP_ID:-${FUSIONAUTH_PROXY_CLIENT_ID:?Set FUSIONAUTH_PROXY_CLIENT_ID in .env}}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-shml-postgres}"
 
 # =============================================================================

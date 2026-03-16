@@ -193,7 +193,7 @@ Store credentials in `~/.shml/credentials` (INI format, mode `0600`):
 
 ```ini title="~/.shml/credentials"
 [default]
-base_url = https://shml-platform.tail38b60a.ts.net
+base_url = https://${PUBLIC_DOMAIN}
 api_key = your-api-key-here
 
 [staging]
@@ -207,7 +207,7 @@ oauth_token = eyJhbGciOi...
 from shml.config import AuthConfig
 
 auth = AuthConfig(
-    base_url="https://shml-platform.tail38b60a.ts.net",
+    base_url="https://${PUBLIC_DOMAIN}",
     api_key="sk-my-key-here",
 )
 auth.save()  # writes to ~/.shml/credentials with 0600 permissions

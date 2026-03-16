@@ -2,12 +2,16 @@ import os
 import glob
 import random
 import logging
+from pathlib import Path
 from roboflow import Roboflow
 from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
 
 
 def upload_images(
@@ -69,7 +73,7 @@ if __name__ == "__main__":
     PROJECT_ID = os.getenv("ROBOFLOW_PROJECT_ID", "face-detection-sam3")
     IMAGE_DIR = os.getenv(
         "YFCC_IMAGE_DIR",
-        "/home/axelofwar/Projects/shml-platform/ray_compute/data/datasets/yfcc100m",
+        f"{PLATFORM_ROOT}/ray_compute/data/datasets/yfcc100m",
     )
 
     if not API_KEY:

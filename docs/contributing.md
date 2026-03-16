@@ -62,7 +62,7 @@ git commit --no-verify -m "emergency fix"
 
 # 2. Edit compose files — add inline comments for critical values
 # 3. Validate
-docker compose -f docker-compose.infra.yml config
+docker compose -f deploy/compose/docker-compose.infra.yml config
 
 # 4. Restart and verify
 ./start_all_safe.sh

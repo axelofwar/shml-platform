@@ -94,7 +94,7 @@ docker logs -f mlflow-server --tail 100
 docker logs -f ray-head --tail 100
 
 # All platform containers
-docker compose --env-file .env -f docker-compose.infra.yml logs -f --tail 50
+docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml logs -f --tail 50
 
 # Search for errors
 docker logs ray-head 2>&1 | grep -i "error\|exception\|traceback" | tail -20
@@ -120,10 +120,10 @@ Query logs in Grafana → Explore → Loki datasource:
 docker pull grafana/grafana:10.3.0
 
 # 2. Update version in compose file
-# Edit docker-compose.infra.yml: image: grafana/grafana:10.3.0
+# Edit deploy/compose/docker-compose.infra.yml: image: grafana/grafana:10.3.0
 
 # 3. Recreate container
-docker compose --env-file .env -f docker-compose.infra.yml up -d unified-grafana
+docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d unified-grafana
 
 # 4. Verify health
 docker inspect unified-grafana --format='{{.State.Health.Status}}'
@@ -140,9 +140,9 @@ cp -r . ../shml-platform-backup-$(date +%Y%m%d)
 git pull
 
 # 3. Rebuild custom images
-docker compose --env-file .env -f docker-compose.infra.yml build
-docker compose --env-file .env -f ray_compute/docker-compose.yml build
-docker compose --env-file .env -f mlflow-server/docker-compose.yml build
+docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml build
+docker compose --env-file .env -f ray_compute/deploy/compose/docker-compose.yml build
+docker compose --env-file .env -f mlflow-server/deploy/compose/docker-compose.yml build
 
 # 4. Restart
 ./start_all_safe.sh
@@ -175,7 +175,7 @@ docker exec -it shml-postgres psql -U postgres
 ```bash
 docker restart shml-traefik
 # Or recreate from compose
-docker compose --env-file .env -f docker-compose.infra.yml up -d traefik
+docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d traefik
 ```
 
 ### Disk Usage

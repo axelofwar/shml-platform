@@ -42,6 +42,9 @@ except ImportError:
     SYSTEMD_AVAILABLE = False
     sdnotify = None
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 # Configuration
 CONFIG = {
     # Service endpoints (Docker network IPs)
@@ -62,9 +65,9 @@ CONFIG = {
     "checkpoint_timeout": 60.0,  # Max wait for checkpoint
     "resume_delay": 5.0,  # Delay before resuming
     # Paths
-    "checkpoint_dir": "/home/axelofwar/Projects/shml-platform/data/checkpoints",
-    "training_log": "/home/axelofwar/Projects/shml-platform/logs/training.log",
-    "state_file": "/home/axelofwar/Projects/shml-platform/data/training_coordinator_state.json",
+    "checkpoint_dir": f"{PLATFORM_ROOT}/data/checkpoints",
+    "training_log": f"{PLATFORM_ROOT}/logs/training.log",
+    "state_file": f"{PLATFORM_ROOT}/data/training_coordinator_state.json",
 }
 
 # Logging setup
@@ -275,7 +278,7 @@ class NativeTrainingCoordinator:
 
         # Build command
         cmd = [
-            "/home/axelofwar/Projects/shml-platform/inference/app/native_training/sandbox_training.sh",
+            f"{PLATFORM_ROOT}/inference/app/native_training/sandbox_training.sh",
             "--model",
             model,
             "--data",

@@ -66,6 +66,9 @@ except ImportError:
     MLFLOW_AVAILABLE = False
     print("⚠️ MLflow not available - metrics will not be logged")
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 
 # =============================================================================
 # Configuration
@@ -84,12 +87,12 @@ class AdversarialConfig:
     image_size: int = 1280
 
     # Dataset
-    dataset_root: str = "/home/axelofwar/Projects/shml-platform/data"
+    dataset_root: str = f"{PLATFORM_ROOT}/data"
     images_per_category: int = 100
 
     # Output
     output_dir: str = (
-        "/home/axelofwar/Projects/shml-platform/ray_compute/adversarial_results"
+        f"{PLATFORM_ROOT}/ray_compute/adversarial_results"
     )
 
     # MLflow
@@ -721,13 +724,13 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/data",
+        default=f"{PLATFORM_ROOT}/data",
         help="Dataset root",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="/home/axelofwar/Projects/shml-platform/ray_compute/adversarial_results",
+        default=f"{PLATFORM_ROOT}/ray_compute/adversarial_results",
         help="Output directory",
     )
     parser.add_argument(

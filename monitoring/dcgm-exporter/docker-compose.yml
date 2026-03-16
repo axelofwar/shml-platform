@@ -6,7 +6,7 @@
 # Stop:   ./start_all_safe.sh stop monitoring
 # Status: ./start_all_safe.sh status
 #
-# This file uses external networks created by docker-compose.infra.yml.
+# This file uses external networks created by deploy/compose/docker-compose.infra.yml.
 # Running standalone will fail unless infrastructure is already running.
 #
 # Official NVIDIA exporter for comprehensive GPU monitoring

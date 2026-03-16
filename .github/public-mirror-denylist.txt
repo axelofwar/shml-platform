@@ -35,7 +35,15 @@ backups/**
 
 # Private/internal documentation and archives
 docs/internal/**
+docs/obsidian-vault/.obsidian/**
+docs/obsidian-vault/70-Internal/**
 archived/**
+
+# Internal configuration (contains local paths, hardware details)
+mcp/**
+
+# Service files (contain deployment-specific paths)
+*.service
 
 # Explicitly private trees
 sfml-platform/**

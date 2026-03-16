@@ -83,7 +83,7 @@ class Client:
         Initialize the SHML client.
 
         Args:
-            base_url: Platform URL (default: env or https://shml-platform.tail38b60a.ts.net)
+            base_url: Platform URL (default: env SHML_BASE_URL or http://localhost:8000)
             api_key: API key for authentication (default: from env SHML_API_KEY)
             oauth_token: OAuth token (alternative to API key)
             profile: Credentials file profile to use

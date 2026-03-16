@@ -83,3 +83,6 @@ When setting up a fresh platform:
 - [Backup & Restore](backup-restore.md) — Database backups and recovery
 - [Platform Operations](platform-operations.md) — Start/stop, health, logs
 - [Secrets Management](secrets-management.md) — Secret files and rotation
+- [Infisical Path A](infisical-path-a.md) — Infisical as source of truth for GitLab variables and Docker secret files
+- [Repository Publication Policy](repository-publication-policy.md) — Public mirror boundaries and release gates
+- [GitLab Bootstrap & Mirror Setup](gitlab-bootstrap-mirroring.md) — Zero-to-setup guide for private canonical GitLab and public GitHub mirror

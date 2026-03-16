@@ -194,7 +194,7 @@ services:
         tag: "admin"
 
   # Admin section uses direct LAN IP for ports not exposed through Traefik
-  # NOTE: Update IP (172.20.10.2) to match your server's LAN address
+  # NOTE: Update IP to match your server's LAN address
   # These links only work from the local network
   - name: "Admin (Direct Ports - LAN Only)"
     icon: "fas fa-cog"
@@ -202,12 +202,12 @@ services:
       - name: "Traefik API"
         subtitle: "Direct API Dashboard (port 8090)"
         logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/traefik.png"
-        url: "http://172.20.10.2:8090/dashboard/"
+        url: "http://${LAN_IP:-127.0.0.1}:8090/dashboard/"
         target: "_blank"
       - name: "FusionAuth Admin"
         subtitle: "Direct Admin UI (port 9011)"
         logo: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/fusionauth.png"
-        url: "http://172.20.10.2:9011/admin/"
+        url: "http://${LAN_IP:-127.0.0.1}:9011/admin/"
         target: "_blank"
       - name: "Watchdog Dashboard"
         subtitle: "Self-healing operations dashboard"

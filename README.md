@@ -114,13 +114,13 @@ Profiles live in `config/profiles/*.yaml` — create custom ones following the s
 
 | File | Services |
 |------|----------|
-| `docker-compose.infra.yml` | Traefik, PostgreSQL, Redis, FusionAuth, OAuth2-Proxy, Prometheus, Grafana, Homer |
-| `mlflow-server/docker-compose.yml` | MLflow server + Nginx proxy |
-| `ray_compute/docker-compose.yml` | Ray head + workers |
-| `docker-compose.secrets.yml` | Secrets manager overlay |
-| `docker-compose.tracing.yml` | Distributed tracing |
-| `docker-compose.logging.yml` | Loki log aggregation |
-| `inference/*/docker-compose.yml` | Coding models, Chat API, Chat UI |
+| `deploy/compose/docker-compose.infra.yml` | Traefik, PostgreSQL, Redis, FusionAuth, OAuth2-Proxy, Prometheus, Grafana, Homer |
+| `mlflow-server/deploy/compose/docker-compose.yml` | MLflow server + Nginx proxy |
+| `ray_compute/deploy/compose/docker-compose.yml` | Ray head + workers |
+| `deploy/compose/docker-compose.secrets.yml` | Secrets manager overlay |
+| `deploy/compose/docker-compose.tracing.yml` | Distributed tracing |
+| `deploy/compose/docker-compose.logging.yml` | Loki log aggregation |
+| `inference/*/deploy/compose/docker-compose.yml` | Coding models, Chat API, Chat UI |
 
 > **Note:** Always use `./start_all_safe.sh` — never `docker compose up` directly.
 

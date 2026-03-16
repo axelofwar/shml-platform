@@ -202,7 +202,7 @@ ml-platform/
 │   ├── README.md                  # 9. MLflow operations
 │   ├── .github/
 │   │   └── copilot-instructions.md  # MLflow AI context
-│   ├── docker-compose.yml         # 8 MLflow services
+│   ├── deploy/compose/docker-compose.yml         # 8 MLflow services
 │   ├── api/                       # MLflow API enhancements
 │   ├── scripts/                   # Management utilities
 │   ├── secrets/                   # Git-ignored
@@ -410,7 +410,7 @@ def load_secret(name):
 **Never in committed files:**
 ```
 ❌ PASSWORD=gNz8APgrUF8Q3hMe2sQXQK8DPGHs3CGcVhoPLbcqvi4=
-❌ TAILSCALE_IP=100.66.26.115
+❌ TAILSCALE_IP=100.x.x.x
 ❌ DB_HOST=192.168.1.100
 ❌ client_secret=JsDs6mClPCWKqEq...
 ```
@@ -836,25 +836,25 @@ docker logs authentik-server
 
 ```bash
 # Core documentation (11 files)
-/home/axelofwar/Desktop/Projects/ml-platform/README.md
-/home/axelofwar/Desktop/Projects/ml-platform/ARCHITECTURE.md
-/home/axelofwar/Desktop/Projects/ml-platform/API_REFERENCE.md
-/home/axelofwar/Desktop/Projects/ml-platform/INTEGRATION_GUIDE.md
-/home/axelofwar/Desktop/Projects/ml-platform/TROUBLESHOOTING.md
-/home/axelofwar/Desktop/Projects/ml-platform/LESSONS_LEARNED.md
-/home/axelofwar/Desktop/Projects/ml-platform/REMOTE_QUICK_REFERENCE.md
-/home/axelofwar/Desktop/Projects/ml-platform/NEW_GPU_SETUP.md
-/home/axelofwar/Desktop/Projects/ml-platform/mlflow-server/README.md
-/home/axelofwar/Desktop/Projects/ml-platform/ray_compute/README.md
-/home/axelofwar/Desktop/Projects/ml-platform/.github/copilot-instructions.md
+/opt/shml-platform/README.md
+/opt/shml-platform/ARCHITECTURE.md
+/opt/shml-platform/API_REFERENCE.md
+/opt/shml-platform/INTEGRATION_GUIDE.md
+/opt/shml-platform/TROUBLESHOOTING.md
+/opt/shml-platform/LESSONS_LEARNED.md
+/opt/shml-platform/REMOTE_QUICK_REFERENCE.md
+/opt/shml-platform/NEW_GPU_SETUP.md
+/opt/shml-platform/mlflow-server/README.md
+/opt/shml-platform/ray_compute/README.md
+/opt/shml-platform/.github/copilot-instructions.md
 
 # Project files (6 files)
-/home/axelofwar/Desktop/Projects/ml-platform/LICENSE
-/home/axelofwar/Desktop/Projects/ml-platform/CONTRIBUTING.md
-/home/axelofwar/Desktop/Projects/ml-platform/CODE_OF_CONDUCT.md
-/home/axelofwar/Desktop/Projects/ml-platform/CHANGELOG.md
-/home/axelofwar/Desktop/Projects/ml-platform/.gitignore
-/home/axelofwar/Desktop/Projects/ml-platform/REMOTE_ACCESS_COMPLETE.sh
+/opt/shml-platform/LICENSE
+/opt/shml-platform/CONTRIBUTING.md
+/opt/shml-platform/CODE_OF_CONDUCT.md
+/opt/shml-platform/CHANGELOG.md
+/opt/shml-platform/.gitignore
+/opt/shml-platform/REMOTE_ACCESS_COMPLETE.sh
 ```
 
 ---

@@ -1,6 +1,6 @@
 [Unit]
 Description=SHML Native Training Coordinator
-Documentation=file:///home/axelofwar/Projects/shml-platform/inference/app/native_training/README.md
+Documentation=file:///opt/shml-platform/inference/app/native_training/README.md
 After=network-online.target docker.service
 Wants=network-online.target
 # Can run alongside inference
@@ -12,16 +12,16 @@ User=axelofwar
 Group=axelofwar
 
 # Working directory
-WorkingDirectory=/home/axelofwar/Projects/shml-platform/inference/app/native_training
+WorkingDirectory=/opt/shml-platform/inference/app/native_training
 
 # Environment
-Environment=PYTHONPATH=/home/axelofwar/Projects/shml-platform/inference/app:/home/axelofwar/Projects/shml-platform/inference/training_library
+Environment=PYTHONPATH=/opt/shml-platform/inference/app:/opt/shml-platform/inference/training_library
 Environment=CUDA_VISIBLE_DEVICES=0
 Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
 Environment=MLFLOW_TRACKING_URI=http://172.30.0.11:5000
 
 # Main process - coordinator daemon
-ExecStart=/usr/bin/python3 /home/axelofwar/Projects/shml-platform/inference/app/native_training/native_training_coordinator.py daemon
+ExecStart=/usr/bin/python3 /opt/shml-platform/inference/app/native_training/native_training_coordinator.py daemon
 
 # Reload configuration
 ExecReload=/bin/kill -HUP $MAINPID
@@ -47,8 +47,8 @@ SyslogIdentifier=shml-training-coordinator
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/axelofwar/Projects/shml-platform/data
-ReadWritePaths=/home/axelofwar/Projects/shml-platform/logs
+ReadWritePaths=/opt/shml-platform/data
+ReadWritePaths=/opt/shml-platform/logs
 PrivateTmp=true
 
 [Install]

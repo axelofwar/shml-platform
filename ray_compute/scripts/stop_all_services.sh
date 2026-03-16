@@ -22,7 +22,7 @@ docker-compose -f docker-compose.api.yml down
 echo "Stopping Authentication Services..."
 docker-compose -f docker-compose.auth.yml down
 
-cd /home/axelofwar/Desktop/Projects/mlflow-server
+cd /opt/shml-platform/mlflow-server
 echo "Stopping MLflow Server..."
 docker-compose down
 

@@ -111,16 +111,16 @@
     },
     {
       "method": "POST",
-      "url": "/api/application/acda34f0-7cf2-40eb-9cba-7cb0048857d3",
+      "url": "/api/application/#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-50a4dc27-578a-47f1-a98e-1b9f47e2e81b}",
       "body": {
         "application": {
           "name": "OAuth2-Proxy",
           "oauthConfiguration": {
             "authorizedRedirectURLs": [
               "#{ENV.OAUTH2_PROXY_REDIRECT_URL:-http://localhost/oauth2/callback}",
-              "https://shml-platform.tail38b60a.ts.net/oauth2/callback"
+              "https://${PUBLIC_DOMAIN}/oauth2/callback"
             ],
-            "clientId": "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}",
+            "clientId": "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-50a4dc27-578a-47f1-a98e-1b9f47e2e81b}",
             "clientSecret": "#{ENV.FUSIONAUTH_PROXY_CLIENT_SECRET:-change-me-proxy-secret}",
             "enabledGrants": ["authorization_code", "refresh_token"],
             "generateRefreshTokens": true,
@@ -158,7 +158,7 @@
           "scope": "openid email profile",
           "linkingStrategy": "LinkByEmail",
           "applicationConfiguration": {
-            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+            "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-50a4dc27-578a-47f1-a98e-1b9f47e2e81b}": {
               "enabled": true,
               "createRegistration": true
             },
@@ -193,7 +193,7 @@
           "scope": "user:email",
           "linkingStrategy": "LinkByEmail",
           "applicationConfiguration": {
-            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+            "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-50a4dc27-578a-47f1-a98e-1b9f47e2e81b}": {
               "enabled": true,
               "createRegistration": true
             },
@@ -228,7 +228,7 @@
           "scope": "users.read tweet.read offline.access",
           "linkingStrategy": "LinkByEmail",
           "applicationConfiguration": {
-            "acda34f0-7cf2-40eb-9cba-7cb0048857d3": {
+            "#{ENV.FUSIONAUTH_PROXY_CLIENT_ID:-50a4dc27-578a-47f1-a98e-1b9f47e2e81b}": {
               "enabled": true,
               "createRegistration": true
             },

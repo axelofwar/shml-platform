@@ -152,7 +152,7 @@ class TestNotificationScript:
                 "test@example.com",
                 "testuser",
                 "fake-uuid-1234",
-                "acda34f0-test",
+                "50a4dc27-test",
                 "user.create",
             ],
             capture_output=True,
@@ -222,13 +222,13 @@ class TestFusionAuthWebhookConfig:
 
 
 class TestComposeEnvVars:
-    """Verify docker-compose.infra.yml has required env vars for notifications."""
+    """Verify deploy/compose/docker-compose.infra.yml has required env vars for notifications."""
 
     @pytest.fixture
     def compose_content(self):
-        path = os.path.join(_root, "docker-compose.infra.yml")
+        path = os.path.join(_root, "deploy/compose/docker-compose.infra.yml")
         if not os.path.exists(path):
-            pytest.skip("docker-compose.infra.yml not found")
+            pytest.skip("deploy/compose/docker-compose.infra.yml not found")
         with open(path) as f:
             return f.read()
 

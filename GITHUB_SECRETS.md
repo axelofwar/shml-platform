@@ -22,7 +22,7 @@ workflows in this repository.  Configure them at:
 ## Optional / Environment-Only
 
 These are **not** GitHub secrets but are referenced via `.env` or
-`docker-compose.dev.yml` for local development:
+`deploy/compose/docker-compose.dev.yml` for local development:
 
 | Variable | Default | Description |
 |----------|---------|-------------|

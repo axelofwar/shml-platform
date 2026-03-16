@@ -10,7 +10,7 @@ This module provides:
 
 import re
 import logging
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,8 @@ DEVELOPER_SKILLS: Set[str] = VIEWER_SKILLS | {
 }
 
 ELEVATED_DEVELOPER_SKILLS: Set[str] = DEVELOPER_SKILLS | {
-    "SandboxSkill",  # Code execution in isolated containers
+    "SandboxSkill",     # Legacy Docker-based isolation (fallback)
+    "OpenShellSkill",   # NemoClaw OpenShell: Landlock + seccomp + netns (preferred)
 }
 
 ADMIN_SKILLS: Set[str] = ELEVATED_DEVELOPER_SKILLS  # All skills, unrestricted commands
@@ -216,7 +217,7 @@ def is_command_safe_for_role(command: str, primary_role: str) -> tuple:
             logger.warning(
                 f"SECURITY: Blocked command pattern '{pattern}' for role '{primary_role}': {command[:80]}"
             )
-            return False, f"Blocked: contains restricted pattern"
+            return False, "Blocked: contains restricted pattern"
 
     # Check blocked paths for file access commands
     import shlex
@@ -239,7 +240,7 @@ def is_command_safe_for_role(command: str, primary_role: str) -> tuple:
                 logger.warning(
                     f"SECURITY: Blocked path access '{blocked_path}' for role '{primary_role}': {command[:80]}"
                 )
-                return False, f"Blocked: access to restricted path"
+                return False, "Blocked: access to restricted path"
 
     # Check allowed commands for this role
     allowed = get_allowed_commands_for_role(primary_role)

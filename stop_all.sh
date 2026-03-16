@@ -34,8 +34,8 @@ fi
 
 # Stop services in reverse order
 echo -e "${CYAN}━━━ Phase 1: GPU Monitoring ━━━${NC}"
-if sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml ps | grep -q "dcgm-exporter"; then
-    sudo docker compose -f monitoring/dcgm-exporter/docker-compose.yml down
+if sudo docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml ps | grep -q "dcgm-exporter"; then
+    sudo docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml down
     echo -e "${GREEN}✓ GPU monitoring stopped${NC}"
 else
     echo "No GPU monitoring running"
@@ -53,14 +53,14 @@ echo -e "${GREEN}✓ MLflow services stopped${NC}"
 echo ""
 
 echo -e "${CYAN}━━━ Phase 4: Authentication Services ━━━${NC}"
-sudo docker compose -f docker-compose.infra.yml stop oauth2-proxy fusionauth 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f deploy/compose/docker-compose.infra.yml stop oauth2-proxy fusionauth 2>&1 | grep -v "WARNING:" || true
 echo -e "${GREEN}✓ Auth services stopped${NC}"
 echo ""
 
 echo -e "${CYAN}━━━ Phase 5: Monitoring & Infrastructure ━━━${NC}"
-sudo docker compose -f docker-compose.infra.yml stop unified-grafana global-prometheus 2>&1 | grep -v "WARNING:" || true
-sudo docker compose -f docker-compose.infra.yml stop cadvisor node-exporter 2>&1 | grep -v "WARNING:" || true
-sudo docker compose -f docker-compose.infra.yml stop traefik redis postgres 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f deploy/compose/docker-compose.infra.yml stop unified-grafana global-prometheus 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f deploy/compose/docker-compose.infra.yml stop cadvisor node-exporter 2>&1 | grep -v "WARNING:" || true
+sudo docker compose -f deploy/compose/docker-compose.infra.yml stop traefik redis postgres 2>&1 | grep -v "WARNING:" || true
 echo -e "${GREEN}✓ Infrastructure stopped${NC}"
 echo ""
 

@@ -17,7 +17,7 @@ Professional FastAPI layer for MLflow with schema validation, error handling, an
 ### Build and Run
 
 ```bash
-cd /home/axelofwar/Desktop/Projects
+cd /opt
 docker-compose up -d mlflow-api
 ```
 

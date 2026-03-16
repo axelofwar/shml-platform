@@ -116,7 +116,7 @@ class PlatformConfig:
         if not platform_env_path.exists():
             # Try relative to workspace
             for candidate in [
-                Path("/home/axelofwar/Projects/shml-platform/config/platform.env"),
+                Path(os.environ.get("PLATFORM_ROOT", str(Path.cwd()))) / "config" / "platform.env",
                 Path.cwd() / "config" / "platform.env",
             ]:
                 if candidate.exists():
@@ -679,7 +679,7 @@ class AuthConfig:
         4. Defaults
     """
 
-    base_url: str = "https://shml-platform.tail38b60a.ts.net"
+    base_url: str = os.environ.get("SHML_BASE_URL", "http://localhost:8000")
     api_key: str | None = None
     oauth_token: str | None = None
     profile: str = "default"
@@ -779,7 +779,7 @@ def _resolve_profile_path(profile: str | Path) -> Path:
     # Named profile — search standard locations
     candidates = [
         Path("config/profiles") / f"{profile}.yaml",
-        Path("/home/axelofwar/Projects/shml-platform/config/profiles")
+        Path(os.environ.get("PLATFORM_ROOT", str(Path.cwd()))) / "config" / "profiles"
         / f"{profile}.yaml",
         Path(__file__).parent.parent.parent / "config" / "profiles" / f"{profile}.yaml",
     ]
@@ -800,7 +800,7 @@ def list_profiles() -> list[dict[str, Any]]:
     profiles = []
     search_dirs = [
         Path("config/profiles"),
-        Path("/home/axelofwar/Projects/shml-platform/config/profiles"),
+        Path(os.environ.get("PLATFORM_ROOT", str(Path.cwd()))) / "config" / "profiles",
     ]
 
     seen: set[str] = set()

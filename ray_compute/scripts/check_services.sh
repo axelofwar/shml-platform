@@ -64,7 +64,7 @@ echo ""
 echo "4. Checking service endpoints..."
 
 services=(
-    "http://localhost:3002|Ray Compute Web UI"
+    "http://ray-compute-ui:3000/ray/ui|Ray Compute Web UI (via Traefik: /ray/ui)"
     "http://localhost:8000/docs|Ray Compute API"
     "http://localhost:9000|Authentik"
     "http://localhost:3001|Grafana"
@@ -87,7 +87,7 @@ if [ $STOPPED -gt 0 ]; then
     echo "Stopped containers: $STOPPED"
     echo ""
     echo "To start stopped containers, run:"
-    echo "  cd /home/axelofwar/Desktop/Projects"
+    echo "  cd /opt"
     echo "  ./start_all_services.sh"
 fi
 
@@ -95,7 +95,7 @@ if [ $RUNNING -eq ${#EXPECTED_CONTAINERS[@]} ]; then
     echo ""
     echo "✅ All critical services are running!"
     echo ""
-    echo "Access the platform at: http://localhost:3002"
+    echo "Access the platform at: /ray/ui (via Traefik)"
 else
     echo ""
     echo "⚠️  Some services are not running. Check logs:"

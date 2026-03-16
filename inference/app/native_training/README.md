@@ -156,7 +156,7 @@ sudo systemctl start shml-training
 journalctl -u shml-training -f
 
 # MLflow UI
-open https://shml-platform.tail38b60a.ts.net/mlflow/
+open https://${PUBLIC_DOMAIN}/mlflow/
 
 # Coordinator status
 curl http://localhost:8000/training/status
@@ -174,12 +174,12 @@ sudo systemctl kill -s SIGUSR2 shml-training
 ## Data Management
 
 Training expects data at:
-- `/home/axelofwar/Projects/shml-platform/data/training/`
+- `/opt/shml-platform/data/training/`
   - `wider_face/` - WIDER FACE dataset (auto-downloaded)
   - `custom/` - Custom training data
 
 Checkpoints stored at:
-- `/home/axelofwar/Projects/shml-platform/data/checkpoints/`
+- `/opt/shml-platform/data/checkpoints/`
 
 ## Backup Integration
 

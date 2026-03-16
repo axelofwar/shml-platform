@@ -69,7 +69,7 @@ Without it:
 4. **Test the Lambda:**
    ```bash
    # 1. Sign out completely
-   # Clear browser cookies for: shml-platform.tail38b60a.ts.net
+   # Clear browser cookies for: ${PUBLIC_DOMAIN}
 
    # 2. Sign in again
 
@@ -310,5 +310,5 @@ Lambdas have **full access** to FusionAuth API and can:
 
 **For urgent OAuth issues, check:**
 1. `docs/internal/TROUBLESHOOTING.md` - OAuth redirect loop section
-2. `docker-compose.infra.yml` - OAuth2-Proxy configuration
+2. `deploy/compose/docker-compose.infra.yml` - OAuth2-Proxy configuration
 3. FusionAuth Event Log - Lambda execution logs

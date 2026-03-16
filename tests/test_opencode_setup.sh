@@ -139,7 +139,7 @@ echo "   $ cd /path/to/project"
 echo "   $ opencode"
 echo
 echo "💡 Quick test:"
-echo "   $ cd /home/axelofwar/Projects/shml-platform"
+echo "   $ cd ${PLATFORM_ROOT:-.}"
 echo "   $ opencode"
 echo "   > write a python hello world script"
 echo

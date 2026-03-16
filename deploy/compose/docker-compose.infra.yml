@@ -52,12 +52,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../../monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ../../logs/traefik:/var/log/traefik
-      # TLS certs from Tailscale - DEPLOYMENT-SPECIFIC PATHS
-      # When using a different Tailscale domain, update these volume paths
-      # and the corresponding paths in monitoring/traefik/dynamic.yml
-      # Generate new certs: tailscale cert <your-domain>
-      - ../../secrets/shml-platform.tail38b60a.ts.net.crt:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt:ro
-      - ../../secrets/shml-platform.tail38b60a.ts.net.key:/etc/traefik/certs/shml-platform.tail38b60a.ts.net.key:ro
+      # TLS certs from Tailscale - dynamically selected from PUBLIC_DOMAIN
+      - ../../secrets/${PUBLIC_DOMAIN}.crt:/etc/traefik/certs/public-domain.crt:ro
+      - ../../secrets/${PUBLIC_DOMAIN}.key:/etc/traefik/certs/public-domain.key:ro
     networks:
       - platform
     healthcheck:
@@ -205,8 +202,8 @@ services:
       DATABASE_USERNAME: fusionauth
       DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
       FUSIONAUTH_APP_MEMORY: 384M
-      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-development}
-      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-production}
+      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN}/auth
       SEARCH_TYPE: database
     volumes:
       - fusionauth-config:/usr/local/fusionauth/config
@@ -316,10 +313,11 @@ services:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
     container_name: oauth2-proxy
     restart: unless-stopped
-    # Allow container to resolve Tailscale domain to Tailscale IP
-    # NOTE: Update TAILSCALE_IP in .env after any Tailscale reset
     extra_hosts:
-      - "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}:${TAILSCALE_IP:-100.66.26.115}"
+      # Resolve the public domain back to the local Traefik listener.
+      # Using the Tailscale address here can fail from containers when Funnel/TLS
+      # is involved, while the LAN listener serves the same certificate locally.
+      - "${PUBLIC_DOMAIN}:${LAN_IP:-host-gateway}"
     deploy:
       resources:
         limits:
@@ -344,8 +342,14 @@ services:
 
       # Issuer URL - Use public URL to match FusionAuth's issuer claim in OIDC discovery
       # FusionAuth's FUSIONAUTH_APP_URL is configured with this public URL
-      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN}
       # Skip issuer validation to allow OAuth2-Proxy to work with FusionAuth through Traefik
+      # TODO (security hardening): Remove these once FusionAuth's Tailscale TLS cert is
+      # mounted as a trusted CA inside the oauth2-proxy container:
+      #   1. Copy secrets/${PUBLIC_DOMAIN}.crt into oauth2-proxy container at /etc/ssl/certs/
+      #   2. Set OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY=false
+      #   3. Set OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION=false
+      # NemoClaw JWKS validation also benefits from resolving this.
       OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION: "true"
       OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
       OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
@@ -354,8 +358,8 @@ services:
       # Cookie configuration
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
       OAUTH2_PROXY_COOKIE_SECURE: "true"
-      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
-      OAUTH2_PROXY_COOKIE_NAME: "_sfml_oauth2"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_COOKIE_NAME: "_shml_oauth2"
       # CRITICAL: Cookie path must be "/" so cookie is sent for ALL requests
       # Without this, cookie is scoped to /oauth2-proxy/ and won't be sent for /ray/*, /api/*, etc.
       OAUTH2_PROXY_COOKIE_PATH: "/"
@@ -394,8 +398,8 @@ services:
       OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt).*$"
 
       # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
-      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/oauth2-proxy/callback
-      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN}/oauth2-proxy/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN}"
       # Proxy prefix - tells oauth2-proxy to use /oauth2-proxy instead of default /oauth2
       OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
 
@@ -775,7 +779,7 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/grafana"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN}/grafana"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_INSTALL_PLUGINS: "grafana-piechart-panel"
       # Anonymous access enabled for Ray Dashboard iframe embedding
@@ -1086,7 +1090,7 @@ services:
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         # --- External URL & path ---
-        external_url 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab'
+        external_url 'https://${PUBLIC_DOMAIN}/gitlab'
 
         # --- Disable bundled services (use shared infra) ---
         postgresql['enable'] = false
@@ -1128,7 +1132,7 @@ services:
         # --- Container Registry ---
         # Registry requires root path URL, not a subpath. Exposed on port 5050
         # directly. Docker clients push to: <tailscale-ip>:5050
-        registry_external_url 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}:5050'
+        registry_external_url 'https://${PUBLIC_DOMAIN}:5050'
         registry['enable'] = true
         registry['registry_http_addr'] = '0.0.0.0:5050'
 
@@ -1158,7 +1162,7 @@ services:
               name: 'openid_connect',
               scope: ['openid', 'profile', 'email'],
               response_type: 'code',
-              issuer: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}',
+              issuer: 'https://${PUBLIC_DOMAIN}',
               client_auth_method: 'basic',
               discovery: false,
               uid_field: 'sub',
@@ -1166,12 +1170,12 @@ services:
               client_options: {
                 identifier: '${GITLAB_OIDC_CLIENT_ID}',
                 secret: '${GITLAB_OIDC_CLIENT_SECRET}',
-                redirect_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/gitlab/users/auth/openid_connect/callback',
-                authorization_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/authorize',
-                token_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/token',
-                userinfo_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/userinfo',
-                jwks_uri: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/.well-known/jwks.json',
-                end_session_endpoint: 'https://${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}/auth/oauth2/logout'
+                redirect_uri: 'https://${PUBLIC_DOMAIN}/gitlab/users/auth/openid_connect/callback',
+                authorization_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/authorize',
+                token_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/token',
+                userinfo_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/userinfo',
+                jwks_uri: 'https://${PUBLIC_DOMAIN}/auth/.well-known/jwks.json',
+                end_session_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/logout'
               }
             }
           }
@@ -1224,7 +1228,7 @@ services:
       - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
       # --- Container Registry (port 5050, direct access via Tailscale) ---
       # Registry is accessed directly at <tailscale-ip>:5050, not through Traefik
-      # Docker login: docker login shml-platform.tail38b60a.ts.net:5050
+      # Docker login: docker login ${PUBLIC_DOMAIN}:5050
 
   # --------------------------------------------------------------------------
   # GITLAB RUNNER - Persistent CI runner for mirror/security pipelines
@@ -1492,7 +1496,7 @@ services:
     image: docker:cli
     container_name: ${PLATFORM_PREFIX:-shml}-watchdog
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq procps coreutils util-linux >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
     environment:
       CHECK_INTERVAL: "${WATCHDOG_INTERVAL:-60}"
       MAX_RESTARTS: "${WATCHDOG_MAX_RESTARTS:-3}"
@@ -1501,12 +1505,20 @@ services:
       PROMETHEUS_URL: "http://global-prometheus:9090"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      GITLAB_API_TOKEN: "${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}"
       EXCLUDED_CONTAINERS: "${WATCHDOG_EXCLUDED:-}"
       # GPU isolation - protect training on GPU 0, watchdog uses GPU 1 (RTX 2070)
       TRAINING_GPU: "0"
       WATCHDOG_GPU: "1"
+      DISPLAY_GPU: "${DISPLAY_GPU:-1}"
       # Memory leak detection threshold (MB growth per hour)
       MEMORY_LEAK_THRESHOLD: "100"
+      HOST_MEMORY_HIGH_WATERMARK_PCT: "${HOST_MEMORY_HIGH_WATERMARK_PCT:-92}"
+      HOST_MEMORY_SOFT_WATERMARK_PCT: "${HOST_MEMORY_SOFT_WATERMARK_PCT:-85}"
+      HOST_SWAP_HIGH_WATERMARK_PCT: "${HOST_SWAP_HIGH_WATERMARK_PCT:-25}"
+      DISPLAY_GPU_UTIL_WATERMARK_PCT: "${DISPLAY_GPU_UTIL_WATERMARK_PCT:-60}"
+      DISPLAY_GPU_MEMORY_WATERMARK_MIB: "${DISPLAY_GPU_MEMORY_WATERMARK_MIB:-2048}"
+      LOW_PRIORITY_CONTAINERS: "${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,pii-blur-api,shml-fiftyone,shml-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
       # Agent service URL for autonomous cross-service resolution
       AGENT_SERVICE_URL: "http://agent-service:8000"
       # GitLab application-level health probe (beyond container health)

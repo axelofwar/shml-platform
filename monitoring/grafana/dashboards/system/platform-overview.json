@@ -242,6 +242,77 @@
       "targets": [{"expr": "rate(container_cpu_usage_seconds_total{name=~\"mlflow.*|ray.*|qwen.*|z-image.*|inference.*\"}[5m]) * 100", "refId": "A", "legendFormat": "{{name}}"}],
       "title": "Container CPU Usage",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "id": 103,
+      "panels": [],
+      "title": "Agent Routing",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 30, "lineWidth": 1, "spanNulls": false},
+          "unit": "reqps"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "cloud"}, "properties": [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "local"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 14, "x": 0, "y": 23},
+      "id": 30,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "rate(agent_routing_decisions_total[5m])", "refId": "A", "legendFormat": "{{tier}} / {{intent}}"}
+      ],
+      "title": "Routing Tier Decisions (req/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "unified-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 1},
+            {"color": "red", "value": 3}
+          ]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 10, "x": 14, "y": 23},
+      "id": 31,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {"expr": "agent_consecutive_failures", "refId": "A", "legendFormat": "consecutive failures"}
+      ],
+      "title": "Consecutive Cloud Failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "mlflow-postgres"},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "displayMode": "auto"}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 31},
+      "id": 32,
+      "description": "Requires mlflow-postgres datasource (uncomment in provisioning/datasources/datasources.yml to enable)",
+      "options": {"footer": {"show": false}, "showHeader": true},
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ts, request_id, model_name, intent, reason, consec_fail, latency_ms, cloud_model FROM handoff_log ORDER BY ts DESC LIMIT 10;",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Handoff Log (last 10)",
+      "transformations": [{"id": "organize", "options": {"excludeByName": {}, "renameByName": {"consec_fail": "consec_fail", "latency_ms": "latency (ms)"}}}],
+      "type": "table"
     }
   ],
   "refresh": "30s",

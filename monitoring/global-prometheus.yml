@@ -149,3 +149,27 @@ scrape_configs:
       - targets: ['gitlab:9168']
         labels:
           component: 'gitlab-ce'
+
+  # -------------------------------------------------------------------------
+  # NemoClaw / OpenShell Metrics (Phase 7)
+  # -------------------------------------------------------------------------
+
+  # OpenShell Gateway — sandbox lifecycle, policy decisions, inference routing
+  - job_name: 'openshell-gateway'
+    scrape_interval: 15s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['openshell-gateway:9091']
+        labels:
+          component: 'openshell-gateway'
+          platform: 'shml'
+
+  # NemoClaw Sandbox Factory — creates/destroys sandboxes, tracks active count
+  - job_name: 'nemoclaw-factory'
+    scrape_interval: 15s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['nemoclaw-sandbox-factory:9095']
+        labels:
+          component: 'nemoclaw-factory'
+          platform: 'shml'

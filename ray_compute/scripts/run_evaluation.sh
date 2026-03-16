@@ -30,7 +30,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Project root
-PROJECT_ROOT="/home/axelofwar/Projects/shml-platform"
+PROJECT_ROOT="${PLATFORM_ROOT:-.}"
 SCRIPT_DIR="$PROJECT_ROOT/ray_compute/scripts"
 JOBS_DIR="$PROJECT_ROOT/ray_compute/jobs"
 CHECKPOINTS_DIR="$PROJECT_ROOT/ray_compute/data/ray/checkpoints/face_detection"

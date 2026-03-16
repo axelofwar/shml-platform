@@ -366,6 +366,8 @@ DEFAULT_CONFIG = {
     "cache": "ram",      # Entire dataset in RAM (~1.6 GB) — zero I/O at any scale
     "rect": True,
     "multi_scale": 0.33, # ±33%: trains at 643–1280px; peak ~16 GB at batch=2
+    # Class config (WIDER Face = 1 class: face)
+    "single_cls": True,  # CRITICAL: face detection is single-class; False = 80 COCO classes
 }
 
 # PII FUTURE TODO: box padding at inference — expand each detected box by 5%, scale to 15% as needed.
@@ -881,6 +883,7 @@ def run_experiment(
             max_det=full_config["max_det"],
             iou=full_config["iou"],
             multi_scale=full_config.get("multi_scale", False),
+            single_cls=full_config.get("single_cls", True),
             copy_paste_mode="flip",
             # Budget: stop after time_budget_sec regardless of remaining epochs.
             # YOLO's `time` param (hours) overrides `epochs` gracefully — saves best.pt.
@@ -1634,7 +1637,7 @@ def main():
                 "### Per-Epoch Progress\n"
                 "_Epoch tables appended below as training runs (every 5 epochs)._\n\n"
                 "### Links\n"
-                "- MLflow: https://shml-platform.tail38b60a.ts.net/mlflow\n"
+                "- MLflow: ${PUBLIC_DOMAIN}/mlflow\n"
                 f"- Weights dir: {args.output_dir}\n"
             ),
             labels=["type::training", "component::autoresearch", "component::pii-blurring",

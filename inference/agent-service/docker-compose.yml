@@ -16,11 +16,13 @@ services:
       - POSTGRES_USER=inference
       - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
 
-      # Gateway URLs (for LLM calls) - Use Nemotron-3 for agentic coding
-      - GATEWAY_URL=http://nemotron-coding:8000
-      - CODING_MODEL_URL=http://nemotron-coding:8000
+      # Gateway URLs (for LLM calls) - Qwen3.5-35B-A3B (primary, thinking enabled)
+      - GATEWAY_URL=http://qwen-coding:8000
+      - CODING_MODEL_URL=http://qwen-coding:8000
       # Fallback to coding-model-fallback if needed
       - FALLBACK_MODEL_URL=http://coding-model-fallback:8000
+      # Qwen manager for GPU yield during training
+      - QWEN_MANAGER_URL=http://qwen-manager:8000
 
       # Redis (for WebSocket pub/sub if needed)
       - REDIS_HOST=shml-redis
@@ -40,6 +42,18 @@ services:
 
       # SECURITY: Docker access via restricted proxy (read-only container listing)
       - DOCKER_HOST=tcp://docker-proxy:2375
+
+      # ── NemoClaw / OpenShell integration ──────────────────────────────────
+      # Factory REST API (sandbox lifecycle: create/destroy/list/policy)
+      - NEMOCLAW_FACTORY_URL=${NEMOCLAW_FACTORY_URL:-http://nemoclaw-sandbox-factory:9095}
+      # OpenShell gateway (inference routing + audit)
+      - NEMOCLAW_GATEWAY_URL=${NEMOCLAW_GATEWAY_URL:-http://openshell-gateway:9090}
+      # Enable NemoClaw-mediated cloud inference (off by default to avoid NVIDIA API costs)
+      - NEMOCLAW_CLOUD_PROFILE_ENABLED=${NEMOCLAW_CLOUD_PROFILE_ENABLED:-false}
+      # Fallback to legacy SandboxSkill if factory is unreachable (alpha resilience)
+      - NEMOCLAW_FALLBACK_TO_DOCKER=${NEMOCLAW_FALLBACK_TO_DOCKER:-true}
+      # Timeout for factory API calls (seconds)
+      - NEMOCLAW_FACTORY_TIMEOUT=${NEMOCLAW_FACTORY_TIMEOUT:-30}
 
     volumes:
       - ./logs:/app/logs

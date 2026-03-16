@@ -67,14 +67,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 
 # Default paths
-SQLITE_DB_PATH = "/home/axelofwar/yfcc100m_download/yfcc100m_dataset.sql"
+SQLITE_DB_PATH = os.environ.get("YFCC100M_SQLITE_PATH", "./yfcc100m_download/yfcc100m_dataset.sql")
 OUTPUT_DIR = Path(
-    "/home/axelofwar/Projects/shml-platform/ray_compute/data/datasets/yfcc100m"
+    f"{PLATFORM_ROOT}/ray_compute/data/datasets/yfcc100m"
 )
 METADATA_DB = OUTPUT_DIR / "face_metadata.db"
 

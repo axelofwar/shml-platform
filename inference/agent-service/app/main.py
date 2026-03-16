@@ -10,47 +10,47 @@ Provides:
 - Multi-user playbook management
 """
 
+import asyncio
+import json
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
 from fastapi import (
+    BackgroundTasks,
+    Depends,
     FastAPI,
+    HTTPException,
     WebSocket,
     WebSocketDisconnect,
-    Depends,
-    HTTPException,
     status,
 )
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
-import logging
-import json
-from datetime import datetime
-import asyncio
 
-from .agent import build_ace_agent, AgentState
-from .context import AgentPlaybook, load_playbook_from_db, save_playbook_to_db
-from .diary import create_session_diary, ReflectionEngine
-from .database import engine, get_db, AsyncSessionLocal
-from .schemas import AgentRequest, AgentResponse, ApprovalRequest, ReflectionRequest
-from .config import settings
-from .openai_compat import OpenAICompatibilityLayer, OpenAIChatCompletionRequest
-from .auth import get_current_user, AuthUser, require_min_role, UserRole
-from .conversation_history import (
-    ConversationTurn,
-    save_turns_batch,
-    load_history_for_context,
-    ensure_schema,
-)
-from .hybrid_router import get_hybrid_router
-from .analytics import (
-    track_request,
-    track_tokens,
-    track_workflow,
-    track_websocket_connection,
-    track_websocket_message,
-    init_role_quotas,
-)
+UTC = timezone.utc
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import make_asgi_app
+
+from .agent import AgentState, build_ace_agent
+from .analytics import (
+    init_role_quotas,
+    track_websocket_connection,
+    track_websocket_message,
+    track_workflow,
+)
+from .auth import AuthUser, UserRole, get_current_user, require_min_role
+from .context import load_playbook_from_db, save_playbook_to_db
+from .conversation_history import (
+    load_history_for_context,
+    save_turns_batch,
+)
+from .database import AsyncSessionLocal, engine, get_db
+from .diary import ReflectionEngine, create_session_diary
+from .hybrid_router import get_hybrid_router
+from .openai_compat import OpenAIChatCompletionRequest, OpenAICompatibilityLayer
+from .scheduler import scheduler
+from .schemas import AgentRequest, AgentResponse, ReflectionRequest
 
 # Configure logging
 logging.basicConfig(
@@ -178,8 +178,8 @@ async def lifespan(app: FastAPI):
 
     # Create database tables
     from .context import Base
-    from .diary import Base as DiaryBase
     from .conversation_history import ConversationTurn
+    from .diary import Base as DiaryBase
 
     async with engine.begin() as conn:
         # Ensure inference schema exists
@@ -196,9 +196,15 @@ async def lifespan(app: FastAPI):
     init_role_quotas()
     logger.info("Role quotas initialized")
 
+    # Start background scheduler (GEPA evolution, diary export, etc.)
+    await scheduler.start()
+    logger.info("Agent scheduler started")
+
     yield
 
     logger.info("Shutting down Agent Service...")
+    await scheduler.stop()
+    logger.info("Agent scheduler stopped")
 
 
 # Create FastAPI app
@@ -214,7 +220,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get(
         "CORS_ORIGINS",
-        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+        "http://localhost:3000,http://localhost:8080",
     ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
@@ -233,6 +239,57 @@ async def health_check():
         "status": "healthy",
         "service": "agent-service",
         "version": "0.1.0",
+        "model": "Qwen3.5-35B-A3B (thinking enabled)",
+        "scheduler": scheduler.status(),
+    }
+
+
+@app.get("/admin/scheduler")
+async def scheduler_status(user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER))):
+    """Return scheduler job status (elevated-developer / admin only)."""
+    return scheduler.status()
+
+
+@app.post("/admin/skills/evolve")
+async def trigger_skill_evolution(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER)),
+):
+    """Manually trigger a GEPA skill evolution cycle (elevated-developer / admin only).
+
+    Args:
+        force: If True, bypass the PATTERN_THRESHOLD minimum-lessons guard
+               and run evolution regardless of accumulated lesson count.
+
+    Returns a 202 Accepted immediately; evolution runs in the background.
+    The scheduler's nightly job uses the same code path.
+    """
+    from .scheduler import _job_skill_evolution_nightly
+    from .skill_evolution import get_evolution_engine
+
+    async def _run_evolution() -> None:
+        if force:
+            # Skip threshold check — run regardless of lesson count
+            engine = get_evolution_engine(
+                base_url=os.environ.get("CODING_MODEL_URL", "http://qwen-coding:8000")
+            )
+            session_id = f"manual_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+            results = await engine.process_lessons([], session_id=session_id)
+            logger.info(
+                f"[GEPA/manual] Forced evolution: {len(results)} skill update(s)"
+            )
+            if results:
+                logger.info(engine.summarize_evolution_results(results))
+        else:
+            await _job_skill_evolution_nightly()
+
+    background_tasks.add_task(_run_evolution)
+    return {
+        "status": "accepted",
+        "message": "GEPA evolution cycle started in background",
+        "force": force,
+        "triggered_by": user.user_id,
     }
 
 
@@ -252,6 +309,37 @@ async def get_user_info(user: AuthUser = Depends(get_current_user)):
             UserRole.ADMIN: 16384,
         }.get(user.primary_role, 4096),
     }
+
+
+@app.get("/v1/models")
+async def openai_list_models():
+    """
+    OpenAI-compatible model listing endpoint.
+    Required by Obsidian Copilot, Cursor, Continue.dev and other IDE tools
+    that enumerate available models before making completions requests.
+    """
+    import time
+    models = [
+        {
+            "id": "shml-agent",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "shml-platform",
+            "permission": [],
+            "root": "shml-agent",
+            "parent": None,
+        },
+        {
+            "id": "qwen-coder",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "shml-platform",
+            "permission": [],
+            "root": "qwen-coder",
+            "parent": None,
+        },
+    ]
+    return {"object": "list", "data": models}
 
 
 @app.post("/v1/chat/completions")
@@ -388,6 +476,35 @@ async def execute_agent(
             [{"role": "user", "content": request.task}],
         )
 
+        # ── Tier-0 nano fast-path (T8.4) ───────────────────────────────────
+        # When shl-nano already generated a confident reply, return it directly
+        # without spinning up the full ACE agent workflow.
+        nano_reply = routing.parameters.get("_nano_reply")
+        if nano_reply:
+            logger.info(
+                f"⚡ nano fast-path [{request.session_id}]: "
+                f"skipping full agent workflow"
+            )
+            await save_turns_batch(
+                db,
+                request.session_id,
+                request.user_id,
+                [{"role": "assistant", "content": str(nano_reply)}],
+            )
+            await db.commit()
+            execution_time_ms = int(
+                (datetime.now() - start_time).total_seconds() * 1000
+            )
+            return AgentResponse(
+                session_id=request.session_id,
+                final_answer=str(nano_reply),
+                generator_output=str(nano_reply),
+                success=True,
+                execution_time_ms=execution_time_ms,
+                iterations=1,
+                task_complete=True,
+            )
+
         # Build agent workflow
         ace_agent = build_ace_agent()
 
@@ -474,7 +591,7 @@ async def execute_agent(
 
         # Generate next actions from tool results
         next_actions = []
-        from .skills import ShellSkill, SKILLS
+        from .skills import SKILLS, ShellSkill
 
         for tr in final_state.get("tool_results", []):
             skill_name = tr.get("tool", "")
@@ -853,7 +970,7 @@ async def agent_websocket(
         logger.error(f"WebSocket error: {e}", exc_info=True)
         try:
             await manager.send_message(session_id, {"type": "error", "error": str(e)})
-        except:
+        except Exception:
             pass  # Connection already closed
     finally:
         # Track disconnection
@@ -1024,7 +1141,7 @@ async def update_bullet_feedback(
 # Reference: https://opencode.ai/docs/mcp-servers
 # ============================================================================
 
-from .mcp import mcp_server, MCPToolResult
+from .mcp import mcp_server
 
 
 @app.post("/api/v1/routing/preview")

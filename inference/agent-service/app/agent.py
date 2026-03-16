@@ -23,6 +23,7 @@ from .diary import create_session_diary, ReflectionEngine
 from .skills import get_active_skills, format_skill_contexts, SKILLS, execute_skill
 from .security import get_system_prompt_preamble, filter_output
 from .config import settings
+from .skill_evolution import get_evolution_engine
 import re
 
 logger = logging.getLogger(__name__)
@@ -304,25 +305,25 @@ class AgentState(TypedDict, total=False):
 async def call_coding_model(
     prompt: str, temperature: float = 0.0, max_tokens: int = 2048
 ) -> str:
-    """Call Qwen2.5-Coder with intelligent routing based on model availability.
+    """Call Qwen3.5-35B-A3B (thinking enabled) with intelligent routing.
 
     Routing logic:
     1. Check primary model health first
-    2. If primary is healthy -> use primary (32B, best quality)
+    2. If primary is healthy -> use primary (Qwen3.5-35B, thinking enabled, 128K ctx)
     3. If primary is unhealthy (yielding to training, error, etc.) -> use fallback (3B)
 
     This ensures:
     - Training jobs get GPU priority without interruption
     - Chat/agent requests are still served by fallback model
-    - Best quality when primary is available
+    - Best quality when primary is available (93.8% eval score vs 79% for Nemotron)
 
     Args:
         prompt: The prompt to send
-        temperature: Sampling temperature
-        max_tokens: Maximum tokens to generate
+        temperature: Sampling temperature (Qwen3.5 recommended: 0.6 general / 0.0 code)
+        max_tokens: Maximum tokens to generate (does not include thinking tokens)
 
     Returns:
-        Model response text
+        Model response text (thinking tokens stripped by llama.cpp, only content returned)
     """
     from .config import settings
 
@@ -358,7 +359,7 @@ async def call_coding_model(
             model_name = "qwen2.5-coder-3b"
         else:
             endpoint = f"{primary_url}/v1/chat/completions"
-            model_name = "qwen2.5-coder-32b"
+            model_name = "qwen-coding"  # Qwen3.5-35B-A3B (alias set in docker-compose)
 
         # Step 3: Make the inference request
         try:
@@ -1161,6 +1162,34 @@ Focus on:
     # Update state
     state["curator_lessons"] = lessons
     state["session_diary"].append(f"[CURATOR] Extracted {len(lessons)} lessons")
+
+    # ── GEPA: trigger skill evolution / auto-creation ─────────────────────
+    if lessons:
+        try:
+            evolution_engine = get_evolution_engine(
+                base_url=settings.GATEWAY_URL
+            )
+            evolution_results = await evolution_engine.process_lessons(
+                lessons, session_id=state.get("session_id", "unknown")
+            )
+            if evolution_results:
+                summary = evolution_engine.summarize_evolution_results(evolution_results)
+                state["session_diary"].append(summary)
+                logger.info(f"GEPA completed: {len(evolution_results)} skill updates")
+                # Log individual results to playbook so they are visible in UI
+                for result in evolution_results:
+                    if result.action in ("created", "evolved"):
+                        state["playbook"].add_bullet(
+                            content=result.message,
+                            category="gepa-evolution",
+                            source="agent",
+                            session_id=state.get("session_id", "unknown"),
+                            rubric_scores={"importance": 0.9, "actionable": 1.0},
+                        )
+        except Exception as gepa_err:
+            # GEPA is non-blocking — never fail the main workflow
+            logger.warning(f"GEPA evolution error (non-fatal): {gepa_err}")
+    # ─────────────────────────────────────────────────────────────────────
 
     logger.info(f"Curator extracted {len(lessons)} lessons")
     return state

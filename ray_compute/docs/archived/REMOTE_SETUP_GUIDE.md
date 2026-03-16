@@ -57,7 +57,7 @@ Remote Machine                    Compute Server (100.69.227.36)
 ### 1. Install System Dependencies
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 
 # Install NVIDIA drivers for GPU support
 sudo bash scripts/install_nvidia_drivers.sh
@@ -88,7 +88,7 @@ This creates:
 ### 3. Start Services
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 bash start_all_remote.sh
 ```
 
@@ -138,7 +138,7 @@ curl http://100.69.227.36:8266/health
 
 ```bash
 # Copy client library to your remote machine
-scp username@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/api/client_remote.py .
+scp username@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/api/client_remote.py .
 
 # Or clone this repository on remote machine
 git clone <repo_url>
@@ -235,7 +235,7 @@ print(f"Artifacts: {result['artifact_path']}")
 
 ```bash
 # Copy test script to remote machine
-scp username@100.69.227.36:/home/axelofwar/Projects/mlflow-server/ray_compute/test_remote_compute.py .
+scp username@100.69.227.36:/home/$USER/Projects/mlflow-server/ray_compute/test_remote_compute.py .
 
 # Run validation
 python3 test_remote_compute.py http://100.69.227.36:8266

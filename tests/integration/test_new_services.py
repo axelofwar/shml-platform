@@ -650,7 +650,7 @@ class TestComposeValidation:
 
     @pytest.mark.integration
     def test_infra_compose_valid(self):
-        """docker-compose.infra.yml should parse without errors."""
+        """deploy/compose/docker-compose.infra.yml should parse without errors."""
         import subprocess
 
         result = subprocess.run(
@@ -658,7 +658,7 @@ class TestComposeValidation:
                 "docker",
                 "compose",
                 "-f",
-                "docker-compose.infra.yml",
+                "deploy/compose/docker-compose.infra.yml",
                 "config",
                 "--quiet",
             ],
@@ -671,7 +671,7 @@ class TestComposeValidation:
 
     @pytest.mark.integration
     def test_ray_compose_valid(self):
-        """ray_compute/docker-compose.yml should parse without errors."""
+        """ray_compute/deploy/compose/docker-compose.yml should parse without errors."""
         import subprocess
 
         result = subprocess.run(
@@ -679,7 +679,7 @@ class TestComposeValidation:
                 "docker",
                 "compose",
                 "-f",
-                "ray_compute/docker-compose.yml",
+                "ray_compute/deploy/compose/docker-compose.yml",
                 "config",
                 "--quiet",
             ],
@@ -692,7 +692,7 @@ class TestComposeValidation:
 
     @pytest.mark.integration
     def test_new_services_defined_in_compose(self):
-        """All new services should be defined in docker-compose.infra.yml."""
+        """All new services should be defined in deploy/compose/docker-compose.infra.yml."""
         import subprocess
 
         result = subprocess.run(
@@ -700,7 +700,7 @@ class TestComposeValidation:
                 "docker",
                 "compose",
                 "-f",
-                "docker-compose.infra.yml",
+                "deploy/compose/docker-compose.infra.yml",
                 "config",
                 "--services",
             ],

@@ -11,7 +11,7 @@
 #   └──────────────────────────────────────────┘
 
 SESSION="opencode-dev"
-PROJECT_ROOT="/home/axelofwar/Projects/shml-platform"
+PROJECT_ROOT="${PLATFORM_ROOT:-.}"
 
 # Kill existing session if present
 tmux kill-session -t $SESSION 2>/dev/null

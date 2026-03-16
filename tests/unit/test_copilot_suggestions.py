@@ -188,7 +188,7 @@ class TestMLflowSecurityConfig:
         """
         # Check if Traefik middleware configuration exists
         traefik_config_paths = [
-            get_project_root() / "docker-compose.infra.yml",
+            get_project_root() / "deploy/compose/docker-compose.infra.yml",
         ]
 
         found_traefik_auth = False
@@ -259,8 +259,8 @@ class TestTailscaleFunnelSecurity:
 
         This helps understand the security implications of the Funnel.
         """
-        # Check docker-compose.infra.yml for Traefik routes
-        infra_config_path = get_project_root() / "docker-compose.infra.yml"
+        # Check deploy/compose/docker-compose.infra.yml for Traefik routes
+        infra_config_path = get_project_root() / "deploy/compose/docker-compose.infra.yml"
 
         exposed_services = []
         if infra_config_path.exists():
@@ -287,7 +287,7 @@ class TestTailscaleFunnelSecurity:
 
     def test_oauth_proxy_configured(self):
         """Check if OAuth2 proxy is configured for authentication"""
-        infra_config_path = get_project_root() / "docker-compose.infra.yml"
+        infra_config_path = get_project_root() / "deploy/compose/docker-compose.infra.yml"
 
         has_oauth_proxy = False
         oauth_protected_routes = []

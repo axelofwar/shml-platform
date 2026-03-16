@@ -2,7 +2,7 @@
 # Fix experiment ID database schema and clean up invalid experiments
 set -e
 
-cd /home/axelofwar/Desktop/Projects/mlflow-server
+cd /opt/shml-platform/mlflow-server
 
 # Ensure we're in docker group
 if ! groups | grep -q docker; then

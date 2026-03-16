@@ -96,6 +96,9 @@ except ImportError:
     MLFLOW_AVAILABLE = False
     print("WARNING: mlflow not installed. Run: pip install mlflow")
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 
 # ============================================================================
 # Configuration
@@ -111,7 +114,7 @@ class TrainingConfig:
 
     # Dataset
     dataset: str = "wider_face"
-    data_dir: str = "/home/axelofwar/Projects/shml-platform/data/training"
+    data_dir: str = f"{PLATFORM_ROOT}/data/training"
 
     # Multi-scale training phases (percentage of total epochs)
     multiscale_phases: Tuple[Tuple[int, float], ...] = (
@@ -141,7 +144,7 @@ class TrainingConfig:
     workers: int = 8
 
     # Checkpointing
-    checkpoint_dir: str = "/home/axelofwar/Projects/shml-platform/data/checkpoints"
+    checkpoint_dir: str = f"{PLATFORM_ROOT}/data/checkpoints"
     checkpoint_interval: int = 100  # Save every N steps
     save_best: bool = True
 
@@ -182,7 +185,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(
-            "/home/axelofwar/Projects/shml-platform/logs/native_trainer.log", mode="a"
+            f"{PLATFORM_ROOT}/logs/native_trainer.log", mode="a"
         ),
     ],
 )
@@ -768,7 +771,7 @@ def main():
     parser.add_argument("--resume", help="Resume from checkpoint")
     parser.add_argument(
         "--checkpoint-dir",
-        default="/home/axelofwar/Projects/shml-platform/data/checkpoints",
+        default=f"{PLATFORM_ROOT}/data/checkpoints",
     )
 
     # MLflow

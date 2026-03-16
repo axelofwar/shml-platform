@@ -11,19 +11,45 @@
 #    mv <your-domain>.crt ./secrets/
 #    mv <your-domain>.key ./secrets/
 #
-# 3. Update the paths below (and in docker-compose.infra.yml volumes)
-#    Replace: shml-platform.tail38b60a.ts.net
+# 3. Update the paths below (and in deploy/compose/docker-compose.infra.yml volumes)
+#    Replace: <your-hostname>.<tailnet-id>.ts.net
 #    With:    <your-domain>
 #
 # For automated deployment, consider using envsubst to template this file.
 
+# --- Custom Headers Middleware ---
+# Tailscale Serve/Funnel terminates TLS and proxies to Traefik's HTTP
+# entrypoint (port 80). This means Traefik sees all external traffic
+# as HTTP and sets X-Forwarded-Proto: http. Services behind Traefik
+# (GitLab, etc.) then generate http:// URLs and fail CSRF/Secure cookie
+# checks. This middleware overrides the proto header so backends know
+# the original connection was HTTPS.
+http:
+  middlewares:
+    tailscale-https-proto:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+          X-Forwarded-Ssl: "on"
+
+    # NemoClaw / OpenShell specific headers
+    # Injects sandbox routing context for OpenShell gateway
+    nemoclaw-headers:
+      headers:
+        customRequestHeaders:
+          X-Openshell-Platform: "shml"
+          X-Openshell-Gateway-Version: "v1"
+        # Pass through auth headers to sandbox factory
+        customResponseHeaders:
+          X-Sandbox-Policy: ""  # filled by OpenShell gateway on response
+
 tls:
   certificates:
-    - certFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt
-      keyFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.key
+    - certFile: /etc/traefik/certs/public-domain.crt
+      keyFile: /etc/traefik/certs/public-domain.key
 
   stores:
     default:
       defaultCertificate:
-        certFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.crt
-        keyFile: /etc/traefik/certs/shml-platform.tail38b60a.ts.net.key
+        certFile: /etc/traefik/certs/public-domain.crt
+        keyFile: /etc/traefik/certs/public-domain.key

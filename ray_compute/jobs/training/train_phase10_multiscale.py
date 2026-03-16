@@ -36,7 +36,9 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -154,6 +156,19 @@ MLFLOW_TRACKING_URI = os.environ.get(
     "MLFLOW_TRACKING_URI_INTERNAL", "http://mlflow-nginx:80"
 )
 PUSHGATEWAY_URL = os.environ.get("PUSHGATEWAY_URL", "shml-pushgateway:9091")
+
+MIN_HOST_MEM_AVAILABLE_MB = int(os.environ.get("MIN_HOST_MEM_AVAILABLE_MB", "4096"))
+MIN_HOST_SWAP_FREE_MB = int(os.environ.get("MIN_HOST_SWAP_FREE_MB", "1024"))
+MAX_HOST_COMMIT_PCT = float(os.environ.get("MAX_HOST_COMMIT_PCT", "200"))
+TRAINING_TELEMETRY_INTERVAL_SEC = int(
+    os.environ.get("TRAINING_TELEMETRY_INTERVAL_SEC", "30")
+)
+TRAINING_TELEMETRY_LOG = os.environ.get(
+    "TRAINING_TELEMETRY_LOG", "/tmp/ray/data/phase10_resource_telemetry.csv"
+)
+ENABLE_TRAINING_TELEMETRY = os.environ.get(
+    "ENABLE_TRAINING_TELEMETRY", "1"
+).strip().lower() not in {"0", "false", "no"}
 
 # Dataset paths
 WIDER_YOLO_DIR = "/tmp/ray/data/wider_face_yolo"  # Original WIDER-only
@@ -564,6 +579,139 @@ class Phase10Callbacks:
         model.add_callback("on_train_end", self.on_train_end)
 
 
+class ResourceTelemetryLogger:
+    def __init__(self, run_name: str, interval_sec: int, log_path: str):
+        self.run_name = run_name
+        self.interval_sec = max(5, interval_sec)
+        self.log_path = Path(log_path)
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    @staticmethod
+    def _read_meminfo() -> dict[str, int]:
+        values: dict[str, int] = {}
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    key, rest = line.split(":", 1)
+                    parts = rest.strip().split()
+                    if not parts:
+                        continue
+                    values[key] = int(parts[0])
+        except Exception:
+            return {}
+        return values
+
+    @staticmethod
+    def _nvidia_snapshot() -> tuple[str, str, str, str]:
+        try:
+            out = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                text=True,
+                timeout=2,
+            ).strip()
+            first = out.splitlines()[0].split(",") if out else []
+            if len(first) >= 4:
+                return (
+                    first[0].strip(),
+                    first[1].strip(),
+                    first[2].strip(),
+                    first[3].strip(),
+                )
+        except Exception:
+            pass
+        return ("", "", "", "")
+
+    @staticmethod
+    def _rss_mb() -> float:
+        try:
+            with open("/proc/self/statm") as f:
+                parts = f.read().strip().split()
+            if len(parts) >= 2:
+                rss_pages = int(parts[1])
+                page_size = os.sysconf("SC_PAGE_SIZE")
+                return (rss_pages * page_size) / (1024 * 1024)
+        except Exception:
+            pass
+        return 0.0
+
+    def _ensure_header(self) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.log_path.exists() and self.log_path.stat().st_size > 0:
+            return
+        with self.log_path.open("w") as f:
+            f.write(
+                "timestamp,run_name,mem_available_mb,swap_free_mb,commit_pct,load1,load5,load15,"
+                "gpu_mem_used_mb,gpu_mem_total_mb,gpu_util_pct,gpu_temp_c,process_rss_mb,"
+                "torch_alloc_mb,torch_reserved_mb\n"
+            )
+
+    def _write_sample(self) -> None:
+        mem = self._read_meminfo()
+        mem_available_mb = mem.get("MemAvailable", 0) // 1024
+        swap_free_mb = mem.get("SwapFree", 0) // 1024
+
+        commit_limit = mem.get("CommitLimit", 0)
+        committed_as = mem.get("Committed_AS", 0)
+        commit_pct = (
+            (committed_as / commit_limit * 100.0)
+            if commit_limit and committed_as
+            else 0.0
+        )
+
+        load1, load5, load15 = os.getloadavg()
+        gpu_used, gpu_total, gpu_util, gpu_temp = self._nvidia_snapshot()
+
+        torch_alloc_mb = 0.0
+        torch_reserved_mb = 0.0
+        try:
+            if torch.cuda.is_available():
+                torch_alloc_mb = torch.cuda.memory_allocated(0) / (1024 * 1024)
+                torch_reserved_mb = torch.cuda.memory_reserved(0) / (1024 * 1024)
+        except Exception:
+            pass
+
+        row = (
+            f"{datetime.now().isoformat(timespec='seconds')},{self.run_name},"
+            f"{mem_available_mb},{swap_free_mb},{commit_pct:.2f},"
+            f"{load1:.2f},{load5:.2f},{load15:.2f},"
+            f"{gpu_used},{gpu_total},{gpu_util},{gpu_temp},"
+            f"{self._rss_mb():.2f},{torch_alloc_mb:.2f},{torch_reserved_mb:.2f}\n"
+        )
+
+        with self.log_path.open("a") as f:
+            f.write(row)
+
+    def _run(self) -> None:
+        self._ensure_header()
+        while not self._stop_event.is_set():
+            try:
+                self._write_sample()
+            except Exception:
+                pass
+            self._stop_event.wait(self.interval_sec)
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        print(
+            f"[telemetry] Logging resource samples every {self.interval_sec}s -> {self.log_path}"
+        )
+
+    def stop(self) -> None:
+        if self._thread is None:
+            return
+        self._stop_event.set()
+        self._thread.join(timeout=5)
+        self._thread = None
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # TRAINING
 # ═══════════════════════════════════════════════════════════════════════════
@@ -606,6 +754,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument(
+        "--allow-memory-pressure",
+        action="store_true",
+        help="Allow training to proceed even when host RAM/swap preflight thresholds are exceeded",
+    )
+    parser.add_argument(
         "--val-on-wider",
         action="store_true",
         default=True,
@@ -638,7 +791,50 @@ def detect_dataset(args) -> str:
 def validate_environment(args: argparse.Namespace, dataset_dir: str) -> dict:
     """Pre-flight checks."""
     issues = []
+    fatal_issues = []
     info = {}
+
+    meminfo: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, rest = line.split(":", 1)
+                value = rest.strip().split()[0]
+                meminfo[key] = int(value)
+    except Exception:
+        pass
+
+    if meminfo:
+        mem_available_mb = meminfo.get("MemAvailable", 0) // 1024
+        swap_free_mb = meminfo.get("SwapFree", 0) // 1024
+        commit_limit = meminfo.get("CommitLimit", 0)
+        committed_as = meminfo.get("Committed_AS", 0)
+        commit_pct = (
+            (committed_as / commit_limit * 100.0)
+            if commit_limit and committed_as
+            else 0.0
+        )
+
+        info["host_mem_available_mb"] = mem_available_mb
+        info["host_swap_free_mb"] = swap_free_mb
+        info["host_commit_pct"] = commit_pct
+
+        if mem_available_mb < MIN_HOST_MEM_AVAILABLE_MB:
+            fatal_issues.append(
+                "Host MemAvailable "
+                f"{mem_available_mb}MB < required {MIN_HOST_MEM_AVAILABLE_MB}MB"
+            )
+
+        if swap_free_mb < MIN_HOST_SWAP_FREE_MB:
+            fatal_issues.append(
+                "Host SwapFree "
+                f"{swap_free_mb}MB < required {MIN_HOST_SWAP_FREE_MB}MB"
+            )
+
+        if commit_pct > MAX_HOST_COMMIT_PCT:
+            fatal_issues.append(
+                f"Host commit pressure {commit_pct:.1f}% > allowed {MAX_HOST_COMMIT_PCT:.1f}%"
+            )
 
     pretrained = Path(args.pretrained)
     if not pretrained.exists():
@@ -689,7 +885,13 @@ def validate_environment(args: argparse.Namespace, dataset_dir: str) -> dict:
             print(f"  ✗ {issue}")
         print("╚═════════════════════════════════════════════════╝")
 
-    return {"issues": issues, "info": info}
+    if fatal_issues:
+        print("╔════════════ PRE-FLIGHT SAFETY GATES ════════════╗")
+        for issue in fatal_issues:
+            print(f"  ✗ {issue}")
+        print("╚═════════════════════════════════════════════════╝")
+
+    return {"issues": issues, "fatal_issues": fatal_issues, "info": info}
 
 
 def run_training_phase(
@@ -948,12 +1150,23 @@ def train(args: argparse.Namespace) -> Optional[dict]:
     elif preflight["issues"]:
         print("⚠ Pre-flight issues — attempting to proceed")
 
+    fatal_issues = preflight.get("fatal_issues", [])
+    if fatal_issues and not args.allow_memory_pressure:
+        print("\n✗ Aborting due to safety gates (RAM/swap/commit pressure).")
+        print("  Use --allow-memory-pressure to override (not recommended).")
+        return None
+
     info = preflight["info"]
     print(
         f"[data] train={info.get('train_images', '?')} val={info.get('val_images', '?')}"
     )
     print(
         f"[gpu] {info.get('gpu', 'N/A')} — {info.get('gpu_free_gb', 0):.1f}/{info.get('gpu_total_gb', 0):.1f} GB"
+    )
+    print(
+        f"[host] mem_avail={info.get('host_mem_available_mb', 0)}MB "
+        f"swap_free={info.get('host_swap_free_mb', 0)}MB "
+        f"commit={info.get('host_commit_pct', 0):.1f}%"
     )
     print(
         f"[baseline/p9] R={BASELINE_PHASE9['recall']:.3f} P={BASELINE_PHASE9['precision']:.3f} mAP50={BASELINE_PHASE9['mAP50']:.3f}"
@@ -1013,6 +1226,14 @@ def train(args: argparse.Namespace) -> Optional[dict]:
             print(f"[mlflow] setup error: {e}")
 
     start_time = time.time()
+    telemetry: Optional[ResourceTelemetryLogger] = None
+    if ENABLE_TRAINING_TELEMETRY:
+        telemetry = ResourceTelemetryLogger(
+            run_name=run_name,
+            interval_sec=TRAINING_TELEMETRY_INTERVAL_SEC,
+            log_path=TRAINING_TELEMETRY_LOG,
+        )
+        telemetry.start()
 
     # Determine which phases to run
     if args.single_scale:
@@ -1041,36 +1262,40 @@ def train(args: argparse.Namespace) -> Optional[dict]:
     best_overall_recall = 0.0
     best_overall_weights = current_weights
 
-    for phase_idx_0based, phase_config in phases_to_run:
-        phase_idx = phase_idx_0based + 1
+    try:
+        for phase_idx_0based, phase_config in phases_to_run:
+            phase_idx = phase_idx_0based + 1
 
-        result, next_weights, global_epoch_offset = run_training_phase(
-            phase_config=phase_config,
-            phase_idx=phase_idx,
-            weights_path=current_weights,
-            dataset_dir=dataset_dir,
-            args=args,
-            run_name=run_name,
-            metrics_pusher=metrics_pusher,
-            global_epoch_offset=global_epoch_offset,
-        )
-
-        if result:
-            all_phase_results.append(result)
-            current_weights = next_weights
-
-            # Track overall best
-            if result.get("recall", 0) > best_overall_recall:
-                best_overall_recall = result["recall"]
-                best_overall_weights = next_weights
-
-            print(
-                f"  Phase {phase_idx} result: R={result.get('recall', 0):.4f} "
-                f"P={result.get('precision', 0):.4f} "
-                f"mAP50={result.get('mAP50', 0):.4f}"
+            result, next_weights, global_epoch_offset = run_training_phase(
+                phase_config=phase_config,
+                phase_idx=phase_idx,
+                weights_path=current_weights,
+                dataset_dir=dataset_dir,
+                args=args,
+                run_name=run_name,
+                metrics_pusher=metrics_pusher,
+                global_epoch_offset=global_epoch_offset,
             )
-        else:
-            print(f"  Phase {phase_idx} failed — continuing with previous weights")
+
+            if result:
+                all_phase_results.append(result)
+                current_weights = next_weights
+
+                # Track overall best
+                if result.get("recall", 0) > best_overall_recall:
+                    best_overall_recall = result["recall"]
+                    best_overall_weights = next_weights
+
+                print(
+                    f"  Phase {phase_idx} result: R={result.get('recall', 0):.4f} "
+                    f"P={result.get('precision', 0):.4f} "
+                    f"mAP50={result.get('mAP50', 0):.4f}"
+                )
+            else:
+                print(f"  Phase {phase_idx} failed — continuing with previous weights")
+    finally:
+        if telemetry is not None:
+            telemetry.stop()
 
     total_time = time.time() - start_time
 

@@ -57,17 +57,17 @@ if [ "$1" = "stop" ]; then
 
     # Stop MLflow dev
     echo "  Stopping MLflow dev..."
-    cd mlflow-server && sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    cd mlflow-server && sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
     cd "$SCRIPT_DIR"
 
     # Stop Ray dev
     echo "  Stopping Ray dev..."
-    cd ray_compute && sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    cd ray_compute && sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
     cd "$SCRIPT_DIR"
 
     # Stop infra dev
     echo "  Stopping dev infrastructure..."
-    sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
 
     echo ""
     echo -e "${GREEN}✓ All dev services stopped${NC}"
@@ -110,9 +110,9 @@ start_dev_infra() {
     echo -e "${CYAN}━━━ Phase 1: Dev Infrastructure ━━━${NC}"
 
     # Check if dev infra compose exists, if not create minimal one
-    if [ ! -f "docker-compose.dev.yml" ]; then
+    if [ ! -f "deploy/compose/docker-compose.dev.yml" ]; then
         echo "  Creating dev infrastructure compose file..."
-        cat > docker-compose.dev.yml << 'EOF'
+        cat > deploy/compose/docker-compose.dev.yml << 'EOF'
 # Development Infrastructure
 # Separate from production - uses different ports
 
@@ -139,7 +139,7 @@ networks:
 EOF
     fi
 
-    sg docker -c "docker compose -f docker-compose.dev.yml up -d"
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml up -d"
     wait_for_health "dev-redis" 30
     echo -e "${GREEN}✓ Dev infrastructure ready${NC}"
     echo ""
@@ -151,18 +151,18 @@ EOF
 start_mlflow_dev() {
     echo -e "${CYAN}━━━ Phase 2: MLflow 3.x Development Server ━━━${NC}"
 
-    if [ ! -f "mlflow-server/docker-compose.dev.yml" ]; then
+    if [ ! -f "mlflow-server/deploy/compose/docker-compose.dev.yml" ]; then
         echo -e "${RED}✗ MLflow dev compose not found${NC}"
-        echo "  Run: Create mlflow-server/docker-compose.dev.yml first"
+        echo "  Run: Create mlflow-server/deploy/compose/docker-compose.dev.yml first"
         return 1
     fi
 
     cd mlflow-server
     echo "  Building MLflow 3.x container..."
-    sg docker -c "docker compose -f docker-compose.dev.yml build" 2>&1 | grep -E "^(\[|\s+✔|Building|Successfully)" || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml build" 2>&1 | grep -E "^(\[|\s+✔|Building|Successfully)" || true
 
     echo "  Starting MLflow dev services..."
-    sg docker -c "docker compose -f docker-compose.dev.yml up -d"
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml up -d"
 
     wait_for_health "mlflow-dev-postgres" 45
     wait_for_health "mlflow-dev-server" 60
@@ -179,14 +179,14 @@ start_ray_dev() {
     echo -e "${CYAN}━━━ Phase 3: Ray Development Server ━━━${NC}"
 
     # Check if Ray dev compose exists
-    if [ ! -f "ray_compute/docker-compose.dev.yml" ]; then
+    if [ ! -f "ray_compute/deploy/compose/docker-compose.dev.yml" ]; then
         echo "  Creating Ray dev compose file..."
         create_ray_dev_compose
     fi
 
     cd ray_compute
     echo "  Starting Ray dev services..."
-    sg docker -c "docker compose -f docker-compose.dev.yml up -d" 2>&1 || {
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml up -d" 2>&1 || {
         echo -e "${YELLOW}⚠ Ray dev startup had warnings (may still work)${NC}"
     }
 
@@ -198,7 +198,7 @@ start_ray_dev() {
 }
 
 create_ray_dev_compose() {
-    cat > ray_compute/docker-compose.dev.yml << 'EOF'
+    cat > ray_compute/deploy/compose/docker-compose.dev.yml << 'EOF'
 # Ray Development Environment
 # For testing with MLflow 3.x integration
 
@@ -287,12 +287,12 @@ run_container_tests() {
 
     # Build test container if needed
     echo "  Building test container..."
-    sg docker -c "docker compose -f docker-compose.dev.yml build dev-test" 2>&1 | grep -E "^(\[|\s+✔|Building|built)" || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml build dev-test" 2>&1 | grep -E "^(\[|\s+✔|Building|built)" || true
 
     # Run tests
     echo "  Running tests: $test_args"
     echo ""
-    sg docker -c "docker compose -f docker-compose.dev.yml --profile test run --rm dev-test $test_args -v -s" || {
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml --profile test run --rm dev-test $test_args -v -s" || {
         echo -e "${RED}✗ Some tests failed${NC}"
         return 1
     }

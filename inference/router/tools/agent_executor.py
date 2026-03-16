@@ -119,7 +119,6 @@ class AgentExecutor:
         api_key = (
             google_api_key
             or os.environ.get("GOOGLE_API_KEY")
-            or os.environ.get("AXELOFWAR_GOOGLE_API_KEY")
         )
         self.router = ModelRouter(RouterConfig(google_api_key=api_key))
 

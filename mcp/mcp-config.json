@@ -1,6 +1,20 @@
 {
     "$schema": "https://mcp.dev/schema.json",
     "mcpServers": {
+        "nemoclaw-sandbox": {
+            "name": "NemoClaw Sandbox Factory",
+            "description": "OpenShell sandbox lifecycle management — create/destroy/query policy-governed sandboxes per RBAC role",
+            "transport": {
+                "type": "http",
+                "url": "http://nemoclaw-sandbox-factory:9095"
+            },
+            "capabilities": {
+                "tools": true,
+                "resources": false,
+                "sampling": false
+            },
+            "_security_note": "Internal Docker network only — never exposed through Traefik directly. Agent-service proxies requests with X-Auth-Request-Groups header."
+        },
         "shml-platform": {
             "name": "SHML Platform MCP",
             "description": "Training status, GPU info, MLflow queries, Vision analysis",
@@ -14,17 +28,36 @@
                 "sampling": false
             }
         },
-        "filesystem-DISABLED": {
-            "_SECURITY_NOTE": "DISABLED - grants read/write access to entire platform directory including secrets/. Use admin-only scoped access instead.",
-            "name": "File System (DISABLED)",
-            "description": "SECURITY: Disabled - was granting model access to secrets/ directory",
+        "obsidian-vault": {
+            "name": "Obsidian Knowledge Vault",
+            "description": "Read/write/search the platform knowledge vault (decisions, experiments, models)",
             "transport": {
                 "type": "stdio",
                 "command": "npx",
                 "args": [
                     "-y",
                     "@modelcontextprotocol/server-filesystem",
-                    "/home/axelofwar/Projects/shml-platform"
+                    "/opt/shml-platform/docs/obsidian-vault"
+                ]
+            },
+            "env": {},
+            "capabilities": {
+                "tools": true,
+                "resources": true,
+                "sampling": false
+            }
+        },
+        "filesystem-DISABLED": {
+            "_SECURITY_NOTE": "DISABLED - grants read/write access to entire platform directory including secrets/. Replaced by per-sandbox blueprint MCP servers (blueprint-developer.yaml → sandbox-filesystem, blueprint-elevated.yaml → platform-code-readonly). NemoClaw Landlock policy enforces the path constraints at kernel level.",
+            "name": "File System (DISABLED — use NemoClaw blueprint MCP)",
+            "description": "SECURITY: Disabled. Safe replacement: blueprint-based sandbox-filesystem MCP (scoped to /sandbox via Landlock). See nemoclaw-blueprint/blueprint-*.yaml.",
+            "transport": {
+                "type": "stdio",
+                "command": "npx",
+                "args": [
+                    "-y",
+                    "@modelcontextprotocol/server-filesystem",
+                    "/opt/shml-platform"
                 ]
             },
             "capabilities": {
@@ -43,7 +76,7 @@
                     "-y",
                     "@modelcontextprotocol/server-git",
                     "--repository",
-                    "/home/axelofwar/Projects/shml-platform"
+                    "/opt/shml-platform"
                 ]
             },
             "capabilities": {
@@ -74,8 +107,17 @@
         }
     },
     "globalConfig": {
-        "workspace": "/home/axelofwar/Projects/shml-platform",
+        "workspace": "/opt/shml-platform",
         "safetyMode": "training-aware",
+        "nemoclaw": {
+            "enabled": true,
+            "factoryUrl": "http://nemoclaw-sandbox-factory:9095",
+            "gatewayUrl": "http://openshell-gateway:9090",
+            "blueprintsPath": "/opt/shml-platform/nemoclaw-blueprint",
+            "defaultBlueprint": "shml-base",
+            "fallbackToDockerSandbox": true,
+            "_note": "NemoClaw is alpha software. fallbackToDockerSandbox=true ensures availability during upgrades."
+        },
         "notes": [
             "SHML Platform MCP integrates with Ray training and MLflow",
             "Vision tools (RTX 2070) are always safe during training",

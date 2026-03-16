@@ -1,9 +1,10 @@
 """Pydantic schemas for Agent Service."""
 
-from typing import List, Optional, Literal, Any, Dict
-from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class UserRole(str, Enum):
@@ -63,27 +64,6 @@ class AgentState(BaseModel):
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-
-
-class AgentRequest(BaseModel):
-    """Request to start agent workflow."""
-
-    messages: List[AgentMessage]
-    session_id: Optional[str] = None  # Resume existing session
-    user_id: str
-    user_roles: List[UserRole]
-    enable_tools: bool = True
-
-
-class AgentResponse(BaseModel):
-    """Response from agent."""
-
-    session_id: str
-    message: AgentMessage
-    tool_calls: List[ToolCall] = Field(default_factory=list)
-    status: Literal["thinking", "awaiting_approval", "completed", "failed"]
-    requires_approval: bool = False
-    error: Optional[str] = None
 
 
 class ApprovalRequest(BaseModel):

@@ -25,7 +25,7 @@ NC='\033[0m' # No Color
 MODEL_ID="${1:-TheBloke/deepseek-coder-6.7B-instruct-AWQ}"
 MAX_CONTEXT="${2:-4096}"
 CONTAINER_NAME="coding-model-fallback"
-COMPOSE_FILE="docker-compose.yml"
+COMPOSE_FILE="deploy/compose/docker-compose.yml"
 
 echo -e "${YELLOW}=== Fallback Model Test Script ===${NC}"
 echo ""

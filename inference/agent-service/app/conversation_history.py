@@ -9,11 +9,10 @@ Persists conversation turns to Postgres (schema: inference) with:
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
-from sqlalchemy import Column, String, Text, DateTime, Integer, Index, text
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from .database import Base
 

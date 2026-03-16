@@ -47,7 +47,7 @@ ray_submit("print('hello')", impersonate="developer")
 from shml import Client
 
 client = Client(
-    base_url="https://shml-platform.tail38b60a.ts.net",
+    base_url="https://${PUBLIC_DOMAIN}",
     api_key="shml_xxx",  # Or uses SHML_API_KEY env var
 )
 
@@ -134,7 +134,7 @@ The client looks for configuration in this order:
 ### Environment Variables
 
 - `SHML_API_KEY` - API key for authentication
-- `SHML_BASE_URL` - Platform URL (default: `https://shml-platform.tail38b60a.ts.net`)
+- `SHML_BASE_URL` - Platform URL (default: `https://${PUBLIC_DOMAIN}`)
 - `SHML_OAUTH_TOKEN` - OAuth token (alternative to API key)
 
 ### Credentials File (~/.shml/credentials)
@@ -142,7 +142,7 @@ The client looks for configuration in this order:
 ```ini
 [default]
 api_key = shml_xxx
-base_url = https://shml-platform.tail38b60a.ts.net
+base_url = https://${PUBLIC_DOMAIN}
 
 [dev]
 api_key = shml_yyy

@@ -52,7 +52,7 @@ ray_compute/
 ### Step 1: Install NVIDIA Drivers & Reboot
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 ./scripts/install_nvidia_drivers.sh
 
 # REBOOT REQUIRED

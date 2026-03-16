@@ -5,7 +5,7 @@
 ### 1. Build and run with Docker Compose
 
 ```bash
-cd /home/axelofwar/Desktop/Projects/ray_compute
+cd /opt/shml-platform/ray_compute
 
 # Add to docker-compose.api.yml or create docker-compose.ui.yml
 docker-compose -f docker-compose.ui.yml up -d

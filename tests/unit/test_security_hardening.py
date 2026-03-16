@@ -28,7 +28,7 @@ _root = os.path.join(os.path.dirname(__file__), "..", "..")
 # ===========================================================================
 
 
-def read_compose(filename="docker-compose.infra.yml"):
+def read_compose(filename="deploy/compose/docker-compose.infra.yml"):
     path = os.path.join(_root, filename)
     if not os.path.exists(path):
         pytest.skip(f"{filename} not found")
@@ -95,7 +95,7 @@ class TestPhase1CriticalFixes:
     def test_docker_proxy_service_exists(self):
         """docker-proxy service should exist for socket isolation."""
         # The proxy lives in its own compose file
-        proxy_compose = read_file_if_exists("docker-compose.docker-proxy.yml")
+        proxy_compose = read_file_if_exists("deploy/compose/docker-compose.docker-proxy.yml")
         infra_compose = read_compose()
         combined = (proxy_compose or "") + infra_compose
         has_proxy = (
@@ -107,9 +107,9 @@ class TestPhase1CriticalFixes:
 
     def test_docker_proxy_blocks_post(self):
         """Docker socket proxy should block POST (no container mutation)."""
-        proxy_compose = read_file_if_exists("docker-compose.docker-proxy.yml")
+        proxy_compose = read_file_if_exists("deploy/compose/docker-compose.docker-proxy.yml")
         if not proxy_compose:
-            pytest.skip("docker-compose.docker-proxy.yml not found")
+            pytest.skip("deploy/compose/docker-compose.docker-proxy.yml not found")
         # YAML format: POST: 0 (unquoted integer)
         assert re.search(
             r"POST:\s*0", proxy_compose
@@ -117,9 +117,9 @@ class TestPhase1CriticalFixes:
 
     def test_docker_proxy_blocks_exec(self):
         """Docker socket proxy should block EXEC (no container exec)."""
-        proxy_compose = read_file_if_exists("docker-compose.docker-proxy.yml")
+        proxy_compose = read_file_if_exists("deploy/compose/docker-compose.docker-proxy.yml")
         if not proxy_compose:
-            pytest.skip("docker-compose.docker-proxy.yml not found")
+            pytest.skip("deploy/compose/docker-compose.docker-proxy.yml not found")
         assert re.search(
             r"EXEC:\s*0", proxy_compose
         ), "Docker proxy should block EXEC requests (EXEC: 0)"
@@ -274,7 +274,7 @@ class TestPhase3InfraHardening:
     def test_network_segmentation_file_exists(self):
         """Network segmentation compose should exist."""
         candidates = [
-            os.path.join(_root, "docker-compose.yml"),
+            os.path.join(_root, "deploy/compose/docker-compose.yml"),
             os.path.join(_root, "config", "network-segmentation.yml"),
         ]
         compose = read_compose()

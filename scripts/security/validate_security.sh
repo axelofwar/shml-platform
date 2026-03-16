@@ -32,7 +32,7 @@ WARN=0
 SKIP=0
 
 # Platform URL
-PLATFORM_URL="${PUBLIC_DOMAIN:-https://shml-platform.tail38b60a.ts.net}"
+PLATFORM_URL="${PUBLIC_DOMAIN:-https://${PUBLIC_DOMAIN}}"
 PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
 
 pass() {
@@ -95,7 +95,7 @@ fi
 if docker ps --format '{{.Names}}' | grep -q 'docker-proxy'; then
     pass "docker-proxy container is running"
 else
-    warn "docker-proxy container not found (deploy docker-compose.docker-proxy.yml)"
+    warn "docker-proxy container not found (deploy deploy/compose/docker-compose.docker-proxy.yml)"
 fi
 
 # Check docker-proxy only allows read operations
@@ -317,16 +317,16 @@ fi
 echo ""
 echo "--- 3.2 Docker Proxy ---"
 
-if [[ -f "docker-compose.docker-proxy.yml" ]]; then
+if [[ -f "deploy/compose/docker-compose.docker-proxy.yml" ]]; then
     pass "Docker proxy compose file exists"
 else
-    fail "docker-compose.docker-proxy.yml not found"
+    fail "deploy/compose/docker-compose.docker-proxy.yml not found"
 fi
 
 echo ""
 echo "--- 3.3 Infisical Keys ---"
 
-if grep -q '?ERROR:' docker-compose.secrets.yml 2>/dev/null; then
+if grep -q '?ERROR:' deploy/compose/docker-compose.secrets.yml 2>/dev/null; then
     pass "Infisical defaults removed (now requires .env)"
 else
     fail "Infisical may still have hardcoded default keys"
@@ -335,10 +335,10 @@ fi
 echo ""
 echo "--- 3.4 Network Segmentation Plan ---"
 
-if [[ -f "docker-compose.networks.yml" ]]; then
+if [[ -f "deploy/compose/docker-compose.networks.yml" ]]; then
     pass "Network segmentation plan file exists"
 else
-    warn "docker-compose.networks.yml not found"
+    warn "deploy/compose/docker-compose.networks.yml not found"
 fi
 
 echo ""
@@ -391,7 +391,7 @@ header "PHASE 5: FiftyOne Fixes"
 echo ""
 echo "--- 5.1 Server Path Prefix ---"
 
-if grep -q "FIFTYONE_SERVER_PATH_PREFIX" docker-compose.infra.yml 2>/dev/null; then
+if grep -q "FIFTYONE_SERVER_PATH_PREFIX" deploy/compose/docker-compose.infra.yml 2>/dev/null; then
     pass "FIFTYONE_SERVER_PATH_PREFIX set in compose"
 else
     fail "FIFTYONE_SERVER_PATH_PREFIX missing from compose"

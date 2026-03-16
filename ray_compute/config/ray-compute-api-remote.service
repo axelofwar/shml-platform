@@ -7,15 +7,15 @@ Requires=ray-head.service
 Type=simple
 User=axelofwar
 Group=axelofwar
-WorkingDirectory=/home/axelofwar/Projects/mlflow-server/ray_compute
+WorkingDirectory=/home/$USER/Projects/mlflow-server/ray_compute
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="MLFLOW_TRACKING_URI=http://localhost:8080"
 Environment="RAY_ADDRESS=http://127.0.0.1:8265"
-ExecStart=/usr/bin/python3 /home/axelofwar/Projects/mlflow-server/ray_compute/api/server_remote.py
+ExecStart=/usr/bin/python3 /home/$USER/Projects/mlflow-server/ray_compute/api/server_remote.py
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:/home/axelofwar/Projects/mlflow-server/ray_compute/logs/api_remote.log
-StandardError=append:/home/axelofwar/Projects/mlflow-server/ray_compute/logs/api_remote.log
+StandardOutput=append:/home/$USER/Projects/mlflow-server/ray_compute/logs/api_remote.log
+StandardError=append:/home/$USER/Projects/mlflow-server/ray_compute/logs/api_remote.log
 
 [Install]
 WantedBy=multi-user.target

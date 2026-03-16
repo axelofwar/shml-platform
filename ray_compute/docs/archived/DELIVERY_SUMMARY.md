@@ -231,7 +231,7 @@
 
 ### Step 1: Run Setup (30 minutes)
 ```bash
-cd /home/axelofwar/Desktop/Projects/ray_compute
+cd /opt/shml-platform/ray_compute
 chmod +x scripts/setup_enhanced.sh
 ./scripts/setup_enhanced.sh
 ```

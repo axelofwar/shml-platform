@@ -45,7 +45,8 @@ def load_env():
             current = current.parent
 
         # Also check workspace root
-        workspace_env = Path("/home/axelofwar/Projects/shml-platform/.env")
+        workspace_root = os.environ.get("PLATFORM_ROOT", str(Path.cwd()))
+        workspace_env = Path(workspace_root) / ".env"
         if workspace_env.exists():
             load_dotenv(workspace_env)
             return str(workspace_env)

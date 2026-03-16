@@ -45,10 +45,10 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture(scope="session")
 def public_domain():
     """Get the public domain for external tests."""
-    return os.getenv("PUBLIC_DOMAIN", "shml-platform.tail38b60a.ts.net")
+    return os.getenv("PUBLIC_DOMAIN", "localhost")
 
 
 @pytest.fixture(scope="session")
 def lan_ip():
     """Get the LAN IP for internal tests."""
-    return os.getenv("LAN_IP", "10.0.0.163")
+    return os.getenv("LAN_IP", "127.0.0.1")

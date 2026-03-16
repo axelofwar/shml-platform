@@ -99,7 +99,7 @@ OpenAI-compatible Chat API with authentication, rate limiting, and history sync.
 ## Quick Start with Cursor
 1. Generate an API key at `/api-keys`
 2. Configure Cursor: Settings > Models > Add Custom Model
-3. Set base URL to `https://shml-platform.tail38b60a.ts.net/chat/v1`
+3. Set base URL to `https://${PUBLIC_DOMAIN}/chat/v1`
 4. Use your API key
     """,
     version=VERSION,
@@ -110,7 +110,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get(
         "CORS_ORIGINS",
-        "https://shml-platform.tail38b60a.ts.net,http://localhost:3000,http://localhost:8080",
+        "http://localhost:3000,http://localhost:8080",
     ).split(","),
     allow_methods=["*"],
     allow_headers=["*"],

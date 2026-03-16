@@ -70,7 +70,7 @@ docker ps
 # 1. Stop all services
 ./stop_all.sh
 
-# 2. Make changes to docker-compose.yml
+# 2. Make changes to deploy/compose/docker-compose.yml
 # IMPORTANT: Add inline comments explaining critical values
 # Example:
 # - traefik.http.routers.my-api.priority=2147483647  # CRITICAL: See LESSONS_LEARNED.md

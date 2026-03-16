@@ -5,7 +5,7 @@
 
 set -e  # Exit on error
 
-PROJECT_ROOT="/home/axelofwar/Projects/shml-platform"
+PROJECT_ROOT="${PLATFORM_ROOT:-.}"
 RAY_COMPUTE="$PROJECT_ROOT/ray_compute"
 
 echo "==================================================================="

@@ -44,7 +44,7 @@ resolve_app_name() {
     case "$APP_ID" in
         "e9fdb985-"*) echo "MLflow" ;;
         "a1b2c3d4-"*) echo "Ray Compute" ;;
-        "acda34f0-"*) echo "OAuth2-Proxy (Web)" ;;
+        "${FUSIONAUTH_PROXY_CLIENT_ID:-}"*|"acda34f0-"*|"50a4dc27-"*) echo "OAuth2-Proxy (Web)" ;;
         *) echo "Unknown ($APP_ID)" ;;
     esac
 }

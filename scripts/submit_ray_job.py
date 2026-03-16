@@ -24,8 +24,10 @@ try:
     from rich.table import Table
 except ImportError:
     print("Installing required packages...")
+    import shutil
+    uv_path = shutil.which("uv") or "uv"
     os.system(
-        "sudo /home/axelofwar/.local/bin/uv pip install --python /usr/bin/python3 --break-system-packages typer httpx rich"
+        f"{uv_path} pip install --python /usr/bin/python3 --break-system-packages typer httpx rich"
     )
     import typer
     import httpx

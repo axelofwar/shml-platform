@@ -322,7 +322,7 @@ full_stack_live_tests:
   script:
     - pip install pytest requests
     - |
-      DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+      DOMAIN="${PUBLIC_DOMAIN}"
       echo "Testing service health on Docker network..."
       # Test services directly via container names (no external access needed)
       for svc_url in \
@@ -340,7 +340,7 @@ full_stack_live_tests:
       done
     - |
       if [ -f "tests/integration/test_full_stack.py" ]; then
-        PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}" \
+        PUBLIC_DOMAIN="${PUBLIC_DOMAIN}" \
         SKIP_LAN_TESTS="true" \
         pytest tests/integration/test_full_stack.py -v --tb=short -m "external or security" -x || true
       fi

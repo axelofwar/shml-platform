@@ -3,7 +3,7 @@
 # Handles docker permissions automatically
 
 set -e
-cd /home/axelofwar/Desktop/Projects/mlflow-server
+cd /opt/shml-platform/mlflow-server
 
 # Ensure we're in docker group
 if ! groups | grep -q docker; then

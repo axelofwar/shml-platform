@@ -148,7 +148,7 @@ shml platform status
 |---------|-----|
 | `nvidia-smi` not found | Install NVIDIA driver ≥ 535 |
 | GPU not visible in containers | Install NVIDIA Container Toolkit, restart Docker |
-| Port conflict on 5000/3000/etc. | Stop the conflicting service or edit port mappings in `docker-compose.yml` |
+| Port conflict on 5000/3000/etc. | Stop the conflicting service or edit port mappings in `deploy/compose/docker-compose.yml` |
 | OAuth2 Proxy unhealthy | Expected — its scratch image has no shell; Traefik uses "running" status instead |
 
 See [TROUBLESHOOTING.md](../guides/troubleshooting.md) for the full guide.

@@ -10,7 +10,7 @@ class TestTraefikConfiguration:
 
     @pytest.fixture
     def chat_api_compose(self):
-        """Load chat-api docker-compose.yml."""
+        """Load chat-api deploy/compose/docker-compose.yml."""
         compose_path = os.path.join(
             os.path.dirname(__file__), "../../inference/chat-api/docker-compose.yml"
         )
@@ -19,7 +19,7 @@ class TestTraefikConfiguration:
 
     @pytest.fixture
     def chat_ui_compose(self):
-        """Load chat-ui docker-compose.yml."""
+        """Load chat-ui deploy/compose/docker-compose.yml."""
         compose_path = os.path.join(
             os.path.dirname(__file__), "../../chat-ui/docker-compose.yml"
         )
@@ -28,7 +28,7 @@ class TestTraefikConfiguration:
 
     @pytest.fixture
     def coding_model_compose(self):
-        """Load coding-model docker-compose.yml."""
+        """Load coding-model deploy/compose/docker-compose.yml."""
         compose_path = os.path.join(
             os.path.dirname(__file__), "../../inference/coding-model/docker-compose.yml"
         )

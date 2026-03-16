@@ -10,21 +10,16 @@ Architecture:
 Agent Skills Standard: https://agentskills.io/specification
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 import logging
 import asyncio
-import subprocess
-import shlex
 import json
-import re
 
 from .security import (
     is_command_safe_for_role,
     filter_skills_for_role,
-    get_system_prompt_preamble,
     filter_output,
-    BLOCKED_PATTERNS,
 )
 
 logger = logging.getLogger(__name__)
@@ -330,7 +325,7 @@ Returns detailed nvidia-smi output:
                                 "source": "inference-health-apis",
                                 "note": "nvidia-smi not accessible, queried inference service health endpoints",
                             }
-                    except Exception as e:
+                    except Exception:
                         pass
 
                     # Method 4: Return manual info about known GPUs
@@ -1216,14 +1211,44 @@ result = await WebSearchSkill.execute("search", {
             return {"error": f"Search failed: {str(e)}", "query": query}
 
 
+# Lazy import for OpenShellSkill (NemoClaw — optional dependency)
+try:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "openshell_skill",
+        str(__file__).replace("app/skills.py", "skills/openshell-skill/openshell_skill.py"),
+    )
+    if _spec and _spec.loader:
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+        OpenShellSkill = _mod.OpenShellSkill
+        _OPENSHELL_AVAILABLE = True
+        logger.info("OpenShellSkill loaded (NemoClaw)")
+    else:
+        OpenShellSkill = None
+        _OPENSHELL_AVAILABLE = False
+except Exception as _e:
+    OpenShellSkill = None
+    _OPENSHELL_AVAILABLE = False
+    logger.warning(f"OpenShellSkill not available: {_e}")
+
+
 # Skill registry
-SKILLS: List[type[Skill]] = [
+# OpenShellSkill is listed BEFORE SandboxSkill so it takes precedence for
+# elevated-developer+ when both are allowed. SandboxSkill remains as fallback.
+_base_skills: List[type[Skill]] = [
     ShellSkill,  # Shell commands for system info, GPU status, etc.
     GitHubSkill,
-    SandboxSkill,
     RayJobSkill,
     WebSearchSkill,
 ]
+
+if _OPENSHELL_AVAILABLE and OpenShellSkill is not None:
+    _base_skills.insert(2, OpenShellSkill)  # Before SandboxSkill
+
+_base_skills.append(SandboxSkill)  # Fallback always registered last
+
+SKILLS: List[type[Skill]] = _base_skills
 
 
 def get_active_skills(user_task: str, user_role: str = "viewer") -> List[str]:

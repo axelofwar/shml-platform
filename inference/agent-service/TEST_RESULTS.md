@@ -71,7 +71,7 @@
 ## Test Environment
 
 **Python Version**: 3.12  
-**Virtual Environment**: `/home/axelofwar/Projects/shml-platform/inference/agent-service/venv`  
+**Virtual Environment**: `/opt/shml-platform/inference/agent-service/venv`  
 **Dependencies Installed**: 100+ packages including:
 - langgraph 1.0.4
 - langchain 1.1.2
@@ -96,7 +96,7 @@
 
 ### 1. Start Agent Service (Priority: HIGH)
 ```bash
-cd /home/axelofwar/Projects/shml-platform/inference/agent-service
+cd /opt/shml-platform/inference/agent-service
 source venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```

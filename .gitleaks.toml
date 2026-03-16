@@ -16,7 +16,6 @@ paths = [
     '''archived/.*''',
     '''__MACOSX/''',
     '''backups/''',
-    '''\.env\.example$''',
     '''tests/''',
     '''\.github/copilot-instructions\.md$''',
     '''docs/internal/archived_approaches/.*''',
@@ -41,6 +40,7 @@ regexes = [
     '''YOUR_[A-Z_]+''',
     # UUID placeholders (app IDs, not secrets)
     '''acda34f0-7cf2-40eb-9cba-7cb0048857d3''',
+    '''50a4dc27-578a-47f1-a98e-1b9f47e2e81b''',
 ]
 
 # Allowlist specific commits/findings (false positives in git history)

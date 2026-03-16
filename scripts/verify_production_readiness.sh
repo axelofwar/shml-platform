@@ -10,7 +10,7 @@ echo "║                                                                  ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 
-BASE_DIR="/home/axelofwar/Projects/shml-platform"
+BASE_DIR="${PLATFORM_ROOT:-.}"
 PASS_COUNT=0
 FAIL_COUNT=0
 

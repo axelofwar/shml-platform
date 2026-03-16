@@ -82,7 +82,7 @@
 #    - Solution: This script is the ONLY entry point for starting services
 #    - Individual compose files have `external: true` for network (standalone capable)
 #    - Script ensures network exists before starting services
-#    - DO NOT use `docker compose up` with the main docker-compose.yml directly
+#    - DO NOT use `docker compose up` with the main deploy/compose/docker-compose.yml directly
 #    - Always use: ./start_all_safe.sh [command] [service]
 #
 # Usage:
@@ -110,6 +110,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-shml-platform}"
 
 # Colors
 RED='\033[0;31m'
@@ -129,6 +130,7 @@ OAUTH2_PROXY_TIMEOUT=${OAUTH2_PROXY_TIMEOUT:-120}
 MLFLOW_TIMEOUT=${MLFLOW_TIMEOUT:-120}
 RAY_TIMEOUT=${RAY_TIMEOUT:-120}
 DEFAULT_TIMEOUT=${DEFAULT_TIMEOUT:-60}
+OPTIONAL_AI_STACK_ENABLED=${OPTIONAL_AI_STACK_ENABLED:-true}
 
 # =============================================================================
 # Helper Functions
@@ -138,6 +140,39 @@ log_info() { echo -e "${CYAN}$1${NC}"; }
 log_success() { echo -e "${GREEN}✓ $1${NC}"; }
 log_warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
 log_error() { echo -e "${RED}✗ $1${NC}"; }
+
+can_run_privileged() {
+    [ "$(id -u)" -eq 0 ] || sudo -n true >/dev/null 2>&1
+}
+
+run_privileged_quiet() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        sudo -n "$@"
+    fi
+}
+
+check_local_oidc_discovery() {
+    local domain="$1"
+    curl -skf --resolve "${domain}:443:127.0.0.1" \
+        "https://${domain}/.well-known/openid-configuration" >/dev/null 2>&1
+}
+
+detect_tailscale_public_domain() {
+    local dns_name=""
+    dns_name=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' 2>/dev/null | sed 's/\.$//' || true)
+    if [ -n "$dns_name" ] && [ "$dns_name" != "null" ]; then
+        echo "$dns_name"
+        return 0
+    fi
+    tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo ""
+}
+
+funnel_active_for_domain() {
+    local domain="$1"
+    tailscale funnel status 2>/dev/null | grep -Fq "https://${domain}"
+}
 
 # Platform network name (consistent across all compose files)
 PLATFORM_NETWORK="${PLATFORM_PREFIX:-shml}-platform"
@@ -160,7 +195,7 @@ dc_up() {
     local compose_file="$1"
     shift
     ensure_network
-    docker compose --env-file .env -f "$compose_file" up -d "$@" 2>&1 | grep -v "orphan" || true
+    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env -f "$compose_file" up -d "$@" 2>&1 | grep -v "orphan" || true
 }
 
 # Compose command for stopping services
@@ -168,7 +203,7 @@ dc_up() {
 dc_stop() {
     local compose_file="$1"
     shift
-    docker compose --env-file .env -f "$compose_file" stop "$@" 2>/dev/null || true
+    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env -f "$compose_file" stop "$@" 2>/dev/null || true
 }
 
 # Compose command for main infra (uses include-based main compose)
@@ -178,13 +213,13 @@ dc_infra() {
     shift
     case "$action" in
         up)
-            docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate "$@" 2>&1 | grep -v "orphan" || true
+            docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate "$@" 2>&1 | grep -v "orphan" || true
             ;;
         stop)
-            docker compose --env-file .env -f docker-compose.infra.yml stop "$@" 2>/dev/null || true
+            docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env -f deploy/compose/docker-compose.infra.yml stop "$@" 2>/dev/null || true
             ;;
         down)
-            docker compose --env-file .env -f docker-compose.infra.yml down "$@" 2>/dev/null || true
+            docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env -f deploy/compose/docker-compose.infra.yml down "$@" 2>/dev/null || true
             ;;
     esac
 }
@@ -638,8 +673,12 @@ stop_all_services() {
     # Phase 1: Stop Tailscale Funnel
     log_info "━━━ Stopping Tailscale Funnel ━━━"
     if command -v tailscale &>/dev/null; then
-        sudo tailscale funnel --https=443 off 2>/dev/null || true
-        log_success "Tailscale Funnel stopped"
+        if can_run_privileged; then
+            run_privileged_quiet tailscale funnel --https=443 off 2>/dev/null || true
+            log_success "Tailscale Funnel stopped"
+        else
+            log_warn "Skipping funnel shutdown (no non-interactive sudo)"
+        fi
     fi
     echo ""
 
@@ -668,24 +707,24 @@ stop_all_services() {
 
     # Phase 4.5: Stop Data Platform (FiftyOne, Nessie)
     log_info "━━━ Stopping Data Platform ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop fiftyone fiftyone-mongodb nessie 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop fiftyone fiftyone-mongodb nessie 2>/dev/null || true
     log_success "Data platform stopped"
     echo ""
 
     # Phase 5: Stop Monitoring (Grafana/Prometheus/Pushgateway/SLO Exporter/DCGM)
     log_info "━━━ Stopping Monitoring ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway ml-slo-exporter 2>/dev/null || true
-    docker compose --env-file .env -f docker-compose.infra.yml stop cadvisor node-exporter 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway ml-slo-exporter 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop cadvisor node-exporter 2>/dev/null || true
     # Stop DCGM exporter (GPU metrics)
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml stop 2>/dev/null || true
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml stop 2>/dev/null || true
     fi
     log_success "Monitoring stopped"
     echo ""
 
     # Phase 6: Stop Auth Services
     log_info "━━━ Stopping Auth Services ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
     log_success "Auth services stopped"
     echo ""
 
@@ -693,11 +732,11 @@ stop_all_services() {
     log_info "━━━ Stopping Infrastructure ━━━"
 
     # Stop Infisical if it exists
-    if [ -f "docker-compose.secrets.yml" ]; then
-        docker compose -f docker-compose.secrets.yml stop 2>/dev/null || true
+    if [ -f "deploy/compose/docker-compose.secrets.yml" ]; then
+        docker compose -f deploy/compose/docker-compose.secrets.yml stop 2>/dev/null || true
     fi
 
-    docker compose --env-file .env -f docker-compose.infra.yml stop traefik redis postgres 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop traefik redis postgres 2>/dev/null || true
     log_success "Infrastructure stopped"
     echo ""
 
@@ -714,9 +753,9 @@ cleanup_containers() {
 
     # Stop all containers from compose files first
     log_info "Stopping all compose services..."
-    docker compose --env-file .env -f docker-compose.infra.yml down --remove-orphans 2>/dev/null || true
-    if [ -f "docker-compose.secrets.yml" ]; then
-        docker compose -f docker-compose.secrets.yml down --remove-orphans 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml down --remove-orphans 2>/dev/null || true
+    if [ -f "deploy/compose/docker-compose.secrets.yml" ]; then
+        docker compose -f deploy/compose/docker-compose.secrets.yml down --remove-orphans 2>/dev/null || true
     fi
     if [ -f "inference/chat-api/docker-compose.yml" ]; then
         docker compose --env-file .env -f inference/chat-api/docker-compose.yml down --remove-orphans 2>/dev/null || true
@@ -724,8 +763,8 @@ cleanup_containers() {
     if [ -f "inference/coding-model/docker-compose.yml" ]; then
         docker compose --env-file .env -f inference/coding-model/docker-compose.yml down --remove-orphans 2>/dev/null || true
     fi
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml down --remove-orphans 2>/dev/null || true
     fi
 
     # List of all known containers (both old and new naming schemes)
@@ -818,7 +857,7 @@ rebuild_images() {
 
     # MLflow server (has security middleware changes)
     echo -n "  Building mlflow-server..."
-    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-server >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-server >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -827,7 +866,7 @@ rebuild_images() {
 
     # MLflow API
     echo -n "  Building mlflow-api..."
-    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-api >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build mlflow-api >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -836,7 +875,7 @@ rebuild_images() {
 
     # Ray head (if custom Dockerfile exists)
     echo -n "  Building ray-head..."
-    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-head >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-head >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -845,7 +884,7 @@ rebuild_images() {
 
     # Ray compute API
     echo -n "  Building ray-compute-api..."
-    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-compute-api >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build ray-compute-api >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -854,7 +893,7 @@ rebuild_images() {
 
     # Role Auth (RBAC middleware)
     echo -n "  Building role-auth..."
-    if docker compose --env-file .env -f docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build role-auth >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build role-auth >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -894,34 +933,17 @@ start_all_services() {
     fi
 
     # =========================================================================
-    # Pre-flight: Tailscale IP Validation
-    # After Tailscale reset/logout, the IP may change. This check catches
-    # stale configuration BEFORE services fail with cryptic errors.
+    # Pre-flight: Dynamic Environment Initialization
+    # Auto-discovers LAN_IP and TAILSCALE_IP and updates .env files before
+    # any services start. Handles network changes (DHCP, hotspot, Tailscale
+    # re-auth) transparently so stale IPs never break Traefik or OAuth2.
     # =========================================================================
-    if command -v tailscale &>/dev/null && tailscale status >/dev/null 2>&1; then
-        CURRENT_TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
-        CONFIGURED_TS_IP=$(grep "^TAILSCALE_IP=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2)
-
-        if [ -n "$CURRENT_TS_IP" ] && [ -n "$CONFIGURED_TS_IP" ] && [ "$CURRENT_TS_IP" != "$CONFIGURED_TS_IP" ]; then
-            echo ""
-            log_error "═══════════════════════════════════════════════════════════════"
-            log_error "  TAILSCALE IP MISMATCH DETECTED!"
-            log_error "═══════════════════════════════════════════════════════════════"
-            echo ""
-            echo "  Current Tailscale IP:    $CURRENT_TS_IP"
-            echo "  Configured in .env:      $CONFIGURED_TS_IP"
-            echo ""
-            echo "  This usually happens after a Tailscale reset/logout."
-            echo "  OAuth2 and other services will fail with the wrong IP."
-            echo ""
-            echo "  Run the recovery script to fix this:"
-            echo -e "    ${GREEN}./scripts/recover-tailscale.sh${NC}"
-            echo ""
-            echo "  Or manually update TAILSCALE_IP in .env and restart."
-            echo ""
-            log_error "═══════════════════════════════════════════════════════════════"
-            exit 1
-        fi
+    if [ -f "$SCRIPT_DIR/scripts/platform/env-init.sh" ]; then
+        bash "$SCRIPT_DIR/scripts/platform/env-init.sh"
+        # Reload .env so the rest of this script sees fresh values
+        set -a; source "$SCRIPT_DIR/.env"; set +a
+    else
+        log_warn "scripts/platform/env-init.sh not found — skipping dynamic IP detection"
     fi
 
     # =========================================================================
@@ -929,7 +951,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 1: Core Infrastructure ━━━"
     echo "Starting: Traefik, PostgreSQL, Redis..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         traefik postgres redis \
         node-exporter cadvisor 2>&1 | grep -v "orphan" || true
 
@@ -942,7 +964,7 @@ start_all_services() {
 
     # Nessie Iceberg catalog (depends on PostgreSQL)
     echo "Starting: Nessie (Iceberg catalog)..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         nessie 2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-nessie" $DEFAULT_TIMEOUT || log_warn "Nessie may still be starting"
 
@@ -959,10 +981,10 @@ start_all_services() {
     # =========================================================================
     # Phase 1.6: Infisical Secrets Manager (Needs PostgreSQL, Redis)
     # =========================================================================
-    if [ -f "docker-compose.secrets.yml" ]; then
+    if [ -f "deploy/compose/docker-compose.secrets.yml" ]; then
         log_info "━━━ Phase 1.6: Infisical Secrets Manager ━━━"
         echo "Starting: Infisical (secrets manager for API keys, GitHub tokens)..."
-        docker compose -f docker-compose.secrets.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose -f deploy/compose/docker-compose.secrets.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
 
         wait_for_health "${PLATFORM_PREFIX:-shml}-infisical" $DEFAULT_TIMEOUT || log_warn "Infisical may still be initializing"
         log_success "Infisical secrets manager ready"
@@ -974,7 +996,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 2: FusionAuth (OAuth Provider) ━━━"
     echo "Starting: FusionAuth OAuth/SSO server..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT || log_warn "FusionAuth may need initial setup wizard"
     log_success "FusionAuth ready"
@@ -1010,54 +1032,78 @@ start_all_services() {
 
         # Expected hostname for the platform
         local EXPECTED_HOSTNAME="shml-platform"
+        local EXPECTED_PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
 
         # Get current Tailscale hostname
         local CURRENT_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName' 2>/dev/null || echo "unknown")
-        local MAGIC_DNS_SUFFIX=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix' 2>/dev/null || echo "tail38b60a.ts.net")
+        local MAGIC_DNS_SUFFIX=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix' 2>/dev/null || echo "")
+
+        local can_manage_tailscale=false
+        if can_run_privileged; then
+            can_manage_tailscale=true
+        else
+            log_warn "Skipping privileged Tailscale changes during startup (no non-interactive sudo)"
+        fi
 
         # Check and fix hostname if needed
         if [ "$CURRENT_HOSTNAME" != "$EXPECTED_HOSTNAME" ]; then
             log_warn "Tailscale hostname mismatch: '$CURRENT_HOSTNAME' != '$EXPECTED_HOSTNAME'"
             echo "  Correcting Tailscale hostname to '$EXPECTED_HOSTNAME'..."
-            if sudo tailscale set --hostname="$EXPECTED_HOSTNAME" 2>/dev/null; then
+            if [ "$can_manage_tailscale" = true ] && run_privileged_quiet tailscale set --hostname="$EXPECTED_HOSTNAME" 2>/dev/null; then
                 log_success "Hostname corrected to '$EXPECTED_HOSTNAME'"
                 # Give Tailscale a moment to propagate the change
                 sleep 3
             else
-                log_error "Failed to set Tailscale hostname"
+                log_warn "Could not update Tailscale hostname automatically"
             fi
         else
             echo "  Tailscale hostname: $CURRENT_HOSTNAME ✓"
         fi
 
         # Get the public domain (re-read after potential hostname change)
-        PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "${EXPECTED_HOSTNAME}.${MAGIC_DNS_SUFFIX}")
+        PUBLIC_DOMAIN=$(detect_tailscale_public_domain)
+        if [ -z "$PUBLIC_DOMAIN" ]; then
+            PUBLIC_DOMAIN="${EXPECTED_PUBLIC_DOMAIN}"
+        fi
         echo "  Public domain: https://${PUBLIC_DOMAIN}"
 
-        # Reset any existing funnel configuration to avoid conflicts
-        echo "  Resetting funnel configuration..."
-        sudo tailscale funnel reset 2>/dev/null || true
-        sleep 2
+        if [ "$can_manage_tailscale" = true ]; then
+            # Reset any existing funnel configuration to avoid conflicts
+            echo "  Resetting funnel configuration..."
+            run_privileged_quiet tailscale funnel reset 2>/dev/null || true
+            sleep 2
 
-        # Start the funnel - routes HTTPS to local Traefik on port 80
-        # Using 'sudo' because funnel requires elevated permissions
-        echo "  Starting Tailscale Funnel..."
-        if sudo tailscale funnel --bg 80 2>/dev/null; then
-            log_success "Funnel started on https://${PUBLIC_DOMAIN}"
+            # Start the funnel - routes HTTPS to local Traefik on port 80
+            echo "  Starting Tailscale Funnel..."
+            if run_privileged_quiet tailscale funnel --bg 80 2>/dev/null; then
+                log_success "Funnel started on https://${PUBLIC_DOMAIN}"
+            else
+                log_warn "Funnel command may have failed"
+            fi
+
+            # Give funnel time to establish connection
+            sleep 5
         else
-            log_warn "Funnel command may have failed"
+            if funnel_active_for_domain "$PUBLIC_DOMAIN"; then
+                log_success "Existing Tailscale Funnel detected for https://${PUBLIC_DOMAIN}"
+            else
+                log_error "Tailscale Funnel is required but cannot be managed without non-interactive sudo"
+                return 1
+            fi
         fi
 
-        # Give funnel time to establish connection
-        sleep 5
+        if ! funnel_active_for_domain "$PUBLIC_DOMAIN"; then
+            log_error "Tailscale Funnel is not active for https://${PUBLIC_DOMAIN}"
+            return 1
+        fi
 
-        # Wait for funnel to be fully accessible (CRITICAL for OAuth2 Proxy)
-        # OAuth2 Proxy will fail to start if it can't reach OIDC discovery endpoint
-        echo -n "  Verifying OIDC discovery endpoint"
+        # Verify local OIDC discovery through Traefik.
+        # Internal startup no longer depends on reaching Funnel over the Tailscale IP.
+        echo -n "  Verifying local OIDC discovery endpoint"
         local oidc_wait=0
         local oidc_success=false
         while [ $oidc_wait -lt 60 ]; do
-            if curl -sf "https://${PUBLIC_DOMAIN}/.well-known/openid-configuration" >/dev/null 2>&1; then
+            if check_local_oidc_discovery "$PUBLIC_DOMAIN"; then
                 echo -e " ${GREEN}✓${NC}"
                 oidc_success=true
                 break
@@ -1069,18 +1115,22 @@ start_all_services() {
 
         if [ "$oidc_success" = false ]; then
             echo -e " ${YELLOW}⚠${NC}"
-            log_warn "OIDC not accessible on first attempt - retrying with funnel restart..."
+            log_warn "OIDC not accessible on first attempt - retrying local verification..."
 
-            # Second attempt: full reset and restart
-            sudo tailscale funnel reset 2>/dev/null || true
-            sleep 2
-            sudo tailscale funnel --bg 80 2>/dev/null || true
-            sleep 5
+            if [ "$can_manage_tailscale" = true ]; then
+                run_privileged_quiet tailscale funnel reset 2>/dev/null || true
+                sleep 2
+                run_privileged_quiet tailscale funnel --bg 80 2>/dev/null || true
+                sleep 5
+            else
+                log_error "Cannot repair Funnel automatically without non-interactive sudo"
+                return 1
+            fi
 
-            echo -n "  Retry OIDC verification"
+            echo -n "  Retry local OIDC verification"
             oidc_wait=0
             while [ $oidc_wait -lt 30 ]; do
-                if curl -sf "https://${PUBLIC_DOMAIN}/.well-known/openid-configuration" >/dev/null 2>&1; then
+                if check_local_oidc_discovery "$PUBLIC_DOMAIN"; then
                     echo -e " ${GREEN}✓${NC}"
                     oidc_success=true
                     break
@@ -1093,15 +1143,15 @@ start_all_services() {
 
         if [ "$oidc_success" = false ]; then
             echo -e " ${RED}✗${NC}"
-            log_error "OIDC discovery endpoint not accessible!"
+            log_error "Local OIDC discovery endpoint not accessible!"
             echo ""
             echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${RED}║  TAILSCALE FUNNEL NOT WORKING                                  ║${NC}"
+            echo -e "${RED}║  LOCAL OIDC DISCOVERY NOT WORKING                              ║${NC}"
             echo -e "${RED}╠════════════════════════════════════════════════════════════════╣${NC}"
-            echo -e "${RED}║  OAuth2 Proxy requires the funnel to reach OIDC discovery.     ║${NC}"
+            echo -e "${RED}║  OAuth2 Proxy requires Traefik + FusionAuth discovery.         ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  Check funnel status:                                          ║${NC}"
-            echo -e "${RED}║    sudo tailscale funnel status                                ║${NC}"
+            echo -e "${RED}║  Check locally:                                                ║${NC}"
+            echo -e "${RED}║    curl --resolve ${PUBLIC_DOMAIN}:443:127.0.0.1 https://${PUBLIC_DOMAIN}/.well-known/openid-configuration${NC}"
             echo -e "${RED}║                                                                ║${NC}"
             echo -e "${RED}║  Verify from external machine:                                 ║${NC}"
             echo -e "${RED}║    curl https://${PUBLIC_DOMAIN}/.well-known/openid-configuration${NC}"
@@ -1122,7 +1172,7 @@ start_all_services() {
     # CRITICAL NOTES (Lessons Learned):
     # - OAuth2 Proxy uses a scratch/distroless image with NO shell tools
     # - Health checks using wget/curl will ALWAYS fail (tools don't exist)
-    # - docker-compose.infra.yml must have "healthcheck: disable: true"
+    # - deploy/compose/docker-compose.infra.yml must have "healthcheck: disable: true"
     # - Traefik filters out containers that are "unhealthy" or "starting"
     # - Without disabled healthcheck, middleware is NEVER registered
     # - OAuth2 Proxy uses /oauth2-proxy/* prefix (NOT /oauth2/*) to avoid
@@ -1131,7 +1181,7 @@ start_all_services() {
     log_info "━━━ Phase 4: OAuth2 Proxy (Auth Middleware) ━━━"
     echo "Starting: OAuth2 Proxy (provides forwardAuth middleware)..."
     echo "  Note: Using /oauth2-proxy/* prefix (FusionAuth uses /oauth2/*)"
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
 
     # OAuth2 Proxy healthcheck is DISABLED (scratch image has no wget/curl)
     # So we wait for container to be running, then verify it's working
@@ -1149,11 +1199,11 @@ start_all_services() {
             echo -e "${RED}║  The oauth2-proxy image is scratch/distroless - no wget/curl   ║${NC}"
             echo -e "${RED}║  Health checks using shell tools will ALWAYS fail.             ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  FIX: In docker-compose.infra.yml, set:                        ║${NC}"
+            echo -e "${RED}║  FIX: In deploy/compose/docker-compose.infra.yml, set:                        ║${NC}"
             echo -e "${RED}║       healthcheck:                                             ║${NC}"
             echo -e "${RED}║         disable: true                                          ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  Then restart: docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy${NC}"
+            echo -e "${RED}║  Then restart: docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy${NC}"
             echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
             echo ""
         fi
@@ -1185,26 +1235,30 @@ start_all_services() {
 
         # Check container logs for OIDC error
         if docker logs oauth2-proxy 2>&1 | tail -20 | grep -qi "oidc\|issuer\|discovery"; then
-            log_warn "OAuth2 Proxy OIDC discovery failed - retrying with funnel restart"
+            log_warn "OAuth2 Proxy OIDC discovery failed - retrying local OIDC verification"
             echo ""
 
             # Stop oauth2-proxy
             docker stop oauth2-proxy 2>/dev/null || true
             sleep 2
 
-            # Ensure funnel is running
-            echo "  Ensuring Tailscale Funnel is accessible..."
-            sudo tailscale funnel reset 2>/dev/null || true
-            sleep 2
-            sudo tailscale funnel --bg 80
-            sleep 5
+            # Refresh funnel only when privileged access is available.
+            if can_run_privileged; then
+                echo "  Refreshing Tailscale Funnel..."
+                run_privileged_quiet tailscale funnel reset 2>/dev/null || true
+                sleep 2
+                run_privileged_quiet tailscale funnel --bg 80 2>/dev/null || true
+                sleep 5
+            elif ! funnel_active_for_domain "$check_domain"; then
+                log_error "Tailscale Funnel is required for OAuth2 Proxy recovery"
+                return 1
+            fi
 
-            # Wait for OIDC endpoint
+            # Wait for local OIDC endpoint
             local oidc_retry=0
             local check_domain="${PUBLIC_DOMAIN:-$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo 'localhost')}"
             while [ $oidc_retry -lt 30 ]; do
-                local oidc_status=$(curl -skI "https://${check_domain}/auth/.well-known/openid-configuration" 2>/dev/null | head -1 | grep -o '[0-9]\{3\}')
-                if [ "$oidc_status" = "200" ]; then
+                if check_local_oidc_discovery "$check_domain"; then
                     log_success "OIDC endpoint accessible"
                     break
                 fi
@@ -1215,7 +1269,7 @@ start_all_services() {
 
             # Restart oauth2-proxy
             echo "  Restarting OAuth2 Proxy..."
-            docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+            docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
             sleep 10
         fi
     fi
@@ -1234,12 +1288,12 @@ start_all_services() {
 
         if [ "$health_status" = "starting" ] || [ "$health_status" = "unhealthy" ]; then
             echo -e "${YELLOW}  Health check failing - Traefik ignores unhealthy containers${NC}"
-            echo -e "${YELLOW}  Ensure docker-compose.infra.yml has 'healthcheck: disable: true'${NC}"
+            echo -e "${YELLOW}  Ensure deploy/compose/docker-compose.infra.yml has 'healthcheck: disable: true'${NC}"
         fi
 
         # Final recovery attempt: restart oauth2-proxy
         echo "  Final recovery attempt..."
-        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
         sleep 15
 
         wait_for_middleware "oauth2-auth" 30 || {
@@ -1268,7 +1322,7 @@ start_all_services() {
     log_info "━━━ Phase 4b: Role Auth Service (RBAC Middleware) ━━━"
     echo "Starting: Role Auth checker (provides role-based access control)..."
     echo "  Note: Validates X-Auth-Request-Groups header for developer/admin roles"
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "role-auth" $DEFAULT_TIMEOUT || log_warn "Role Auth may still be starting"
 
@@ -1284,7 +1338,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 5: Monitoring (Protected by OAuth2) ━━━"
     echo "Starting: Global Prometheus, Pushgateway, Unified Grafana..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         global-prometheus pushgateway unified-grafana 2>&1 | grep -v "orphan" || true
 
     wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT || log_warn "Prometheus may still be loading data"
@@ -1293,7 +1347,7 @@ start_all_services() {
 
     # ML SLO Exporter (depends on MLflow/Ray APIs existing on network)
     echo "Starting: ML SLO Exporter..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         ml-slo-exporter 2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-ml-slo-exporter" $DEFAULT_TIMEOUT || log_warn "ML SLO Exporter may still be starting"
 
@@ -1365,9 +1419,9 @@ start_all_services() {
     # Phase 8: GPU Monitoring (Optional)
     # =========================================================================
     log_info "━━━ Phase 8: GPU Monitoring ━━━"
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter..."
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         log_success "GPU monitoring started"
     else
         log_warn "DCGM configuration not found - skipping GPU monitoring"
@@ -1378,7 +1432,9 @@ start_all_services() {
     # Phase 9: Main Inference Gateway (Qwen3-VL + Z-Image + Gateway + P4 Services)
     # =========================================================================
     log_info "━━━ Phase 9: Main Inference Gateway (Viewer+ Access) ━━━"
-    if [ -f "inference/docker-compose.inference.yml" ]; then
+    if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
+        log_warn "Boot-safe mode active — skipping optional inference GPU stack to protect the desktop GPU"
+    elif [ -f "inference/docker-compose.inference.yml" ]; then
         echo "Starting: Qwen3-VL (RTX 3090), Z-Image (RTX 3090), Gateway, PII-Blur (RTX 2070), Audio-Copyright (CPU)..."
         # Ensure network exists before starting (compose file uses external: true)
         ensure_network
@@ -1413,9 +1469,9 @@ start_all_services() {
     echo ""
 
     # Start embedding service (CPU-based, no GPU dependencies)
-    if [ -f "inference/embedding-service/docker-compose.yml" ]; then
+    if [ -f "inference/embedding-service/deploy/compose/docker-compose.yml" ]; then
         echo "Starting: Embedding Service (CPU-based sentence-transformers)..."
-        docker compose --env-file .env -f inference/embedding-service/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/embedding-service/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
 
         EMBEDDING_TIMEOUT=${EMBEDDING_TIMEOUT:-60}
         echo "  Waiting for embedding service (model loading ~60s)..."
@@ -1431,7 +1487,9 @@ start_all_services() {
     # Phase 9a: Coding Model Services (Protected by OAuth2 - Developer role)
     # =========================================================================
     log_info "━━━ Phase 9a: Coding Model Services (Developer+ Access) ━━━"
-    if [ -f "inference/coding-model/docker-compose.yml" ]; then
+    if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
+        log_warn "Boot-safe mode active — skipping coding model services on startup"
+    elif [ -f "inference/coding-model/docker-compose.yml" ]; then
         echo "Starting: Coding Models (Primary: 30B on 3090Ti, Fallback: 3B on 2070)..."
         # Ensure network exists before starting (compose file uses external: true)
         ensure_network
@@ -1455,7 +1513,9 @@ start_all_services() {
     # Provides OpenAI-compatible API for Cursor/VS Code integration
     # =========================================================================
     log_info "━━━ Phase 9b: Chat API Service ━━━"
-    if [ -f "inference/chat-api/docker-compose.yml" ]; then
+    if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
+        log_warn "Boot-safe mode active — skipping Chat API because its model backends are disabled"
+    elif [ -f "inference/chat-api/docker-compose.yml" ]; then
         echo "Starting: Chat API (OpenAI-compatible endpoint for Cursor/editors)..."
         ensure_network
         docker compose --env-file .env -f inference/chat-api/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
@@ -1472,10 +1532,10 @@ start_all_services() {
     # Phase 9c: Chat UI Service (Web interface for chat)
     # =========================================================================
     log_info "━━━ Phase 9c: Chat UI Service ━━━"
-    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/deploy/compose/docker-compose.yml" ]; then
         echo "Starting: Chat UI (Web interface)..."
         ensure_network
-        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
 
         # Wait for Chat UI to be healthy
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT || log_warn "Chat UI may still be starting"
@@ -1491,7 +1551,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 9d: Code Server (Admin Only) ━━━"
     echo "Starting: VS Code IDE with GitHub Copilot..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
 
     # Wait for code-server health
     wait_for_health "${PLATFORM_PREFIX:-shml}-code-server" $DEFAULT_TIMEOUT || log_warn "Code Server may still be starting"
@@ -1514,10 +1574,12 @@ start_all_services() {
     # Requires: Postgres, Redis, Coding Models, Inference Gateway
     # =========================================================================
     log_info "━━━ Phase 9e: Agent Service (Developer+ Access) ━━━"
-    if [ -f "inference/agent-service/docker-compose.yml" ]; then
+    if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
+        log_warn "Boot-safe mode active — skipping Agent Service to avoid GPU/memory pressure on desktop restarts"
+    elif [ -f "inference/agent-service/deploy/compose/docker-compose.yml" ]; then
         echo "Starting: ACE Agent Service (LangGraph G-R-C workflow)..."
         ensure_network
-        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
 
         # Wait for agent service health
         AGENT_TIMEOUT=${AGENT_TIMEOUT:-60}
@@ -1536,12 +1598,12 @@ start_all_services() {
     log_info "━━━ Phase 10: Observability & Landing Page ━━━"
     echo "Starting: Homer (landing), Dozzle (logs), Postgres Backup..."
     # Force recreate Homer to ensure config mounts are fresh
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate homer 2>&1 | grep -v "orphan" || true
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate dozzle postgres-backup 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate homer 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate dozzle postgres-backup 2>&1 | grep -v "orphan" || true
 
     # FiftyOne visual dataset curation (depends on fiftyone-mongodb)
     echo "Starting: FiftyOne (dataset curation)..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         fiftyone-mongodb fiftyone 2>&1 | grep -v "orphan" || true
 
     # Wait for services
@@ -1565,7 +1627,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 10.5: Self-Healing Watchdog ━━━"
     echo "Starting: Watchdog (container health), Watchdog Admin, Alertmanager..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d \
         watchdog watchdog-admin alertmanager 2>&1 | grep -v "orphan" || true
 
     # Wait for watchdog to be running
@@ -1618,7 +1680,7 @@ verify_auth_protection() {
         echo "  Container health status: $health_status"
         if [ "$health_status" = "starting" ] || [ "$health_status" = "unhealthy" ]; then
             echo -e "${RED}  ⚠ Traefik filters unhealthy containers - middleware won't register${NC}"
-            echo -e "${YELLOW}  Fix: Set 'healthcheck: disable: true' in docker-compose.infra.yml${NC}"
+            echo -e "${YELLOW}  Fix: Set 'healthcheck: disable: true' in deploy/compose/docker-compose.infra.yml${NC}"
         fi
         echo ""
     fi
@@ -1699,8 +1761,9 @@ verify_auth_protection() {
 
 show_status() {
     # Get Tailscale IP and public domain
-    local TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.66.26.115")
-    local PUBLIC_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName + "." + .MagicDNSSuffix' 2>/dev/null || echo "shml-platform.tail38b60a.ts.net")
+    local TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "${TAILSCALE_IP:-}")
+    local PUBLIC_DOMAIN=$(detect_tailscale_public_domain)
+    [ -n "$PUBLIC_DOMAIN" ] || PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
 
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     log_success "Platform startup complete!"
@@ -1807,11 +1870,11 @@ diagnose_auth() {
             echo "  The oauth2-proxy image is scratch/distroless with no shell tools."
             echo "  Health checks using wget/curl will ALWAYS fail."
             echo ""
-            echo "  FIX: In docker-compose.infra.yml, change:"
+            echo "  FIX: In deploy/compose/docker-compose.infra.yml, change:"
             echo "       healthcheck:"
             echo "         disable: true"
             echo ""
-            echo "  Then run: docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
+            echo "  Then run: docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
             ;;
         *)
             echo -e "${YELLOW}$health${NC}"
@@ -1877,12 +1940,12 @@ diagnose_auth() {
         echo -e "${YELLOW}━━━ QUICK FIX ━━━${NC}"
         echo "Run these commands to fix the health check issue:"
         echo ""
-        echo "  # Edit docker-compose.infra.yml and change oauth2-proxy healthcheck to:"
+        echo "  # Edit deploy/compose/docker-compose.infra.yml and change oauth2-proxy healthcheck to:"
         echo "  #   healthcheck:"
         echo "  #     disable: true"
         echo ""
         echo "  # Then restart:"
-        echo "  docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
+        echo "  docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
         echo ""
     fi
 }
@@ -1899,9 +1962,9 @@ fix_fusionauth_oauth() {
     echo ""
 
     # Configuration - these should match your environment
-    local FUSIONAUTH_API_KEY="${FUSIONAUTH_API_KEY:-pYxEbVSHPxJTSTksYEGAA3LLSfh2fvrBZ91dA945Km7yk0JJu2uDDt_t}"
-    local OAUTH_CLIENT_ID="${OAUTH2_PROXY_CLIENT_ID:-acda34f0-7cf2-40eb-9cba-7cb0048857d3}"
-    local PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-shml-platform.tail38b60a.ts.net}"
+    local FUSIONAUTH_API_KEY="${FUSIONAUTH_API_KEY:?FUSIONAUTH_API_KEY must be set}"
+    local OAUTH_CLIENT_ID="${OAUTH2_PROXY_CLIENT_ID:?OAUTH2_PROXY_CLIENT_ID must be set}"
+    local PUBLIC_DOMAIN="${PUBLIC_DOMAIN:?PUBLIC_DOMAIN must be set}"
 
     echo -e "${YELLOW}Configuration:${NC}"
     echo "  OAuth Client ID: $OAUTH_CLIENT_ID"
@@ -2029,7 +2092,7 @@ update_container_mapping() {
 start_infra() {
     log_info "━━━ Starting Infrastructure Only ━━━"
     ensure_network
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         traefik \
         postgres \
         redis \
@@ -2045,7 +2108,7 @@ start_infra() {
 start_auth() {
     log_info "━━━ Starting Auth Services Only ━━━"
     ensure_network
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate fusionauth oauth2-proxy 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate fusionauth oauth2-proxy 2>&1 | grep -v "orphan" || true
     wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT
     update_container_mapping
     log_success "Auth services started"
@@ -2139,17 +2202,17 @@ start_inference() {
     fi
 
     # Embedding service (CPU-based)
-    if [ -f "inference/embedding-service/docker-compose.yml" ]; then
+    if [ -f "inference/embedding-service/deploy/compose/docker-compose.yml" ]; then
         echo "Starting embedding service..."
-        docker compose --env-file .env -f inference/embedding-service/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/embedding-service/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-embedding-service" ${EMBEDDING_TIMEOUT:-60} || log_warn "Embedding service may still be loading"
     fi
 
     # Nemotron coding model (PRIMARY - RTX 3090 Ti)
     # Replaces Qwen2.5-Coder-32B with superior quality (95% vs 90% Claude Sonnet)
-    if [ -f "inference/nemotron/docker-compose.yml" ]; then
+    if [ -f "inference/nemotron/deploy/compose/docker-compose.yml" ]; then
         echo "Starting Nemotron-3-Nano-30B primary coding model (RTX 3090 Ti)..."
-        docker compose --env-file .env -f inference/nemotron/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/nemotron/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "nemotron-coding" ${NEMOTRON_TIMEOUT:-300} || log_warn "Nemotron may still be loading (22GB model)"
     fi
 
@@ -2170,9 +2233,9 @@ start_inference() {
     fi
 
     # Chat UI (Developer+ access)
-    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/deploy/compose/docker-compose.yml" ]; then
         echo "Starting chat UI..."
-        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT
     fi
 
@@ -2185,7 +2248,7 @@ start_monitoring() {
     ensure_network
 
     # Start Prometheus, Pushgateway (for training job metrics), and Grafana
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         global-prometheus pushgateway unified-grafana 2>&1 | grep -v "orphan" || true
 
     wait_for_health "global-prometheus" $PROMETHEUS_TIMEOUT
@@ -2193,25 +2256,25 @@ start_monitoring() {
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT
 
     # Start DCGM exporter for GPU metrics
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter (GPU metrics)..."
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         log_success "DCGM exporter started"
     fi
 
     # Start Loki + Promtail (log aggregation with 90-day retention)
-    if [ -f "docker-compose.logging.yml" ]; then
+    if [ -f "deploy/compose/docker-compose.logging.yml" ]; then
         echo "Starting: Loki + Promtail (log aggregation)..."
-        docker compose --env-file .env -f docker-compose.logging.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.logging.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "loki" ${LOKI_TIMEOUT:-60} || log_warn "Loki may still be starting"
         wait_for_health "promtail" ${PROMTAIL_TIMEOUT:-30} || log_warn "Promtail may still be starting"
         log_success "Loki log aggregation started"
     fi
 
     # Start Tempo + OpenTelemetry (distributed tracing)
-    if [ -f "docker-compose.tracing.yml" ]; then
+    if [ -f "deploy/compose/docker-compose.tracing.yml" ]; then
         echo "Starting: Tempo + OpenTelemetry (distributed tracing)..."
-        docker compose --env-file .env -f docker-compose.tracing.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.tracing.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "tempo" ${TEMPO_TIMEOUT:-60} || log_warn "Tempo may still be starting"
         wait_for_health "otel-collector" ${OTEL_TIMEOUT:-30} || log_warn "OTel Collector may still be starting"
         log_success "Tempo distributed tracing started"
@@ -2234,12 +2297,12 @@ start_devtools() {
 
     if ! curl -sf "http://localhost:8090/api/http/middlewares/role-auth-admin@docker" >/dev/null 2>&1; then
         log_warn "role-auth-admin middleware not found - starting role-auth first"
-        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
         wait_for_middleware "role-auth-admin" 30 || log_error "role-auth-admin middleware failed to register"
     fi
 
     # Start code-server
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate code-server 2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-code-server" $DEFAULT_TIMEOUT || log_warn "Code Server may still be starting"
 
     # Install Copilot if not present
@@ -2268,14 +2331,14 @@ start_agent() {
     fi
 
     # Start agent service
-    if [ -f "inference/agent-service/docker-compose.yml" ]; then
+    if [ -f "inference/agent-service/deploy/compose/docker-compose.yml" ]; then
         echo "Starting ACE Agent Service (LangGraph G-R-C workflow)..."
-        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-agent-service" ${AGENT_TIMEOUT:-60} || log_warn "Agent service may still be initializing"
         update_container_mapping
         log_success "Agent service started (accessible at /api/agent - developer+ only)"
     else
-        log_error "Agent service configuration not found at inference/agent-service/docker-compose.yml"
+        log_error "Agent service configuration not found at inference/agent-service/deploy/compose/docker-compose.yml"
         exit 1
     fi
 }
@@ -2292,13 +2355,13 @@ start_sba_portal() {
 
     if ! curl -sf "http://localhost:8090/api/http/middlewares/role-auth-developer@docker" >/dev/null 2>&1; then
         log_warn "role-auth-developer middleware not found - starting role-auth first"
-        docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate role-auth 2>&1 | grep -v "orphan" || true
         wait_for_middleware "role-auth-developer" 30 || log_error "role-auth-developer middleware failed to register"
     fi
 
-    # Build and start SBA Resource Portal from docker-compose.infra.yml
+    # Build and start SBA Resource Portal from deploy/compose/docker-compose.infra.yml
     echo "Building and starting SBA Resource Portal (Gemini AI Document Q&A)..."
-    docker compose --env-file .env -f docker-compose.infra.yml up -d --force-recreate --build sba-resource-portal 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate --build sba-resource-portal 2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-sba-resource-portal" ${SBA_PORTAL_TIMEOUT:-60} || log_warn "SBA Portal may still be starting"
 
     update_container_mapping
@@ -2307,7 +2370,7 @@ start_sba_portal() {
 
 stop_infra() {
     log_info "━━━ Stopping Infrastructure ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop \
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop \
         traefik \
         postgres \
         redis \
@@ -2319,7 +2382,7 @@ stop_infra() {
 
 stop_auth() {
     log_info "━━━ Stopping Auth Services ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop fusionauth oauth2-proxy 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop fusionauth oauth2-proxy 2>/dev/null || true
     log_success "Auth services stopped"
 }
 
@@ -2338,47 +2401,47 @@ stop_ray() {
 stop_inference() {
     log_info "━━━ Stopping Inference Services ━━━"
     docker compose --env-file .env -f inference/docker-compose.inference.yml stop 2>/dev/null || true
-    docker compose --env-file .env -f inference/embedding-service/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/embedding-service/deploy/compose/docker-compose.yml stop 2>/dev/null || true
     docker compose --env-file .env -f inference/coding-model/docker-compose.yml stop 2>/dev/null || true
     docker compose --env-file .env -f inference/chat-api/docker-compose.yml stop 2>/dev/null || true
-    docker compose --env-file .env -f inference/agent-service/docker-compose.yml stop 2>/dev/null || true
-    docker compose --env-file .env -f chat-ui-v2/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f chat-ui-v2/deploy/compose/docker-compose.yml stop 2>/dev/null || true
     log_success "Inference services stopped"
 }
 
 stop_monitoring() {
     log_info "━━━ Stopping Monitoring Services ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop global-prometheus pushgateway unified-grafana 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop global-prometheus pushgateway unified-grafana 2>/dev/null || true
     # Stop DCGM exporter (GPU metrics)
-    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml stop 2>/dev/null || true
+    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml stop 2>/dev/null || true
     fi
     # Stop Loki + Promtail
-    if [ -f "docker-compose.logging.yml" ]; then
-        docker compose --env-file .env -f docker-compose.logging.yml stop 2>/dev/null || true
+    if [ -f "deploy/compose/docker-compose.logging.yml" ]; then
+        docker compose --env-file .env -f deploy/compose/docker-compose.logging.yml stop 2>/dev/null || true
     fi
     # Stop Tempo + OTel
-    if [ -f "docker-compose.tracing.yml" ]; then
-        docker compose --env-file .env -f docker-compose.tracing.yml stop 2>/dev/null || true
+    if [ -f "deploy/compose/docker-compose.tracing.yml" ]; then
+        docker compose --env-file .env -f deploy/compose/docker-compose.tracing.yml stop 2>/dev/null || true
     fi
     log_success "Monitoring services stopped"
 }
 
 stop_devtools() {
     log_info "━━━ Stopping Development Tools ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop code-server 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop code-server 2>/dev/null || true
     log_success "Development tools stopped"
 }
 
 stop_agent() {
     log_info "━━━ Stopping Agent Service ━━━"
-    docker compose --env-file .env -f inference/agent-service/docker-compose.yml stop 2>/dev/null || true
+    docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml stop 2>/dev/null || true
     log_success "Agent service stopped"
 }
 
 stop_sba_portal() {
     log_info "━━━ Stopping SBA Resource Portal ━━━"
-    docker compose --env-file .env -f docker-compose.infra.yml stop sba-resource-portal 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop sba-resource-portal 2>/dev/null || true
     log_success "SBA Resource Portal stopped"
 }
 

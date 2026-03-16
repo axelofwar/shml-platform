@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("skill-updater")
 
-SKILLS_DIR = os.getenv("SKILLS_DIR", "/workspace/skills")
+SKILLS_DIR = os.getenv("SKILLS_DIR", "/workspace/inference/agent-service/skills")
 PLATFORM_PREFIX = os.getenv("PLATFORM_PREFIX", "shml")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")

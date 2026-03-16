@@ -325,7 +325,7 @@ Authentication configuration with multi-source credential resolution.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `base_url` | `str` | `"https://shml-platform.tail38b60a.ts.net"` | Platform base URL |
+| `base_url` | `str` | `"https://${PUBLIC_DOMAIN}"` | Platform base URL |
 | `api_key` | `str \| None` | `None` | API key (`shml_xxx`) |
 | `oauth_token` | `str \| None` | `None` | OAuth2 bearer token |
 | `profile` | `str` | `"default"` | Credentials file profile |
@@ -369,6 +369,6 @@ The credentials file uses INI format:
 
 ```ini
 [default]
-base_url = https://shml-platform.tail38b60a.ts.net
+base_url = https://${PUBLIC_DOMAIN}
 api_key = shml_abc123
 ```

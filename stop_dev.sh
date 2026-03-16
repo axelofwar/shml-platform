@@ -126,23 +126,23 @@ echo -e "${YELLOW}Stopping dev services...${NC}"
 echo ""
 
 # Method 1: Use docker-compose if available
-if [ -f "mlflow-server/docker-compose.dev.yml" ]; then
+if [ -f "mlflow-server/deploy/compose/docker-compose.dev.yml" ]; then
     echo "  Stopping MLflow dev..."
     cd mlflow-server
-    sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
     cd "$SCRIPT_DIR"
 fi
 
-if [ -f "ray_compute/docker-compose.dev.yml" ]; then
+if [ -f "ray_compute/deploy/compose/docker-compose.dev.yml" ]; then
     echo "  Stopping Ray dev..."
     cd ray_compute
-    sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
     cd "$SCRIPT_DIR"
 fi
 
-if [ -f "docker-compose.dev.yml" ]; then
+if [ -f "deploy/compose/docker-compose.dev.yml" ]; then
     echo "  Stopping dev infrastructure..."
-    sg docker -c "docker compose -f docker-compose.dev.yml down" 2>/dev/null || true
+    sg docker -c "docker compose -f deploy/compose/docker-compose.dev.yml down" 2>/dev/null || true
 fi
 
 # Method 2: Direct container stop (backup)

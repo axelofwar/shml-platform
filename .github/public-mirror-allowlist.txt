@@ -47,7 +47,7 @@ chat-ui-v2/**
 sba-resource-portal/**
 
 # Compose and service definitions
-docker-compose*.yml
+deploy/compose/docker-compose*.yml
 *.service
 run_tests.sh
 start_all_safe.sh

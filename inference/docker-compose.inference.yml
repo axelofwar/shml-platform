@@ -2,7 +2,7 @@
 # Integrates with existing shml-platform network
 # RTX 3090 Ti (GPU 0) = Nemotron-3-Nano-30B (primary, ~22.7GB) - RESERVED
 # RTX 2070 (GPU 1)   = Qwen3-VL + Z-Image + PII-Blur (shared, yields)
-# NOTE: Uses shml-postgres from main docker-compose.yml (database: inference)
+# NOTE: Uses shml-postgres from main deploy/compose/docker-compose.yml (database: inference)
 
 services:
   # ==========================================================================
@@ -135,7 +135,7 @@ services:
 
   # ==========================================================================
   # Inference Gateway - Queue, Rate Limiting, Chat History
-  # Uses shml-postgres from main docker-compose.yml
+  # Uses shml-postgres from main deploy/compose/docker-compose.yml
   # ==========================================================================
   inference-gateway:
     build:
@@ -370,6 +370,56 @@ services:
       - "traefik.http.middlewares.audio-copyright-strip.stripprefix.prefixes=/api/audio"
       - "traefik.http.routers.audio-copyright.middlewares=oauth2-errors,oauth2-auth,audio-copyright-strip"
 
+  # ==========================================================================
+  # shl-nano — Tier-0 domain nano-model (T8.4)
+  # RTX 2070 (GPU 1) — ~2 GB VRAM inference, port 8021
+  # Only started after base pretrain + SFT are complete.
+  # Set NANO_SERVICE_URL=http://shl-nano:8021 in agent-service env to activate.
+  # ==========================================================================
+  shl-nano:
+    build:
+      context: ./shl-nano-server
+      dockerfile: Dockerfile
+    container_name: shl-nano
+    restart: unless-stopped
+    profiles:
+      - nano          # opt-in: docker compose --profile nano up shl-nano
+    environment:
+      - CUDA_VISIBLE_DEVICES=0   # container sees only 1 GPU (mapped to host GPU 1)
+      - MODEL_RUN=shl-nano-sft
+      - MAX_NEW_TOKENS=512
+      - NANO_CONFIDENCE_THRESHOLD=0.55
+      - VRAM_FLOOR_MIB=512
+      - PORT=8021
+    volumes:
+      - shl-nano-runs:/app/runs:ro
+    networks:
+      - shml-platform
+    expose:
+      - "8021"
+    ports:
+      - "8021:8021"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]        # host GPU 1 = RTX 2070
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8021/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=false"   # internal only
+
 volumes:
   # inference-postgres-data removed - using shml-postgres
   model-cache:
@@ -378,6 +428,8 @@ volumes:
     name: z-image-outputs
   pii-blur-outputs:
     name: pii-blur-outputs
+  shl-nano-runs:
+    name: shl-nano-runs
   audio-outputs:
     name: audio-outputs
 

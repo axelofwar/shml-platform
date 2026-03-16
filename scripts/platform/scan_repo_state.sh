@@ -25,6 +25,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLATFORM_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SERVICE_DISCOVERY="$SCRIPT_DIR/service_discovery.sh"
 EVIDENCE_DIR="$PLATFORM_DIR/data/platform-scan"
 EVIDENCE_JSON="$EVIDENCE_DIR/evidence.json"
 STATUS_MD="$PLATFORM_DIR/docs/obsidian-vault/50-Projects/PLATFORM_STATUS.md"
@@ -34,6 +35,11 @@ LOG_DIR="$PLATFORM_DIR/logs"
 UPDATED_AT=$(date -u '+%Y-%m-%d %H:%M UTC')
 
 mkdir -p "$EVIDENCE_DIR" "$LOG_DIR"
+
+if [[ -f "$SERVICE_DISCOVERY" ]]; then
+    # shellcheck disable=SC1090
+    source "$SERVICE_DISCOVERY"
+fi
 
 log() { echo "[scan $(date '+%H:%M:%S')] $*"; }
 
@@ -260,7 +266,11 @@ if [[ -f "$GITLAB_UTIL" ]]; then
         export GITLAB_API_TOKEN
     fi
     # Use Docker network URL (accessible from host or containers)
-    export GITLAB_BASE_URL="${GITLAB_BASE_URL:-http://shml-gitlab:8929/gitlab}"
+    if declare -F resolve_gitlab_base_url >/dev/null 2>&1; then
+        export GITLAB_BASE_URL="$(resolve_gitlab_base_url)"
+    else
+        export GITLAB_BASE_URL="${GITLAB_BASE_URL:-http://127.0.0.1:8929/gitlab}"
+    fi
 
     if [[ -n "$GITLAB_API_TOKEN" ]]; then
         # 1. Autoresearch completed → close issue if exists

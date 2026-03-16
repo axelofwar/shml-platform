@@ -74,7 +74,7 @@ ray_compute/
 ### Step-by-Step Installation
 
 ```bash
-cd /home/axelofwar/Projects/mlflow-server/ray_compute
+cd /home/$USER/Projects/mlflow-server/ray_compute
 
 # ===== PHASE 1: NVIDIA Drivers =====
 ./scripts/install_nvidia_drivers.sh

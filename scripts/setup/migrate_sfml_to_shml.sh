@@ -38,8 +38,8 @@ OLD_NAME="sfml"
 NEW_NAME="shml"
 OLD_HOSTNAME="shml-platform"
 NEW_HOSTNAME="shml-platform"
-OLD_DOMAIN="shml-platform.tail38b60a.ts.net"
-NEW_DOMAIN="shml-platform.tail38b60a.ts.net"
+OLD_DOMAIN="${PUBLIC_DOMAIN}"
+NEW_DOMAIN="${PUBLIC_DOMAIN}"
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,7 +132,7 @@ preflight_checks() {
     log_step "Pre-flight Checks"
 
     # Check we're in the right directory
-    if [ ! -f "$PROJECT_ROOT/docker-compose.infra.yml" ]; then
+    if [ ! -f "$PROJECT_ROOT/deploy/compose/docker-compose.infra.yml" ]; then
         log_error "Must run from shml-platform project root"
         exit 1
     fi
@@ -213,13 +213,13 @@ stop_services() {
 
     # Stop all compose stacks
     log_info "Stopping infrastructure services..."
-    docker compose -f docker-compose.infra.yml down --remove-orphans 2>/dev/null || true
+    docker compose -f deploy/compose/docker-compose.infra.yml down --remove-orphans 2>/dev/null || true
 
     log_info "Stopping MLflow services..."
-    docker compose -f mlflow-server/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    docker compose -f mlflow-server/deploy/compose/docker-compose.yml down --remove-orphans 2>/dev/null || true
 
     log_info "Stopping Ray services..."
-    docker compose -f ray_compute/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    docker compose -f ray_compute/deploy/compose/docker-compose.yml down --remove-orphans 2>/dev/null || true
 
     log_success "All services stopped"
 }
@@ -454,16 +454,16 @@ start_services() {
     cd "$PROJECT_ROOT"
 
     log_info "Starting infrastructure services..."
-    docker compose -f docker-compose.infra.yml up -d
+    docker compose -f deploy/compose/docker-compose.infra.yml up -d
 
     log_info "Waiting for infrastructure to be ready (30 seconds)..."
     sleep 30
 
     log_info "Starting MLflow services..."
-    docker compose -f mlflow-server/docker-compose.yml up -d
+    docker compose -f mlflow-server/deploy/compose/docker-compose.yml up -d
 
     log_info "Starting Ray services..."
-    docker compose -f ray_compute/docker-compose.yml up -d
+    docker compose -f ray_compute/deploy/compose/docker-compose.yml up -d
 
     log_success "All services started"
 }

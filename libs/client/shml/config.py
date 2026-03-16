@@ -14,7 +14,7 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 
 
-DEFAULT_BASE_URL = "https://shml-platform.tail38b60a.ts.net"
+DEFAULT_BASE_URL = os.environ.get("SHML_BASE_URL", "http://localhost:8000")
 CREDENTIALS_FILE = Path.home() / ".shml" / "credentials"
 
 

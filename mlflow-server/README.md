@@ -359,7 +359,7 @@ docker restart traefik mlflow-nginx mlflow-server
 # Check Nginx limit (should be 2.5GB)
 docker exec mlflow-nginx grep client_max_body_size /etc/nginx/conf.d/mlflow.conf
 
-# Increase if needed (docker-compose.yml):
+# Increase if needed (deploy/compose/docker-compose.yml):
 # nginx:
 #   environment:
 #     CLIENT_MAX_BODY_SIZE: 5G

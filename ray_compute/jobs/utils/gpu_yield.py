@@ -36,6 +36,7 @@ For context manager usage, see libs/training/gpu_manager.py
 
 import atexit
 import os
+import subprocess
 import sys
 import json as json_module
 import urllib.request
@@ -59,8 +60,95 @@ Z_IMAGE_URLS = [
     "http://localhost:8002",  # Host access
 ]
 
+# Host-side LLM server (llama.cpp) — runs outside Docker
+LLM_CONTROL_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    "scripts", "llm_control.sh",
+)
+
 # Track active yields for atexit safety net
 _active_yields: Dict[int, str] = {}  # gpu_id -> job_id
+
+
+def _yield_host_llm(verbose: bool = True) -> bool:
+    """
+    Stop the host-side llama-server to free GPU 0 for training.
+
+    The llama-server runs outside Docker (host process), so the
+    GPU manager cannot manage it. We call llm_control.sh directly.
+    """
+    if not os.path.isfile(LLM_CONTROL_SCRIPT):
+        if verbose:
+            print(f"  ℹ LLM control script not found at {LLM_CONTROL_SCRIPT} — skipping")
+        return False
+
+    try:
+        if verbose:
+            print(f"  → Yielding host LLM server (llama-server)...")
+        result = subprocess.run(
+            [LLM_CONTROL_SCRIPT, "yield"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            if verbose:
+                print(f"    ✓ llama-server stopped, GPU 0 freed")
+            return True
+        else:
+            if verbose:
+                stderr_tail = result.stderr.strip().split("\n")[-2:] if result.stderr else []
+                print(f"    ⚠ llm_control.sh yield exited with code {result.returncode}")
+                for line in stderr_tail:
+                    print(f"      {line}")
+            return False
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print(f"    ⚠ llm_control.sh yield timed out after 60s")
+        return False
+    except Exception as e:
+        if verbose:
+            print(f"    ⚠ Failed to yield host LLM: {e}")
+        return False
+
+
+def _restore_host_llm(verbose: bool = True) -> bool:
+    """
+    Restart llama-server after training is complete.
+    """
+    if not os.path.isfile(LLM_CONTROL_SCRIPT):
+        if verbose:
+            print(f"  ℹ LLM control script not found — skipping restore")
+        return False
+
+    try:
+        if verbose:
+            print(f"  → Restoring host LLM server (llama-server)...")
+        result = subprocess.run(
+            [LLM_CONTROL_SCRIPT, "restore"],
+            capture_output=True,
+            text=True,
+            timeout=360,  # Model loading can take minutes
+        )
+        if result.returncode == 0:
+            if verbose:
+                print(f"    ✓ llama-server restored and healthy")
+            return True
+        else:
+            if verbose:
+                stderr_tail = result.stderr.strip().split("\n")[-2:] if result.stderr else []
+                print(f"    ⚠ llm_control.sh restore exited with code {result.returncode}")
+                for line in stderr_tail:
+                    print(f"      {line}")
+            return False
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print(f"    ⚠ llm_control.sh restore timed out (model may still be loading)")
+        return False
+    except Exception as e:
+        if verbose:
+            print(f"    ⚠ Failed to restore host LLM: {e}")
+        return False
 
 
 def yield_gpu_for_training(
@@ -203,7 +291,11 @@ def yield_gpu_for_training(
                 if verbose:
                     print(f"    Error with {base_url}: {e}")
 
-    # 3. Optionally yield Z-Image (image gen on RTX 3090)
+    # 3. Yield host-side LLM server (llama.cpp / llama-server) if on GPU 0
+    if gpu_id == 0:
+        _yield_host_llm(verbose=verbose)
+
+    # 4. Optionally yield Z-Image (image gen on RTX 3090)
     if yield_z_image and gpu_id == 0:
         for base_url in Z_IMAGE_URLS:
             try:
@@ -362,7 +454,11 @@ def reclaim_gpu_after_training(
                 if verbose:
                     print(f"    Error with {base_url}: {e}")
 
-    # 3. Notify Z-Image (it will auto-reload on next request)
+    # 3. Restore host-side LLM server (llama.cpp / llama-server)
+    if gpu_id == 0:
+        _restore_host_llm(verbose=verbose)
+
+    # 4. Notify Z-Image (it will auto-reload on next request)
     for base_url in Z_IMAGE_URLS:
         try:
             url = f"{base_url}/reclaim-from-training"
@@ -510,4 +606,6 @@ __all__ = [
     "reclaim_gpu_after_training",
     "GPUTrainingSession",
     "check_gpu_status",
+    "_yield_host_llm",
+    "_restore_host_llm",
 ]

@@ -35,15 +35,18 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 # Configuration
 TRAINING_ROOT = Path(
-    "/home/axelofwar/Projects/shml-platform/inference/app/native_training"
+    f"{PLATFORM_ROOT}/inference/app/native_training"
 )
 COORDINATOR_SCRIPT = TRAINING_ROOT / "native_training_coordinator.py"
 SANDBOX_SCRIPT = TRAINING_ROOT / "sandbox_training.sh"
-CHECKPOINT_DIR = Path("/home/axelofwar/Projects/shml-platform/data/checkpoints")
+CHECKPOINT_DIR = Path(f"{PLATFORM_ROOT}/data/checkpoints")
 STATE_FILE = Path(
-    "/home/axelofwar/Projects/shml-platform/data/training_coordinator_state.json"
+    f"{PLATFORM_ROOT}/data/training_coordinator_state.json"
 )
 
 router = APIRouter(prefix="/training", tags=["training"])
@@ -536,7 +539,7 @@ async def get_training_logs(lines: int = 100):
 
     Returns the last N lines from the training log file.
     """
-    log_file = Path("/home/axelofwar/Projects/shml-platform/logs/native_trainer.log")
+    log_file = Path(f"{PLATFORM_ROOT}/logs/native_trainer.log")
 
     if not log_file.exists():
         return {"logs": [], "message": "No training logs yet"}

@@ -542,7 +542,7 @@ def _cli_setup_webhook(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="gitlab_utils setup-webhook")
     parser.add_argument(
         "--hook-url",
-        default="https://shml-platform.tail38b60a.ts.net/webhook/gitlab-events",
+        default="https://${PUBLIC_DOMAIN}/webhook/gitlab-events",
         help="Target webhook URL (default: local webhook-deployer)",
     )
     parser.add_argument("--token", default=None, help="Optional secret token")

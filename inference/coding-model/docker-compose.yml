@@ -6,7 +6,7 @@
 # Stop:   ./start_all_safe.sh stop inference
 # Status: ./start_all_safe.sh status
 #
-# This file uses external networks/volumes created by docker-compose.infra.yml.
+# This file uses external networks/volumes created by deploy/compose/docker-compose.infra.yml.
 # Running standalone will fail unless infrastructure is already running.
 #
 # PRIMARY: Nemotron-3-Nano-30B-A3B (RTX 3090 Ti) - ~95% of Claude Sonnet quality

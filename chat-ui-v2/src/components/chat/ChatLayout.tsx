@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { ConversationSidebar } from '@/components/sidebar/ConversationSidebar'
 import { ChatInterface } from './ChatInterface'
 import { WorkflowPanel } from '@/components/workflow/WorkflowPanel'
+import { SandboxesPanel, SandboxesTriggerButton } from '@/components/studio/SandboxesPanel'
 import { TokenBudgetIndicator } from './TokenBudgetIndicator'
 import { toast } from 'sonner'
 import type { UserRole } from '@/lib/tokenBudget'
@@ -220,6 +221,8 @@ export function ChatLayout() {
               <span className="hidden sm:inline">New Chat</span>
             </button>
 
+            <SandboxesTriggerButton />
+
             <button
               onClick={handleClearHistory}
               className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg transition-colors text-sm ${
@@ -277,6 +280,9 @@ export function ChatLayout() {
 
       {/* Workflow Panel (fixed at bottom) */}
       <WorkflowPanel />
+
+      {/* NemoClaw Sandboxes slide-over (elevated-developer + admin only) */}
+      <SandboxesPanel />
     </div>
   )
 }

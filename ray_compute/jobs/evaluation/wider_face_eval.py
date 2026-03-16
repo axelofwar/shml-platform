@@ -44,6 +44,9 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
+# Platform root - avoid hardcoded paths
+PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+
 
 # =============================================================================
 # SOTA BENCHMARKS - Expert Panel Reference
@@ -887,8 +890,8 @@ def main():
     # Check data yaml - try multiple locations
     data_yaml_paths = [
         args.data_yaml,
-        "/home/axelofwar/Projects/shml-platform/ray_compute/data/job_workspaces/data/wider_face_yolo/data.yaml",
-        "/home/axelofwar/Projects/shml-platform/ray_compute/data/ray/data/wider_face_yolo/data.yaml",
+        f"{PLATFORM_ROOT}/ray_compute/data/job_workspaces/data/wider_face_yolo/data.yaml",
+        f"{PLATFORM_ROOT}/ray_compute/data/ray/data/wider_face_yolo/data.yaml",
     ]
 
     data_yaml = None

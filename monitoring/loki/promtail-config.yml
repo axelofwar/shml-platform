@@ -76,3 +76,48 @@ scrape_configs:
       - timestamp:
           source: timestamp
           format: RFC3339Nano
+
+  # NemoClaw / OpenShell container logs
+  # Scrapes structured JSON audit logs from openshell-gateway and sandbox factory.
+  # Labels: job=nemoclaw, sandbox_name, user_role, event_type
+  - job_name: nemoclaw
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values:
+              - "shml-openshell-gateway"
+              - "shml-nemoclaw-factory"
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - replacement: 'nemoclaw'
+        target_label: 'job'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.*openshell.*'
+        replacement: 'openshell-gateway'
+        target_label: 'component'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.*factory.*'
+        replacement: 'sandbox-factory'
+        target_label: 'component'
+    pipeline_stages:
+      - docker: {}
+      # Parse JSON audit log fields emitted by OpenShell gateway
+      - json:
+          expressions:
+            event_type: event_type
+            sandbox_name: sandbox_name
+            user_role: user_role
+            blueprint: blueprint
+            inference_profile: inference_profile
+            level: level
+      - labels:
+          event_type:
+          sandbox_name:
+          user_role:
+          blueprint:
+          inference_profile:
+          level:

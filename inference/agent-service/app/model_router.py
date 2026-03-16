@@ -3,17 +3,17 @@ Model Router - SOTA Multi-Modal Task Routing
 
 Intelligently routes tasks to appropriate models based on:
 - Presence of image attachments → Qwen3-VL (RTX 2070, vision)
-- Code-related keywords → Qwen-Coder (RTX 3090, code generation)
-- Image generation keywords → Z-Image (RTX 3090, image synthesis)
+- Code-related keywords → Qwen3.5-35B-A3B (RTX 3090 Ti, code + reasoning)
+- Image generation keywords → Z-Image (RTX 3090 Ti, image synthesis)
 - Multi-modal tasks → Chain multiple models
-- **Training status** → Route to RTX 2070 when training active on RTX 3090
+- **Training status** → Route to RTX 2070 when training active on RTX 3090 Ti
 
 GPU Allocation:
-- RTX 2070 (cuda:0, 8GB): Qwen3-VL-8B-INT4 (always loaded)
-- RTX 3090 (cuda:1, 24GB): Qwen-Coder-32B-AWQ (primary), Z-Image (on-demand)
+- RTX 2070 (cuda:1, 8GB): Qwen3-VL-8B (always loaded)
+- RTX 3090 Ti (cuda:0, 24GB): Qwen3.5-35B-A3B Q4_K_M (primary, thinking enabled), Z-Image (on-demand)
 
 Training-Aware Routing:
-- When training is active on RTX 3090, code requests fallback to Qwen3-VL
+- When training is active on RTX 3090 Ti, code requests fallback to Qwen3-VL
 - Qwen3-VL can handle code tasks (less specialized but always available)
 - Z-Image requests are queued until training completes
 
@@ -22,26 +22,27 @@ Multi-Model Orchestration:
 - Parallel: Independent tasks (e.g., analyze image + generate separate code)
 """
 
-import os
-import re
 import json
-import urllib.request
+import logging
+import re
 import urllib.error
-from typing import List, Dict, Any, Optional, Literal
+import urllib.request
 from dataclasses import dataclass
 from enum import Enum
-import logging
+from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class TrainingStatus:
-    """Check training status from nemotron-manager"""
+    """Check training status from qwen-manager (GPU yield lifecycle)"""
 
-    NEMOTRON_URLS = [
-        "http://nemotron-manager:8000/status",
-        "http://localhost:8011/status",
+    QWEN_MANAGER_URLS = [
+        "http://qwen-manager:8000/status",
+        "http://localhost:8021/status",
     ]
+    # Legacy alias kept for backwards compatibility
+    NEMOTRON_URLS = QWEN_MANAGER_URLS
 
     @classmethod
     def is_training_active(cls) -> bool:
@@ -51,13 +52,13 @@ class TrainingStatus:
         Returns:
             True if training is active, False otherwise
         """
-        for url in cls.NEMOTRON_URLS:
+        for url in cls.QWEN_MANAGER_URLS:
             try:
                 req = urllib.request.Request(url, method="GET")
                 with urllib.request.urlopen(req, timeout=2) as response:
                     data = json.loads(response.read().decode("utf-8"))
                     return data.get("training_active", False)
-            except:
+            except Exception:
                 continue
 
         # Default to False if we can't reach the service
@@ -71,12 +72,12 @@ class TrainingStatus:
         Returns:
             Training info dict or None if unavailable
         """
-        for url in cls.NEMOTRON_URLS:
+        for url in cls.QWEN_MANAGER_URLS:
             try:
                 req = urllib.request.Request(url, method="GET")
                 with urllib.request.urlopen(req, timeout=2) as response:
                     return json.loads(response.read().decode("utf-8"))
-            except:
+            except Exception:
                 continue
         return None
 
@@ -168,9 +169,10 @@ class ModelRouter:
         """Initialize router with model configs"""
         self.models_config = {
             ModelType.QWEN_CODER: {
-                "name": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-                "gpu": "cuda:1",  # RTX 3090
-                "capabilities": ["code", "general"],
+                "name": "Qwen3.5-35B-A3B-Q4_K_M",  # Qwen3.5 MoE, thinking enabled
+                "url": "http://qwen-coding:8000",
+                "gpu": "cuda:0",  # RTX 3090 Ti (GPU 0)
+                "capabilities": ["code", "general", "reasoning"],
             },
             ModelType.QWEN3_VL: {
                 "name": "Qwen/Qwen3-VL-8B",
@@ -409,11 +411,9 @@ class ModelRouter:
             (r"\bthen\b", "sequential"),  # "analyze then generate"
         ]
 
-        needs_multi = False
         strategy = "sequential"
         for pattern, strat in multi_model_patterns:
             if re.search(pattern, prompt.lower()):
-                needs_multi = True
                 strategy = strat
                 break
 
