@@ -104,5 +104,65 @@
       { "source": "string", "name": "healthy" }
     ],
     "response-message": "Webhook service is healthy"
+  },
+  {
+    "id": "autoresearch-complete",
+    "execute-command": "/scripts/webhook/handle_autoresearch_complete.sh",
+    "command-working-directory": "/opt/shml-platform",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "experiment" },
+      { "source": "payload", "name": "iteration" },
+      { "source": "payload", "name": "kept" },
+      { "source": "payload", "name": "metrics.recall" },
+      { "source": "payload", "name": "metrics.mAP50" },
+      { "source": "payload", "name": "best_recall" },
+      { "source": "payload", "name": "reason" }
+    ],
+    "trigger-rule": {
+      "match": {
+        "type": "value",
+        "value": "experiment_complete",
+        "parameter": { "source": "payload", "name": "type" }
+      }
+    },
+    "include-command-output-in-response": true,
+    "response-message": "Autoresearch event processed"
+  },
+  {
+    "id": "watchdog-alert",
+    "execute-command": "/scripts/webhook/handle_watchdog_alert.sh",
+    "command-working-directory": "/opt/shml-platform",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "alert_type" },
+      { "source": "payload", "name": "service" },
+      { "source": "payload", "name": "message" },
+      { "source": "payload", "name": "severity" }
+    ],
+    "trigger-rule": {
+      "match": {
+        "type": "value",
+        "value": "shml:health:alert",
+        "parameter": { "source": "payload", "name": "channel" }
+      }
+    },
+    "include-command-output-in-response": false,
+    "response-message": "Watchdog alert processed"
+  },
+  {
+    "id": "gitlab-events",
+    "execute-command": "/bin/echo",
+    "pass-arguments-to-command": [
+      { "source": "payload", "name": "object_kind" },
+      { "source": "payload", "name": "object_attributes.state" }
+    ],
+    "trigger-rule": {
+      "match": {
+        "type": "value",
+        "value": "{{ getenv \"GITLAB_WEBHOOK_SECRET\" }}",
+        "parameter": { "source": "header", "name": "X-Gitlab-Token" }
+      }
+    },
+    "include-command-output-in-response": false,
+    "response-message": "GitLab event received"
   }
 ]

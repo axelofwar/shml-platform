@@ -28,6 +28,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SERVICE_DISCOVERY="${PLATFORM_DIR}/scripts/platform/service_discovery.sh"
+
+if [[ -f "$SERVICE_DISCOVERY" ]]; then
+    # shellcheck disable=SC1090
+    source "$SERVICE_DISCOVERY"
+fi
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -44,17 +53,25 @@ GITLAB_INTERNAL_HEALTH_URL="${GITLAB_INTERNAL_HEALTH_URL:-http://gitlab:8929/git
 # GPU isolation — NEVER touch the training GPU
 TRAINING_GPU="${TRAINING_GPU:-0}"       # RTX 3090 Ti — hands off
 WATCHDOG_GPU="${WATCHDOG_GPU:-1}"       # RTX 2070 — watchdog uses this first
+DISPLAY_GPU="${DISPLAY_GPU:-${WATCHDOG_GPU}}"  # GPU attached to the desktop/session
 TRAINING_SENSITIVE_CONTAINERS="${TRAINING_SENSITIVE_CONTAINERS:-ray-head,ray-compute-api,mlflow-server,${PLATFORM_PREFIX}-postgres,${PLATFORM_PREFIX}-redis,inference-gateway}"
 
 # Memory leak detection
 MEMORY_LEAK_THRESHOLD_MB="${MEMORY_LEAK_THRESHOLD:-100}"  # MB growth/hour = leak
 OOM_RESTART_BUDGET="${OOM_RESTART_BUDGET:-2}"             # Max OOM restarts/hour
+HOST_MEMORY_SOFT_WATERMARK_PCT="${HOST_MEMORY_SOFT_WATERMARK_PCT:-85}"
+HOST_MEMORY_HIGH_WATERMARK_PCT="${HOST_MEMORY_HIGH_WATERMARK_PCT:-92}"
+HOST_SWAP_HIGH_WATERMARK_PCT="${HOST_SWAP_HIGH_WATERMARK_PCT:-25}"
+DISPLAY_GPU_UTIL_WATERMARK_PCT="${DISPLAY_GPU_UTIL_WATERMARK_PCT:-60}"
+DISPLAY_GPU_MEMORY_WATERMARK_MIB="${DISPLAY_GPU_MEMORY_WATERMARK_MIB:-2048}"
+LOW_PRIORITY_CONTAINERS="${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,pii-blur-api,${PLATFORM_PREFIX}-fiftyone,${PLATFORM_PREFIX}-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
 
 # Pushgateway for Prometheus metrics export
 PUSHGATEWAY_URL="${PUSHGATEWAY_URL:-http://${PLATFORM_PREFIX}-pushgateway:9091}"
 
 LOG_DIR="/var/log/watchdog"
 AUDIT_LOG="${LOG_DIR}/audit.log"
+RESOURCE_LOG="${LOG_DIR}/resource.log"
 STATE_DIR="/var/lib/watchdog"
 MEMORY_DIR="${STATE_DIR}/memory"
 DISCOVERY_FILE="${STATE_DIR}/platform_state.json"
@@ -175,6 +192,11 @@ if [[ -n "${EXCLUDED_CONTAINERS:-}" ]]; then
     IFS=',' read -ra EXCLUDED <<< "$EXCLUDED_CONTAINERS"
 fi
 
+LOW_PRIORITY=()
+if [[ -n "${LOW_PRIORITY_CONTAINERS:-}" ]]; then
+    IFS=',' read -ra LOW_PRIORITY <<< "$LOW_PRIORITY_CONTAINERS"
+fi
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -198,10 +220,24 @@ send_telegram() {
     fi
 }
 
+send_telegram_event() {
+    local title="$1"
+    local goal="$2"
+    local systems="$3"
+    local details="$4"
+    local next_step="${5:-Observe next watchdog cycle}"
+    local msg="🚨 *${title}*\nHost: $(hostname -s)\nGoal: ${goal}\nSystems: ${systems}\nTraining GPU: ${TRAINING_GPU} | Display GPU: ${DISPLAY_GPU}\n\n${details}\n\nNext: ${next_step}"
+    send_telegram "$msg"
+}
+
 # ---------------------------------------------------------------------------
 # GitLab issue creation (idempotent — won't duplicate issues for same alert)
 # ---------------------------------------------------------------------------
-GITLAB_API_URL="${GITLAB_API_URL:-http://shml-gitlab:8929/gitlab/api/v4}"
+if declare -F resolve_gitlab_api_url >/dev/null 2>&1; then
+    GITLAB_API_URL="${GITLAB_API_URL:-$(resolve_gitlab_api_url)}"
+else
+    GITLAB_API_URL="${GITLAB_API_URL:-http://127.0.0.1:8929/gitlab/api/v4}"
+fi
 GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
 GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}}"
 
@@ -356,6 +392,113 @@ increment_restart_count() {
     now=$(date +%s)
     count=$(get_restart_count "$container")
     echo "$now $((count + 1))" > "$state_file"
+}
+
+cooldown_active() {
+    local container="$1"
+    local state_file="${STATE_DIR}/${container}.restarts"
+    [[ -f "$state_file" ]] || return 1
+
+    local ts count now
+    read -r ts count < "$state_file"
+    now=$(date +%s)
+    (( count >= MAX_RESTARTS && now - ts < COOLDOWN_SECONDS ))
+}
+
+is_low_priority_container() {
+    local container="$1"
+    local short_name="${container#${PLATFORM_PREFIX}-}"
+    for entry in "${LOW_PRIORITY[@]}"; do
+        local target
+        target=$(echo "$entry" | xargs)
+        [[ -z "$target" ]] && continue
+        if [[ "$container" == "$target" || "$short_name" == "$target" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+record_resource_snapshot() {
+    local mem_line swap_line gpu_lines loadavg
+    loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "n/a")
+    mem_line=$(awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {if (t>0) printf "mem_used_pct=%.1f mem_available_mib=%.0f", (100*(t-a)/t), a/1024; else print "mem_used_pct=0 mem_available_mib=0"}' /proc/meminfo 2>/dev/null)
+    swap_line=$(awk '/SwapTotal/ {t=$2} /SwapFree/ {f=$2} END {if (t>0) printf "swap_used_pct=%.1f", (100*(t-f)/t); else print "swap_used_pct=0"}' /proc/meminfo 2>/dev/null)
+    gpu_lines=$(nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F', ' '{printf "gpu%s_util=%s gpu%s_mem_used_mib=%s gpu%s_mem_total_mib=%s gpu%s_temp_c=%s ", $1,$2,$1,$3,$1,$4,$1,$5}')
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] loadavg=${loadavg} ${mem_line} ${swap_line} ${gpu_lines}" >> "$RESOURCE_LOG"
+}
+
+check_host_pressure() {
+    local mem_pct=0 swap_pct=0
+    mem_pct=$(awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {if (t>0) printf "%.0f", (100*(t-a)/t); else print "0"}' /proc/meminfo 2>/dev/null)
+    swap_pct=$(awk '/SwapTotal/ {t=$2} /SwapFree/ {f=$2} END {if (t>0) printf "%.0f", (100*(t-f)/t); else print "0"}' /proc/meminfo 2>/dev/null)
+
+    if (( mem_pct < HOST_MEMORY_SOFT_WATERMARK_PCT && swap_pct < HOST_SWAP_HIGH_WATERMARK_PCT )); then
+        return 0
+    fi
+
+    local severity="soft"
+    (( mem_pct >= HOST_MEMORY_HIGH_WATERMARK_PCT )) && severity="critical"
+    local stopped=""
+
+    for container in "${LOW_PRIORITY[@]}"; do
+        is_excluded "$container" && continue
+        if docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null | grep -q '^running$'; then
+            log "PRESSURE: stopping low-priority container ${container} (mem=${mem_pct}% swap=${swap_pct}%)"
+            docker stop "$container" --time 20 >/dev/null 2>&1 || true
+            stopped="${stopped} ${container}"
+        fi
+    done
+
+    if [[ -n "$stopped" ]]; then
+        send_telegram_event \
+            "Host pressure guard (${severity})" \
+            "Protect the desktop session and keep face-model training alive" \
+            "host memory, swap, low-priority containers" \
+            "Host memory=${mem_pct}% swap=${swap_pct}%. Stopped:${stopped}" \
+            "Keep low-priority GPU/display workloads off until pressure clears"
+        audit "HOST_PRESSURE" "host" "Mem=${mem_pct}% Swap=${swap_pct}% Stopped=${stopped}"
+    fi
+}
+
+check_display_gpu_pressure() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 0
+
+    local gpu_line util mem_used temp
+    gpu_line=$(nvidia-smi --query-gpu=index,utilization.gpu,memory.used,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F', ' -v gpu="$DISPLAY_GPU" '$1 == gpu {print $0}')
+    [[ -n "$gpu_line" ]] || return 0
+
+    util=$(echo "$gpu_line" | awk -F', ' '{print $2}')
+    mem_used=$(echo "$gpu_line" | awk -F', ' '{print $3}')
+    temp=$(echo "$gpu_line" | awk -F', ' '{print $4}')
+
+    if (( util < DISPLAY_GPU_UTIL_WATERMARK_PCT && mem_used < DISPLAY_GPU_MEMORY_WATERMARK_MIB )); then
+        return 0
+    fi
+
+    local stopped=""
+    while read -r container; do
+        [[ -z "$container" ]] && continue
+        is_training_sensitive_container "$container" && continue
+        if is_low_priority_container "$container"; then
+            local gpu_info
+            gpu_info=$(docker inspect --format='{{range .HostConfig.DeviceRequests}}{{.DeviceIDs}}{{end}}' "$container" 2>/dev/null || echo "")
+            if [[ "$gpu_info" == *"${DISPLAY_GPU}"* ]]; then
+                docker stop "$container" --time 20 >/dev/null 2>&1 || true
+                stopped="${stopped} ${container}"
+            fi
+        fi
+    done < <(docker ps --format '{{.Names}}' 2>/dev/null)
+
+    if [[ -n "$stopped" ]]; then
+        send_telegram_event \
+            "Display GPU guard triggered" \
+            "Prevent GNOME/VS Code freeze by protecting the desktop GPU" \
+            "display GPU ${DISPLAY_GPU}, low-priority GPU workloads" \
+            "GPU ${DISPLAY_GPU}: util=${util}% memory=${mem_used}MiB temp=${temp}°C. Stopped:${stopped}" \
+            "Leave GPU ${DISPLAY_GPU} idle until desktop responsiveness is stable"
+        audit "DISPLAY_GPU_PRESSURE" "GPU-${DISPLAY_GPU}" "Util=${util}% Mem=${mem_used}MiB Temp=${temp}C Stopped=${stopped}"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -547,9 +690,66 @@ check_oom_killed() {
             [[ -z "$name" ]] && continue
             TOTAL_OOM_KILLS=$((TOTAL_OOM_KILLS + 1))
             log "OOM: Container ${name}: ${status}"
+            audit "OOM_KILLED" "$name" "$status"
+
+            # ── Training-active + low-priority: accept kill, mark blocked ──────
+            if is_low_priority_container "$name" && is_training_active; then
+                log "SKIP: ${name} is low-priority and training is active — OOM is expected, not a bug"
+                send_telegram "⏸️ *OOM (expected)*: \`${name}\` killed by host OOM.
+Training occupies memory. Will restart when training completes."
+
+                # Search for existing open OOM issue for this container and update it
+                local search_title="OOM Kill: ${name}"
+                local search_encoded
+                search_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$search_title'))" 2>/dev/null || echo "$search_title")
+                local existing_issues
+                existing_issues=$(curl -sf --max-time 10 \
+                    -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
+                    "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues?state=opened&search=${search_encoded}&per_page=20" \
+                    2>/dev/null || echo "[]")
+
+                local iids
+                iids=$(echo "$existing_issues" | python3 -c "
+import sys, json
+issues = json.load(sys.stdin)
+matches = [str(i['iid']) for i in issues if '${name}'.lower() in i['title'].lower()]
+print(' '.join(matches))
+" 2>/dev/null || true)
+
+                local comment_body
+                comment_body="**Watchdog:** OOM kill at $(date -u '+%Y-%m-%d %H:%M UTC') is **expected** — face detection training is occupying host RAM (~25 GB). \`${name}\` is a low-priority container and will not be restarted until training completes. Labelling as \`status::blocked\`."
+
+                if [[ -n "$iids" ]]; then
+                    for iid in $iids; do
+                        # Update labels to status::blocked, add comment
+                        curl -sf --max-time 10 -X PUT \
+                            -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
+                            -H "Content-Type: application/json" \
+                            -d "{\"labels\": \"status::blocked,type::bug,source::watchdog,component::fiftyone\", \"state_event\": \"close\"}" \
+                            "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}" \
+                            >/dev/null 2>&1 || true
+                        curl -sf --max-time 10 -X POST \
+                            -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
+                            -H "Content-Type: application/json" \
+                            -d "{\"body\": \"${comment_body}\"}" \
+                            "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}/notes" \
+                            >/dev/null 2>&1 || true
+                        log "GitLab: Closed+blocked issue #${iid} — training-time OOM for ${name}"
+                    done
+                else
+                    # First occurrence — create a single blocked issue (no restart)
+                    create_gitlab_issue \
+                        "${search_title}" \
+                        "Container \`${name}\` was OOM-killed because face detection training is occupying host RAM (~25 GB).\n\nThis is expected behaviour — \`${name}\` is low-priority and training takes precedence.\n\n**Action:** No restart attempted. Container will be brought back when training finishes.\n\nStatus: ${status}\nTime: $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                        "type::bug,status::blocked,source::watchdog,component::fiftyone,priority::low"
+                fi
+                audit "OOM_BLOCKED_TRAINING" "$name" "low-priority container suppressed during active training"
+                continue
+            fi
+
+            # ── Standard OOM path ───────────────────────────────────────────────
             send_telegram "💀 *OOM Kill*: \`${name}\`
 Status: ${status}"
-            audit "OOM_KILLED" "$name" "$status"
             create_gitlab_issue \
                 "OOM Kill: ${name}" \
                 "Container \`${name}\` was OOM-killed.\n\nStatus: ${status}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
@@ -612,7 +812,12 @@ check_gitlab_application_health() {
     fi
 
     log "ALERT: GitLab application endpoint unhealthy at ${GITLAB_INTERNAL_HEALTH_URL}"
-    send_telegram "⚠️ *GitLab App Health*: Endpoint check failed"
+    send_telegram_event \
+        "GitLab application health failed" \
+        "Keep GitLab available for CI, issue tracking, and runner coordination" \
+        "gitlab, traefik, watchdog" \
+        "Endpoint check failed: ${GITLAB_INTERNAL_HEALTH_URL}" \
+        "Watchdog will attempt a controlled restart if policy allows"
     audit "GITLAB_APP_UNHEALTHY" "${PLATFORM_PREFIX}-gitlab" "URL=${GITLAB_INTERNAL_HEALTH_URL}"
     create_gitlab_issue \
         "GitLab Application Health Check Failed" \
@@ -668,9 +873,12 @@ check_http_services() {
 
         if (( IS_PAUSED == 0 )); then
             if ! is_excluded "$restart_target"; then
-                send_telegram "🌐 *HTTP Probe Failed*: \`${label}\` — HTTP ${http_code}
-URL: \`${probe_url}\`
-Restarting \`${restart_target}\`..."
+                send_telegram_event \
+                    "HTTP probe failed: ${label}" \
+                    "Restore the service before it cascades into auth/UI outages" \
+                    "${restart_target}, traefik, watchdog" \
+                    "HTTP ${http_code} from ${probe_url}. Restart target: ${restart_target}" \
+                    "Watchdog is issuing a single controlled restart"
                 audit "HTTP_PROBE_FAIL" "$restart_target" "Code=${http_code} URL=${probe_url}"
                 restart_container "$restart_target" "http-probe-${http_code}" || true
             fi
@@ -693,7 +901,12 @@ check_gpu_health() {
     gpu_status=$(nvidia-smi --query-gpu=index,gpu_name,temperature.gpu,utilization.gpu,memory.used,memory.total \
         --format=csv,noheader 2>/dev/null) || {
         log "WARN: nvidia-smi failed"
-        send_telegram "⚠️ *GPU Alert*: nvidia-smi failed"
+        send_telegram_event \
+            "GPU telemetry failed" \
+            "Keep host and training visibility intact" \
+            "nvidia-smi, watchdog, GPU monitoring" \
+            "nvidia-smi command failed inside the watchdog container" \
+            "Watchdog will retry next cycle"
         audit "GPU_ERROR" "nvidia-smi" "Command failed"
         return 1
     }
@@ -703,7 +916,12 @@ check_gpu_health() {
         temp=$(echo "$temp" | tr -d ' ')
         if [[ "$temp" =~ ^[0-9]+$ ]] && (( temp > 90 )); then
             log "CRITICAL: GPU ${idx} at ${temp}°C — thermal throttling"
-            send_telegram "🔥 *GPU Thermal*: GPU ${idx} (${name}) at ${temp}°C"
+            send_telegram_event \
+                "GPU thermal event" \
+                "Prevent a display hang or CUDA reset" \
+                "GPU ${idx}, desktop session, training/inference" \
+                "${name} is at ${temp}°C" \
+                "Reduce GPU load immediately and inspect cooling"
             audit "GPU_THERMAL" "GPU-${idx}" "Temp=${temp}°C"
         fi
     done <<< "$gpu_status"
@@ -932,6 +1150,11 @@ restart_container() {
     local container="$1"
     local reason="${2:-unhealthy}"
 
+    if cooldown_active "$container"; then
+        log "COOLDOWN: ${container} still within ${COOLDOWN_SECONDS}s cooldown window"
+        return 1
+    fi
+
     if is_training_sensitive_container "$container" && is_training_active; then
         log "PROTECT: Deferring restart of ${container} (${reason}) — training activity detected on GPU ${TRAINING_GPU}"
         send_telegram "🛡️ *Training Protected*: Deferred \`${container}\` restart (${reason}) while training is active"
@@ -958,7 +1181,12 @@ restart_container() {
     count=$(get_restart_count "$container")
     if (( count >= MAX_RESTARTS )); then
         log "THROTTLE: ${container} hit ${count}/${MAX_RESTARTS} restarts"
-        send_telegram "🛑 *Throttle*: \`${container}\` — ${count}/${MAX_RESTARTS}. Manual intervention needed."
+        send_telegram_event \
+            "Restart throttle reached" \
+            "Stop restart loops and preserve host stability" \
+            "${container}, watchdog" \
+            "${container} hit ${count}/${MAX_RESTARTS} restarts in the last hour. Cooldown=${COOLDOWN_SECONDS}s" \
+            "Hold further restarts until cooldown expires or root cause is fixed"
         audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
         create_gitlab_issue \
             "Container Throttled: ${container}" \
@@ -968,10 +1196,15 @@ restart_container() {
     fi
 
     log "REMEDIATE: Restarting ${container} (${reason}, attempt $((count+1))/${MAX_RESTARTS})"
-    send_telegram "🔄 *Restart*: \`${container}\` (${reason}) — $((count+1))/${MAX_RESTARTS}"
+    send_telegram_event \
+        "Controlled container restart" \
+        "Recover the platform without interrupting face-model training" \
+        "${container}, watchdog, docker" \
+        "Reason=${reason}. Attempt $((count+1))/${MAX_RESTARTS}" \
+        "Watchdog will validate health after restart"
     audit "RESTART" "$container" "Reason=${reason} Attempt=$((count+1))/${MAX_RESTARTS}"
 
-    if docker restart "$container" --time 30 2>/dev/null; then
+    if docker restart "$container" --timeout 30 2>/dev/null; then
         increment_restart_count "$container"
         TOTAL_RESTARTS=$((TOTAL_RESTARTS + 1))
         log "OK: ${container} restart issued"
@@ -979,7 +1212,12 @@ restart_container() {
 
         if check_container_health "$container" > /dev/null 2>&1; then
             log "OK: ${container} recovered"
-            send_telegram "✅ *Recovered*: \`${container}\`"
+            send_telegram_event \
+                "Container recovered" \
+                "Confirm the service is healthy again" \
+                "${container}, watchdog" \
+                "${container} passed post-restart health validation" \
+                "Continue monitoring for recurrence"
             audit "RECOVERED" "$container" "Healthy after restart"
         else
             log "WARN: ${container} still unhealthy"
@@ -987,7 +1225,12 @@ restart_container() {
         fi
     else
         log "ERROR: Failed to restart ${container}"
-        send_telegram "❌ *Restart Failed*: \`${container}\`"
+        send_telegram_event \
+            "Container restart failed" \
+            "Escalate before the failure propagates" \
+            "${container}, docker, watchdog" \
+            "Docker restart failed for ${container}. Reason=${reason}" \
+            "Manual investigation required before watchdog retries again"
         audit "RESTART_FAILED" "$container" "Docker restart failed"
         create_gitlab_issue \
             "Restart Failed: ${container}" \
@@ -1083,10 +1326,15 @@ log "============================================="
 log "Self-Healing Watchdog v2 starting"
 log "  Check interval: ${CHECK_INTERVAL}s"
 log "  Max restarts/hour: ${MAX_RESTARTS}"
+log "  Cooldown: ${COOLDOWN_SECONDS}s"
 log "  Training GPU: ${TRAINING_GPU} (PROTECTED)"
+log "  Display GPU: ${DISPLAY_GPU} (desktop protected)"
 log "  Watchdog GPU: ${WATCHDOG_GPU} (preferred)"
 log "  Memory leak threshold: ${MEMORY_LEAK_THRESHOLD_MB} MB/hr"
+log "  Host memory watermarks: soft=${HOST_MEMORY_SOFT_WATERMARK_PCT}% high=${HOST_MEMORY_HIGH_WATERMARK_PCT}%"
+log "  Host swap watermark: ${HOST_SWAP_HIGH_WATERMARK_PCT}%"
 log "  Training-sensitive restarts deferred for: ${TRAINING_SENSITIVE_CONTAINERS}"
+log "  Low-priority containers: ${LOW_PRIORITY_CONTAINERS}"
 log "  Agent service: ${AGENT_SERVICE_URL}"
 log "  Critical: ${#CRITICAL_CONTAINERS[@]}"
 log "  Standard: ${#STANDARD_CONTAINERS[@]}"
@@ -1094,11 +1342,12 @@ log "  Memory-watched: ${#MEMORY_WATCH_CONTAINERS[@]}"
 log "  Excluded: ${EXCLUDED[*]:-none}"
 log "============================================="
 
-send_telegram "🛡️ *Watchdog v2* started
-📊 ${#CRITICAL_CONTAINERS[@]} critical + ${#STANDARD_CONTAINERS[@]} standard
-🎮 GPU ${TRAINING_GPU} PROTECTED | GPU ${WATCHDOG_GPU} for watchdog
-🧠 Leak detect: ${MEMORY_LEAK_THRESHOLD_MB} MB/hr
-🤖 Agent resolution: enabled"
+send_telegram_event \
+    "Watchdog started" \
+    "Protect the host UI while keeping face-model training on GPU ${TRAINING_GPU} alive" \
+    "watchdog, docker, GPU monitoring, host pressure guard" \
+    "Monitoring ${#CRITICAL_CONTAINERS[@]} critical + ${#STANDARD_CONTAINERS[@]} standard containers. Cooldown=${COOLDOWN_SECONDS}s. Host RAM guard=${HOST_MEMORY_HIGH_WATERMARK_PCT}%" \
+    "Resource snapshots will be written to ${RESOURCE_LOG} and remediation starts immediately"
 
 # Verify docker socket access
 if ! docker ps -q >/dev/null 2>&1; then
@@ -1161,6 +1410,14 @@ while true; do
     # --- Training GPU protection (every cycle) ---
     check_training_gpu_safety || true
 
+    # --- Host pressure protection (every cycle) ---
+    check_host_pressure || true
+
+    # --- Display GPU protection (every 2 cycles) ---
+    if (( cycle % 2 == 0 )); then
+        check_display_gpu_pressure || true
+    fi
+
     # --- GPU thermal (every 5 cycles) ---
     if (( cycle % 5 == 0 )); then
         check_gpu_health || true
@@ -1216,6 +1473,7 @@ GPU ${TRAINING_GPU}: protected | Cycle: ${cycle}"
 
     # --- Track totals & push metrics ---
     TOTAL_ACTIONS=$((TOTAL_ACTIONS + action_count))
+    record_resource_snapshot || true
     push_metrics || true
 
     sleep "$CHECK_INTERVAL"

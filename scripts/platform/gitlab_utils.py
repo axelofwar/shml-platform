@@ -27,6 +27,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+try:
+    from service_discovery import resolve_gitlab_base_url
+except ModuleNotFoundError:  # pragma: no cover - script execution fallback
+    sys.path.insert(0, os.path.dirname(__file__))
+    from service_discovery import resolve_gitlab_base_url
+
 # ── Configuration ────────────────────────────────────────────────────────────
 
 _DEFAULT_BASE_URL = "http://shml-gitlab:8929/gitlab"
@@ -38,7 +44,7 @@ def _env(key: str, default: str = "") -> str:
 
 
 def _base_url() -> str:
-    return _env("GITLAB_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
+    return resolve_gitlab_base_url().rstrip("/")
 
 
 def _project_id() -> str:
@@ -180,6 +186,32 @@ def add_issue_comment(iid: int, body: str) -> dict:
     return _api("POST", f"/projects/{pid}/issues/{iid}/notes", data={"body": body})
 
 
+def update_issue(
+    iid: int,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    labels: list[str] | None = None,
+    state_event: str | None = None,
+    milestone_id: int | None = None,
+) -> Issue:
+    """Update an existing issue (title, description, labels, state, milestone)."""
+    pid = _project_id()
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if description is not None:
+        body["description"] = description
+    if labels is not None:
+        body["labels"] = ",".join(labels)
+    if state_event is not None:
+        body["state_event"] = state_event
+    if milestone_id is not None:
+        body["milestone_id"] = milestone_id
+    d = _api("PUT", f"/projects/{pid}/issues/{iid}", data=body)
+    return Issue.from_dict(d)
+
+
 def update_issue_labels(iid: int, labels: list[str]) -> Issue:
     """Replace all labels on an issue."""
     pid = _project_id()
@@ -306,6 +338,62 @@ def get_pipeline_jobs(pipeline_id: int) -> list[dict]:
     return _api("GET", f"/projects/{pid}/pipelines/{pipeline_id}/jobs")
 
 
+# ── Redis event helpers (optional; silently no-ops when redis unavailable) ────
+
+
+def publish_event(channel: str, payload: dict) -> bool:
+    """Publish a JSON event to Redis pub/sub channel.
+
+    Returns True on success, False if Redis is unavailable.
+    Treat as best-effort telemetry; callers should not depend on delivery.
+    """
+    try:
+        import redis as _redis_lib
+        _url = os.environ.get("REDIS_URL", "redis://shml-redis:6379/0")
+        _r = _redis_lib.from_url(_url, socket_connect_timeout=2, socket_timeout=2)
+        _r.publish(channel, json.dumps(payload, default=str))
+        return True
+    except Exception:
+        return False
+
+
+# ── Project webhook management ────────────────────────────────────────────────
+
+
+def register_project_webhook(
+    hook_url: str,
+    *,
+    issues_events: bool = True,
+    merge_requests_events: bool = False,
+    push_events: bool = False,
+    pipeline_events: bool = True,
+    token: str | None = None,
+) -> dict:
+    """Register (or update) a project-level outbound webhook in GitLab.
+
+    GitLab will POST to ``hook_url`` when the specified events occur.
+    Idempotent: if a hook for this URL already exists it will be updated.
+    Returns the created/updated hook dict.
+    """
+    pid = _project_id()
+    body: dict[str, Any] = {
+        "url": hook_url,
+        "issues_events": issues_events,
+        "merge_requests_events": merge_requests_events,
+        "push_events": push_events,
+        "pipeline_events": pipeline_events,
+        "enable_ssl_verification": False,
+    }
+    if token:
+        body["token"] = token
+    existing = _api("GET", f"/projects/{pid}/hooks", params={"per_page": "50"})
+    for h in existing:
+        if h.get("url") == hook_url:
+            hook_id = h["id"]
+            return _api("PUT", f"/projects/{pid}/hooks/{hook_id}", data=body)
+    return _api("POST", f"/projects/{pid}/hooks", data=body)
+
+
 # ── CLI interface ────────────────────────────────────────────────────────────
 
 
@@ -418,6 +506,14 @@ def _cli_setup_board(args: list[str]) -> int:
         ("source::scan", "#FF6347", "Auto-created by scan_repo_state"),
         ("source::autoresearch", "#FF6347", "Auto-created by autoresearch"),
         ("source::ci", "#8B4513", "Auto-created by CI pipeline"),
+        # Status workflow labels
+        ("status::in-progress", "#1F75FE", "Actively being worked on"),
+        ("status::ready", "#00C853", "Ready to start, no blockers"),
+        # PII / ML-specific
+        ("metric::recall-primary", "#FF6347", "Recall is the primary success metric (PII)"),
+        ("component::pii-blurring", "#C71585", "PII face blurring pipeline"),
+        ("component::face-detection", "#FF4500", "Face detection model training / eval"),
+        ("type::research", "#A8D695", "Research spike or investigation"),
     ]
 
     for name, color, desc in label_defs:
@@ -428,8 +524,9 @@ def _cli_setup_board(args: list[str]) -> int:
     milestone_defs = [
         ("v1.0 — Platform Stability", "Core services healthy, CI green, watchdog operational"),
         ("v1.1 — GitLab Integration", "Full GitLab-centric workflow: issues, CI, mirror"),
-        ("v2.0 — Training Pipeline", "Autoresearch, model evaluation, MLflow tracking"),
-    ]
+        ("v2.0 — Training Pipeline", "Autoresearch, model evaluation, MLflow tracking"),        ("PII SOTA — recall > 0.760", "Beat Phase 9 recall (0.729) → 0.760+ on WIDER Face; mAP50 ≥ 0.798 floor"),
+        ("Platform Brain v1", "Redis pub/sub + GitLab webhooks + cross-service event routing live"),
+        ("Production Deploy", "PII blurring model in prod inference pipeline, end-to-end validated"),    ]
 
     for title, desc in milestone_defs:
         ms = ensure_milestone(title, description=desc)
@@ -439,16 +536,189 @@ def _cli_setup_board(args: list[str]) -> int:
     return 0
 
 
+def _cli_setup_webhook(args: list[str]) -> int:
+    """CLI: setup-webhook — Register GitLab outbound webhook to webhook-deployer."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="gitlab_utils setup-webhook")
+    parser.add_argument(
+        "--hook-url",
+        default="https://shml-platform.tail38b60a.ts.net/webhook/gitlab-events",
+        help="Target webhook URL (default: local webhook-deployer)",
+    )
+    parser.add_argument("--token", default=None, help="Optional secret token")
+    parsed = parser.parse_args(args)
+    hook = register_project_webhook(
+        parsed.hook_url,
+        issues_events=True,
+        pipeline_events=True,
+        token=parsed.token,
+    )
+    print(f"  ✓ Webhook registered: {hook.get('url')} (id={hook.get('id')})")
+    return 0
+
+
+def _cli_migrate_kanban(args: list[str]) -> int:
+    """CLI: migrate-kanban — Create GitLab issues from KANBAN.md snapshot.
+
+    Idempotent: uses upsert_issue so re-running won’t create duplicates.
+    """
+    kanban_items = [
+        # ── In Progress ─────────────────────────────────────────────────────
+        {
+            "title": "Autoresearch Round 3 — PII Face Detection (recall > 0.760)",
+            "labels": ["type::training", "component::autoresearch", "component::pii-blurring",
+                       "priority::critical", "status::in-progress", "metric::recall-primary",
+                       "source::autoresearch"],
+            "description": (
+                "## Goal\nBeat Phase 9 recall (0.729) → **recall > 0.760** on WIDER Face val.\n\n"
+                "**Primary metric:** recall (PII: a missed face = privacy violation)\n"
+                "**Floor:** mAP50 ≥ 0.798 (Phase 5 baseline)\n"
+                "**Hardware:** RTX 3090 Ti 24GB\n"
+                "**Strategy:** multi-scale imgsz=960 ±33%, batch=2, 30 epochs, "
+                "Phase 9 loss weights locked\n\n"
+                "*Migrated from KANBAN.md*"
+            ),
+        },
+        {
+            "title": "Track 8: nanochat — T8.1 pipeline (Stage 1 data export)",
+            "labels": ["type::training", "component::agent-service", "priority::high",
+                       "status::in-progress"],
+            "description": "T8.1 pipeline running — Stage 1 data export for nanochat SFT.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "Memory Watchdog — psutil memory leak guard",
+            "labels": ["type::chore", "component::watchdog", "priority::medium",
+                       "status::in-progress"],
+            "description": "psutil-based memory leak guard for VSCode + training processes.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T3.3 GEPA live cycle — first skill evolution cycle",
+            "labels": ["type::feature", "component::agent-service", "priority::medium",
+                       "status::in-progress"],
+            "description": "First real GEPA cycle.\nTrigger: `curl -X POST http://localhost:8000/api/skills/evolve -d '{\"skill\":\"coding-assistant\"}'`\n\n*Migrated from KANBAN.md*",
+        },
+        # ── Backlog ────────────────────────────────────────────────────────
+        {
+            "title": "CLOUD_API_KEY — activate cloud failover tier",
+            "labels": ["type::chore", "component::infra", "priority::high", "status::ready"],
+            "description": "T5.1 hybrid router is built; just needs CLOUD_API_KEY env var set.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T6.1 Nemotron-3-Super-120B — eval as cloud fallback",
+            "labels": ["type::research", "component::agent-service", "priority::medium"],
+            "description": "Eval Nemotron-3-Super-120B as cloud fallback; 12B active / 120B MoE.\nRef: https://research.nvidia.com/labs/nemotron/Nemotron-3-Super/\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T6.2 Moondream edge vision — benchmark vs YOLO on WIDER Hard",
+            "labels": ["type::research", "component::face-detection", "priority::medium"],
+            "description": "Benchmark moondream vs YOLO on WIDER Hard subset; VQA PII queries.\nRef: https://github.com/vikhyat/moondream\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T6.4 Base44 superagents — multi-agent orchestration review",
+            "labels": ["type::research", "component::agent-service", "priority::low"],
+            "description": "Review multi-agent orchestration vs ACE loop.\nRef: https://base44.com/superagents\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T7.6 Telegram activation — alertmanager-telegram token setup",
+            "labels": ["type::chore", "component::infra", "priority::medium"],
+            "description": "BotFather → TELEGRAM_BOT_TOKEN + CHAT_ID → activate alertmanager-telegram.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T7.7 skill_updater path sync — SKILLS_DIR in compose",
+            "labels": ["type::bug", "component::agent-service", "priority::medium"],
+            "description": "SKILLS_DIR=/workspace/inference/agent-service/skills in compose.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T7.8 MLflow artifact hardening",
+            "labels": ["type::chore", "component::infra", "priority::low"],
+            "description": "Add `user: '1000:1000'` + startup write-check to mlflow service.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T8.6 Shadow A/B — 10% traffic nano vs Qwen3",
+            "labels": ["type::feature", "component::agent-service", "priority::medium"],
+            "description": "Route 10% of inference requests to nano model vs Qwen3.\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T8.8 Weekly Retrain — auto SFT on new conversations",
+            "labels": ["type::chore", "component::agent-service", "priority::low"],
+            "description": "Auto-retrain SFT on new conversations (cron, post T8.4).\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T8.9 Unsloth packing — 3× SFT speedup for nanochat",
+            "labels": ["type::feature", "component::agent-service", "priority::medium"],
+            "description": "Apply Unsloth 3× packing to nanochat SFT data pipeline.\nRef: https://docs.unsloth.ai/new/3x-faster-training-packing\n\n*From links.md 2025-12-13*",
+        },
+        # ── Blocked ────────────────────────────────────────────────────────
+        {
+            "title": "FiftyOne deep eval — blocked on autoresearch Round 3 winner",
+            "labels": ["type::training", "component::face-detection", "priority::high",
+                       "status::blocked", "metric::recall-primary"],
+            "description": "Run FiftyOne Brain failure analysis once recall > 0.760 achieved.\nBlocked by: Autoresearch Round 3\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T7.4 Phase 6B: YOLOv8l P2 — blocked on autoresearch champion",
+            "labels": ["type::training", "component::face-detection", "priority::high",
+                       "status::blocked"],
+            "description": "Start YOLOv8l P2 Phase 6B full training once Round 3 produces a champion config.\nBlocked by: Autoresearch Round 3\n\n*Migrated from KANBAN.md*",
+        },
+        {
+            "title": "T7.5 RF-DETR vs YOLO comparison — blocked on T7.4",
+            "labels": ["type::training", "component::face-detection", "priority::medium",
+                       "status::blocked"],
+            "description": "Compare RF-DETR curriculum pipeline vs YOLOv8l P2 once T7.4 completes.\nRef: https://github.com/roboflow/rf-detr\nBlocked by: T7.4\n\n*Migrated from KANBAN.md*",
+        },
+        # ── New — from links.md analysis ─────────────────────────────────
+        {
+            "title": "Evaluate autoresearch-at-home loop improvements",
+            "labels": ["type::research", "component::autoresearch", "priority::low"],
+            "description": "Evaluate mutable-state-inc/autoresearch-at-home for loop design improvements (LLM mutation quality).\nRef: https://github.com/mutable-state-inc/autoresearch-at-home\n\n*From links.md 2026-03-12*",
+        },
+        {
+            "title": "Evaluate computer-use-large for GUI agent fine-tuning",
+            "labels": ["type::research", "component::agent-service", "priority::low"],
+            "description": "48k videos / 12.3k hrs of professional screen recordings (AutoCAD, Excel, VS Code etc). Evaluate as training data for a computer-use agent.\nRef: https://huggingface.co/datasets/markov-ai/computer-use-large\n\n*From links.md 2026-03-12*",
+        },
+        {
+            "title": "Synthetic hard-negative face mining via NeMo DataDesigner",
+            "labels": ["type::feature", "component::face-detection", "priority::medium",
+                       "metric::recall-primary"],
+            "description": "Use NVIDIA NeMo DataDesigner to generate synthetic hard-negative faces (small/occluded in crowds) to augment WIDER Face training set.\nPlan for Round 4 after Round 3 completes.\nRef: https://github.com/NVIDIA-NeMo/DataDesigner\n\n*From links.md analysis*",
+        },
+    ]
+
+    print(f"Migrating {len(kanban_items)} kanban items to GitLab issues...")
+    ok = 0
+    fail = 0
+    for item in kanban_items:
+        try:
+            issue = upsert_issue(
+                item["title"][:50],  # search key
+                title=item["title"],
+                description=item.get("description", ""),
+                labels=item.get("labels", []),
+            )
+            print(f"  ✓ #{issue.iid:4d}  {item['title'][:65]}")
+            ok += 1
+        except Exception as e:
+            print(f"  ✗ FAILED  {item['title'][:65]} — {e}")
+            fail += 1
+
+    print(f"\nDone: {ok} created/updated, {fail} failed.")
+    return 0 if fail == 0 else 1
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(
             "Usage: python3 gitlab_utils.py <command> [args...]\n\n"
             "Commands:\n"
-            "  create-issue   Create a new issue\n"
-            "  upsert-issue   Find or create an issue (idempotent)\n"
-            "  add-comment    Add a comment to an issue\n"
-            "  list-issues    List open issues\n"
-            "  setup-board    Create labels and milestones\n",
+            "  create-issue    Create a new issue\n"
+            "  upsert-issue    Find or create an issue (idempotent)\n"
+            "  add-comment     Add a comment to an issue\n"
+            "  list-issues     List open issues\n"
+            "  setup-board     Create labels and milestones\n"
+            "  setup-webhook   Register GitLab outbound webhook\n"
+            "  migrate-kanban  Migrate KANBAN.md items to GitLab issues\n",
             file=sys.stderr,
         )
         return 1
@@ -462,6 +732,8 @@ def main() -> int:
         "add-comment": _cli_add_comment,
         "list-issues": _cli_list_issues,
         "setup-board": _cli_setup_board,
+        "setup-webhook": _cli_setup_webhook,
+        "migrate-kanban": _cli_migrate_kanban,
     }
 
     handler = dispatch.get(cmd)
