@@ -236,7 +236,9 @@ send_telegram_event() {
 if declare -F resolve_gitlab_api_url >/dev/null 2>&1; then
     GITLAB_API_URL="${GITLAB_API_URL:-$(resolve_gitlab_api_url)}"
 else
-    GITLAB_API_URL="${GITLAB_API_URL:-http://127.0.0.1:8929/gitlab/api/v4}"
+    # shml-gitlab:8929 is the correct internal Docker hostname/port.
+    # 127.0.0.1:8929 does NOT work from inside the watchdog container.
+    GITLAB_API_URL="${GITLAB_API_URL:-http://shml-gitlab:8929/gitlab/api/v4}"
 fi
 GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
 GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}}"
