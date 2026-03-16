@@ -1155,6 +1155,14 @@ restart_container() {
         return 1
     fi
 
+    # Low-priority containers (e.g. fiftyone) are OOM-killed repeatedly when training is active.
+    # Do not attempt restart — it will just be killed again, triggering throttle issues.
+    if is_low_priority_container "$container" && is_training_active; then
+        log "DEFER: ${container} is low-priority and training is active — skipping restart (will recover when training ends)"
+        audit "RESTART_DEFER_LOW_PRIORITY" "$container" "Reason=${reason} training active"
+        return 1
+    fi
+
     if is_training_sensitive_container "$container" && is_training_active; then
         log "PROTECT: Deferring restart of ${container} (${reason}) — training activity detected on GPU ${TRAINING_GPU}"
         send_telegram "🛡️ *Training Protected*: Deferred \`${container}\` restart (${reason}) while training is active"
@@ -1181,13 +1189,19 @@ restart_container() {
     count=$(get_restart_count "$container")
     if (( count >= MAX_RESTARTS )); then
         log "THROTTLE: ${container} hit ${count}/${MAX_RESTARTS} restarts"
+        audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
+        # Don't create throttle issues for low-priority containers during training —
+        # the repeated restarts are caused by training-time OOM, not a real bug.
+        if is_low_priority_container "$container" && is_training_active; then
+            log "SKIP THROTTLE ISSUE: ${container} is low-priority and training is active"
+            return 1
+        fi
         send_telegram_event \
             "Restart throttle reached" \
             "Stop restart loops and preserve host stability" \
             "${container}, watchdog" \
             "${container} hit ${count}/${MAX_RESTARTS} restarts in the last hour. Cooldown=${COOLDOWN_SECONDS}s" \
             "Hold further restarts until cooldown expires or root cause is fixed"
-        audit "THROTTLE" "$container" "Count=${count}/${MAX_RESTARTS}"
         create_gitlab_issue \
             "Container Throttled: ${container}" \
             "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
