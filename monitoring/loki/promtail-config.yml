@@ -1,0 +1,123 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Ray job logs
+  - job_name: ray_jobs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ray_jobs
+          __path__: /ray_logs/session_*/logs/job-driver-*.log
+    pipeline_stages:
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (?P<level>\w+) - (?P<message>.*)'
+      - labels:
+          level:
+      - timestamp:
+          source: timestamp
+          format: '2006-01-02 15:04:05'
+
+  # Ray worker logs
+  - job_name: ray_workers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ray_workers
+          __path__: /ray_logs/session_*/logs/worker-*.log
+
+  # Application logs (MLflow, Ray API, etc.)
+  - job_name: app_logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: app_logs
+          __path__: /app_logs/**/*.log
+
+  # System logs
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          __path__: /var/log/syslog
+
+  # Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"]
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+    pipeline_stages:
+      - docker: {}
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z) (?P<level>\w+) (?P<message>.*)'
+      - labels:
+          level:
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+
+  # NemoClaw / OpenShell container logs
+  # Scrapes structured JSON audit logs from openshell-gateway and sandbox factory.
+  # Labels: job=nemoclaw, sandbox_name, user_role, event_type
+  - job_name: nemoclaw
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values:
+              - "shml-openshell-gateway"
+              - "shml-nemoclaw-factory"
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - replacement: 'nemoclaw'
+        target_label: 'job'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.*openshell.*'
+        replacement: 'openshell-gateway'
+        target_label: 'component'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.*factory.*'
+        replacement: 'sandbox-factory'
+        target_label: 'component'
+    pipeline_stages:
+      - docker: {}
+      # Parse JSON audit log fields emitted by OpenShell gateway
+      - json:
+          expressions:
+            event_type: event_type
+            sandbox_name: sandbox_name
+            user_role: user_role
+            blueprint: blueprint
+            inference_profile: inference_profile
+            level: level
+      - labels:
+          event_type:
+          sandbox_name:
+          user_role:
+          blueprint:
+          inference_profile:
+          level:

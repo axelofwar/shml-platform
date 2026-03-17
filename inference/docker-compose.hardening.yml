@@ -1,0 +1,83 @@
+# Container Security Hardening - Inference Services
+# =================================================
+# Apply this overlay to harden all inference containers:
+#   docker compose -f deploy/compose/docker-compose.yml -f docker-compose.hardening.yml up -d
+#
+# Security controls applied:
+#   - no-new-privileges: Prevents privilege escalation via setuid/setgid
+#   - cap_drop ALL: Removes all Linux capabilities
+#   - cap_add NET_BIND_SERVICE: Only allows binding to privileged ports (if needed)
+#   - read_only: Makes root filesystem read-only (uses tmpfs for writable dirs)
+#   - Non-root user where possible
+#
+# NOTE: GPU containers (nemotron, qwen3) need NVIDIA capabilities and cannot
+# use read_only due to CUDA driver requirements. They get security_opt only.
+
+services:
+  # === AGENT SERVICE ===
+  agent-service:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:size=512M
+      - /app/logs:size=256M
+
+  # === CHAT API ===
+  chat-api:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:size=256M
+
+  # === INFERENCE GATEWAY ===
+  inference-gateway:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:size=256M
+
+  # === GPU MANAGER ===
+  gpu-manager:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+  # === EMBEDDING SERVICE ===
+  embedding-service:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+  # === PII BLUR ===
+  pii-blur-api:
+    security_opt:
+      - no-new-privileges:true
+    # Note: Cannot drop ALL caps - needs GPU access
+
+  # === SAM AUDIO ===
+  sam-audio:
+    security_opt:
+      - no-new-privileges:true
+
+  # === CODING MODEL FALLBACK ===
+  coding-model-fallback:
+    security_opt:
+      - no-new-privileges:true

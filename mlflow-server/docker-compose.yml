@@ -1,0 +1,262 @@
+# MLflow Server - Experiment Tracking & Model Registry
+# =====================================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start mlflow
+# Stop:   ./start_all_safe.sh stop mlflow
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks/volumes created by deploy/compose/docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
+
+services:
+  # ==========================================================================
+  # MLFLOW TRACKING SERVER
+  # ==========================================================================
+  mlflow-server:
+    build:
+      context: ./docker/mlflow
+      dockerfile: Dockerfile
+    container_name: mlflow-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2560M
+        reservations:
+          cpus: '0.5'
+          memory: 1280M
+    expose:
+      - "5000"
+    environment:
+      # Database (uses postgres from infra)
+      MLFLOW_BACKEND_STORE_URI: "postgresql://mlflow:$${DB_PASSWORD}@postgres:5432/mlflow_db"
+      MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
+      MLFLOW_ARTIFACTS_DESTINATION: "/mlflow/artifacts"
+      # Server Configuration
+      MLFLOW_HOST: "0.0.0.0"
+      MLFLOW_PORT: "5000"
+      MLFLOW_WORKERS: "4"
+      MLFLOW_WORKER_CONNECTIONS: "2000"
+      MLFLOW_WORKER_TIMEOUT: "3600"
+      MLFLOW_SQLALCHEMYSTORE_POOL_SIZE: "2"
+      MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW: "1"
+      MLFLOW_SQLALCHEMYSTORE_POOL_RECYCLE: "3600"
+      # MLflow 3.x - Static prefix for remote access (ensures correct asset paths)
+      MLFLOW_STATIC_PREFIX: "/mlflow"
+      # MLflow 3.x Security Settings - allow internal Docker network hosts AND Tailscale domain
+      # IMPORTANT: Include both hostname AND hostname:port variants (MLflow 3.x is strict about exact Host header match)
+      MLFLOW_ALLOWED_HOSTS: "localhost,127.0.0.1,mlflow-server,mlflow-server:5000,mlflow-nginx,mlflow-nginx:80,ray-head,ray-compute-api,mlflow-api,${PUBLIC_DOMAIN}"
+      # Schema & Validation
+      MLFLOW_SCHEMA_VALIDATION: "true"
+      MLFLOW_REQUIRE_METADATA: "true"
+      MLFLOW_AUTO_COMPRESS: "true"
+      MLFLOW_COMPRESSION_THRESHOLD_MB: "10"
+      MLFLOW_COMPRESSION_FORMAT: "zstd"
+      MLFLOW_ALLOW_REFERENCE_PATHS: "true"
+      MLFLOW_SCAN_SENSITIVE_DATA: "true"
+      # Cache (uses redis from infra)
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+    volumes:
+      - /mlflow/artifacts:/mlflow/artifacts
+      - mlflow-mlruns:/mlflow/mlruns
+      - ./docker/mlflow/plugins:/mlflow/plugins
+      - ./config/schema:/mlflow/schema
+      - ./scripts:/mlflow/scripts:ro
+      - ./logs/mlflow:/mlflow/logs
+    secrets:
+      - db_password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - platform
+
+  # ==========================================================================
+  # MLFLOW NGINX REVERSE PROXY
+  # ==========================================================================
+  mlflow-nginx:
+    image: nginx:alpine
+    container_name: mlflow-nginx
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.72'
+          memory: 192M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    expose:
+      - "80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=80"
+      # Static files route (MLflow generates /mlflow/static-files/ paths with --static-prefix)
+      # Static files don't need auth - they're just CSS/JS
+      - "traefik.http.routers.mlflow-static.rule=PathPrefix(`/mlflow/static-files`)"
+      - "traefik.http.routers.mlflow-static.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-static.service=mlflow"
+      - "traefik.http.routers.mlflow-static.priority=500"
+      # Health endpoint (no auth needed for health checks)
+      - "traefik.http.routers.mlflow-health.rule=Path(`/mlflow/health`)"
+      - "traefik.http.routers.mlflow-health.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-health.service=mlflow"
+      - "traefik.http.routers.mlflow-health.priority=600"
+      # API Routes (protected by OAuth2 + developer role)
+      - "traefik.http.routers.mlflow-api.rule=PathPrefix(`/api/2.0/mlflow`)"
+      - "traefik.http.routers.mlflow-api.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-api.service=mlflow"
+      # Requires developer or admin role to access MLflow API
+      - "traefik.http.routers.mlflow-api.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+      - "traefik.http.routers.mlflow-api.priority=400"
+      # AJAX API Routes (protected by OAuth2 + developer role)
+      - "traefik.http.middlewares.mlflow-ajax-strip.stripprefix.prefixes=/ajax"
+      - "traefik.http.routers.mlflow-ajax.rule=PathPrefix(`/ajax-api/2.0/mlflow`)"
+      - "traefik.http.routers.mlflow-ajax.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-ajax.service=mlflow"
+      # Requires developer or admin role to access MLflow AJAX API
+      - "traefik.http.routers.mlflow-ajax.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,mlflow-ajax-strip"
+      - "traefik.http.routers.mlflow-ajax.priority=350"
+      # UI Routes (protected by OAuth2 + developer role)
+      - "traefik.http.routers.mlflow-ui.rule=PathPrefix(`/mlflow`)"
+      - "traefik.http.routers.mlflow-ui.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-ui.service=mlflow"
+      # Requires developer or admin role to access MLflow UI
+      - "traefik.http.routers.mlflow-ui.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+      - "traefik.http.routers.mlflow-ui.priority=10"
+
+  # ==========================================================================
+  # MLFLOW REST API
+  # ==========================================================================
+  mlflow-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mlflow-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.87'
+          memory: 384M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    environment:
+      # MLflow Connection
+      MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
+      MLFLOW_ARTIFACT_ROOT: "/mlflow/artifacts"
+      # OAuth (optional - use FusionAuth credentials from .env)
+      OAUTH_ENABLED: ${OAUTH_ENABLED:-false}
+      FUSIONAUTH_URL: ${FUSIONAUTH_URL:-http://fusionauth:9011}
+      MLFLOW_OAUTH_CLIENT_ID: ${FUSIONAUTH_MLFLOW_CLIENT_ID}
+      MLFLOW_OAUTH_CLIENT_SECRET: ${FUSIONAUTH_MLFLOW_CLIENT_SECRET}
+    volumes:
+      - /mlflow/artifacts:/mlflow/artifacts
+      - ./config/schema:/mlflow/config/schema:ro
+      - ./api:/app:ro
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.mlflow-api-service.loadbalancer.server.port=8000"
+      # Custom API routes (highest priority to override MLflow native API)
+      - "traefik.http.routers.mlflow-api-v1.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.mlflow-api-v1.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-api-v1.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-v1.priority=2147483647"
+      # SECURITY: Require developer or admin role for API access
+      - "traefik.http.routers.mlflow-api-v1.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+      # API Documentation
+      - "traefik.http.routers.mlflow-api-docs.rule=PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/redoc`) || PathPrefix(`/api/v1/openapi.json`)"
+      - "traefik.http.routers.mlflow-api-docs.entrypoints=web,websecure"
+      - "traefik.http.routers.mlflow-api-docs.service=mlflow-api-service"
+      - "traefik.http.routers.mlflow-api-docs.priority=450"
+      # SECURITY: Require developer or admin role for API docs (exposes API schema)
+      - "traefik.http.routers.mlflow-api-docs.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+
+  # ==========================================================================
+  # MLFLOW PROMETHEUS - Service-Specific Metrics (30d retention)
+  # ==========================================================================
+  mlflow-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: mlflow-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.8'
+          memory: 384M
+        reservations:
+          cpus: '0.15'
+          memory: 192M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mlflow-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - platform
+    depends_on:
+      - mlflow-server
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+secrets:
+  db_password:
+    file: ../secrets/shared_db_password.txt
+
+volumes:
+  mlflow-mlruns:
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-mlruns
+    external: true
+  mlflow-prometheus-data:
+    name: ${PLATFORM_PREFIX:-shml}-mlflow-prometheus-data
+    external: true
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

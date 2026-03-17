@@ -1,0 +1,53 @@
+# ============================================================================
+# Foundation Profile
+# ============================================================================
+# Train from scratch or from a fresh YOLO checkpoint on a large dataset.
+# 100 epochs, conservative learning rate, full augmentation pipeline.
+# Expected duration: ~24+ hours on RTX 3090 Ti.
+#
+# Usage:
+#   shml train --profile foundation
+#   shml train --profile foundation --model yolo11l.pt --epochs 200
+# ============================================================================
+
+model: yolo11x.pt
+data_yaml: wider_face_yolo/data.yaml
+epochs: 100
+batch_size: 4
+imgsz: 1280
+patience: 25
+optimizer: AdamW
+lr0: 0.0001
+lrf: 0.001
+weight_decay: 0.0005
+warmup_epochs: 5.0
+
+# Integrations — full stack
+integrations:
+  - mlflow
+  - nessie
+  - fiftyone
+  - features
+  - prometheus
+
+mlflow_experiment: foundation
+nessie_branch_prefix: foundation
+
+# Augmentation — comprehensive
+augmentation:
+  hsv_h: 0.02
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 15.0
+  translate: 0.2
+  scale: 0.5
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.2
+  copy_paste: 0.15
+  erasing: 0.4
+  crop_fraction: 0.7
+
+# Resources
+gpu_yield: true

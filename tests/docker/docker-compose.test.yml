@@ -1,0 +1,87 @@
+# SFML Platform - Test Environment
+# Provides isolated testing environment with all services
+#
+# Usage:
+#   # Run all tests
+#   docker compose -f tests/docker/docker-compose.test.yml run --rm test
+#
+#   # Run specific test file
+#   docker compose -f tests/docker/docker-compose.test.yml run --rm test \
+#     /workspace/tests/unit/test_copilot_suggestions.py -v -s
+#
+#   # Run with coverage
+#   docker compose -f tests/docker/docker-compose.test.yml run --rm test \
+#     --cov=/workspace --cov-report=html:/workspace/coverage
+#
+#   # Interactive shell for debugging
+#   docker compose -f tests/docker/docker-compose.test.yml run --rm --entrypoint bash test
+
+services:
+  test:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.test
+    container_name: shml-test-runner
+    volumes:
+      # Mount entire project for testing (read-only for safety)
+      - ../..:/workspace:ro
+      # Mount writable directories outside of /workspace
+      - test-results:/test-results
+      - coverage:/coverage
+    working_dir: /workspace
+    environment:
+      - PYTHONPATH=/workspace
+      - TESTING=true
+      - LOG_LEVEL=DEBUG
+      # Service URLs (when running with full stack)
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - RAY_ADDRESS=ray://ray-head:10001
+      - RAY_DASHBOARD_HOST=http://ray-head:8265
+      - POSTGRES_HOST=test-postgres
+      - REDIS_HOST=test-redis
+    networks:
+      - test-network
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+
+  # Isolated PostgreSQL for testing
+  test-postgres:
+    image: postgres:15-alpine
+    container_name: shml-test-postgres
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test_db
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d test_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Isolated Redis for testing
+  test-redis:
+    image: redis:7-alpine
+    container_name: shml-test-redis
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  test-results:
+  coverage:
+  test-postgres-data:

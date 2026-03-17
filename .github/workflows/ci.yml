@@ -1,0 +1,532 @@
+# CI/CD Workflow
+# Runs tests, builds containers, and validates code
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # Run Python unit tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
+
+          # Install project-specific requirements if they exist
+          for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
+            if [ -f "$req" ]; then
+              pip install -r "$req" || true
+            fi
+          done
+
+      - name: Run unit tests
+        run: |
+          if [ -d "tests/unit" ]; then
+            pytest tests/unit/ -v --tb=short -x
+          else
+            echo "No unit tests directory found"
+          fi
+
+  # Chat API unit and security tests (no live services needed)
+  chat-api-tests:
+    name: Chat API Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx aiohttp pydantic fastapi starlette requests
+
+          # Install chat-api test requirements
+          if [ -f "tests/chat-api/requirements-test.txt" ]; then
+            pip install -r tests/chat-api/requirements-test.txt
+          fi
+
+          # Install inference dependencies for imports
+          if [ -f "inference/chat-api/requirements.txt" ]; then
+            pip install -r inference/chat-api/requirements.txt || true
+          fi
+
+      - name: Run Chat API tests
+        run: |
+          if [ -d "tests/chat-api" ]; then
+            # Check if inference.chat_api module is importable (only in Docker context)
+            if python -c "from inference.chat_api.app import auth" 2>/dev/null; then
+              pytest tests/chat-api/test_auth.py tests/chat-api/test_ask_only_mode.py \
+                tests/chat-api/test_security_config.py -v --tb=short
+            else
+              echo "⚠️ inference.chat_api not available in CI - running config-only tests"
+              EXIT_CODE=0
+              pytest tests/chat-api/test_security_config.py -v --tb=short \
+                -k "not chat_ui and not all_chat_interfaces and not coding_model_primary and not compose_valid and not non_admin" \
+                || EXIT_CODE=$?
+              if [ $EXIT_CODE -eq 5 ]; then
+                echo "No matching config tests in CI - OK"
+              elif [ $EXIT_CODE -ne 0 ]; then
+                exit $EXIT_CODE
+              fi
+            fi
+          else
+            echo "No chat-api tests directory found"
+          fi
+
+  # Role-based access and Traefik config tests
+  rbac-tests:
+    name: RBAC & Auth Config Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx pyyaml requests
+
+      - name: Run RBAC configuration tests
+        run: |
+          # Test Traefik middleware configuration (skip tests needing missing compose files)
+          if [ -f "tests/chat-api/test_traefik_config.py" ]; then
+            EXIT_CODE=0
+            pytest tests/chat-api/test_traefik_config.py -v --tb=short \
+              -k "not chat_ui and not coding_model_routes" \
+              || EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 5 ]; then
+              echo "No matching RBAC tests - OK"
+            elif [ $EXIT_CODE -ne 0 ]; then
+              exit $EXIT_CODE
+            fi
+          fi
+
+          # Test role-auth service configuration
+          if [ -d "scripts/role-auth" ]; then
+            echo "✓ role-auth service directory exists"
+            cat scripts/role-auth/nginx.conf | grep -E "auth/(viewer|developer|admin)" && echo "✓ Role endpoints configured"
+          fi
+
+      - name: Validate OAuth2-Proxy config
+        run: |
+          # Check that OAuth2-Proxy is configured for role-based access
+          if [ -f "deploy/compose/docker-compose.infra.yml" ]; then
+            grep -A 20 "oauth2-proxy:" deploy/compose/docker-compose.infra.yml | grep -E "OAUTH2_PROXY|X-Auth-Request" && echo "✓ OAuth2-Proxy configured"
+          fi
+
+  # Integration tests (mocked - no live services)
+  integration-tests-mocked:
+    name: Integration Tests (Mocked)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx aiohttp requests pyyaml
+
+      - name: Run mocked integration tests
+        run: |
+          # Run tests that can work without live services
+          if [ -d "tests/integration" ]; then
+            EXIT_CODE=0
+            pytest tests/integration/ -v --tb=short \
+              -k "not live and not running" \
+              --ignore=tests/integration/test_chat_api_live.py \
+              --ignore=tests/integration/test_full_stack.py \
+              --ignore=tests/integration/test_api_endpoints.py \
+              --ignore=tests/integration/test_new_services.py \
+              --ignore=tests/integration/test_observability.py \
+              --ignore=tests/integration/test_inference_stack.py \
+              --ignore=tests/integration/test_traefik_routing.py \
+              || EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 5 ]; then
+              echo "No integration tests to run without live services - OK"
+            elif [ $EXIT_CODE -ne 0 ]; then
+              exit $EXIT_CODE
+            fi
+          fi
+
+  # Live Chat API Integration Tests (requires secrets)
+  chat-api-live-tests:
+    name: Chat API Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio httpx requests
+
+      - name: Check if Chat API is accessible
+        id: check_chat_api
+        env:
+          CHAT_API_URL: ${{ secrets.CHAT_API_URL }}
+          # Reuse existing FusionAuth secrets for Chat API auth
+          CHAT_API_DEVELOPER_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
+        run: |
+          if [ -z "$CHAT_API_DEVELOPER_KEY" ]; then
+            echo "FUSIONAUTH_DEVELOPER_KEY not set - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          URL="${CHAT_API_URL:-https://${PUBLIC_DOMAIN}/api/chat}"
+
+          echo "Testing Chat API at: $URL"
+          if curl -sf "$URL/health" > /dev/null 2>&1; then
+            echo "Chat API is accessible!"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "Chat API not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Chat API live integration tests
+        if: steps.check_chat_api.outputs.skip != 'true'
+        env:
+          # Use /api/chat as the base URL - test appends /v1/chat/completions etc
+          CHAT_API_DIRECT_URL: https://${PUBLIC_DOMAIN}/api/chat
+          # Reuse existing FusionAuth CI/CD keys
+          CHAT_API_TEST_KEY: ${{ secrets.FUSIONAUTH_DEVELOPER_KEY }}
+          CHAT_API_ADMIN_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+          CHAT_API_VIEWER_KEY: ${{ secrets.FUSIONAUTH_VIEWER_KEY }}
+        run: |
+          pytest tests/integration/test_chat_api_live.py \
+            -v \
+            --tb=short \
+            -m integration \
+            -x  # Stop on first failure
+
+      - name: Live tests skipped
+        if: steps.check_chat_api.outputs.skip == 'true'
+        run: |
+          echo "⚠️ Live Chat API tests skipped - API not accessible from CI"
+          echo ""
+          echo "To enable live tests, ensure these GitHub secrets are set:"
+          echo "  - CHAT_API_URL: Your Chat API endpoint (default: https://${PUBLIC_DOMAIN}/api/chat)"
+          echo "  - FUSIONAUTH_DEVELOPER_KEY: CI/CD Developer key from FusionAuth"
+          echo "  - FUSIONAUTH_API_KEY: CI/CD Superkey from FusionAuth (admin)"
+          echo "  - FUSIONAUTH_VIEWER_KEY: CI/CD Viewer key from FusionAuth"
+          echo ""
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/integration/test_chat_api_live.py -v -m integration"
+
+  # ============================================================================
+  # Live Full Stack Tests - MLflow, Ray, Grafana, Prometheus via Tailscale Funnel
+  # ============================================================================
+  full-stack-live-tests:
+    name: Full Stack Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest requests
+
+      - name: Check if Tailscale Funnel is accessible
+        id: check_funnel
+        env:
+          PUBLIC_DOMAIN: ${{ secrets.PUBLIC_DOMAIN }}
+        run: |
+          DOMAIN="${PUBLIC_DOMAIN}"
+
+          echo "Testing Tailscale Funnel at: https://$DOMAIN"
+          if curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/mlflow/health" | grep -qE "200|302|401|403"; then
+            echo "Tailscale Funnel is accessible!"
+            echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tailscale Funnel not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Full Stack live tests (External via Funnel)
+        if: steps.check_funnel.outputs.skip != 'true'
+        env:
+          PUBLIC_DOMAIN: ${{ steps.check_funnel.outputs.domain }}
+          # We don't have LAN access from CI, so skip LAN tests
+          SKIP_LAN_TESTS: "true"
+        run: |
+          pytest tests/integration/test_full_stack.py \
+            -v \
+            --tb=short \
+            -m "external or security" \
+            -x  # Stop on first failure
+
+      - name: Test MLflow health endpoint
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing MLflow health..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/mlflow/health")
+          if [ "$STATUS" = "200" ]; then
+            echo "✓ MLflow health OK (status: $STATUS)"
+          else
+            echo "⚠️ MLflow health returned status: $STATUS (may be behind auth)"
+          fi
+
+      - name: Test Ray Dashboard protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Ray Dashboard protection..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/ray/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Ray Dashboard properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Ray Dashboard returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Test Grafana protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Grafana protection..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/grafana/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Grafana properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Grafana returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Test Prometheus protection
+        if: steps.check_funnel.outputs.skip != 'true'
+        run: |
+          DOMAIN="${{ steps.check_funnel.outputs.domain }}"
+          echo "Testing Prometheus protection..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/prometheus/")
+          if [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+            echo "✓ Prometheus properly protected (status: $STATUS)"
+          else
+            echo "⚠️ Prometheus returned unexpected status: $STATUS"
+            exit 1
+          fi
+
+      - name: Live tests skipped
+        if: steps.check_funnel.outputs.skip == 'true'
+        run: |
+          echo "⚠️ Full Stack live tests skipped - Tailscale Funnel not accessible from CI"
+          echo ""
+          echo "These tests verify that MLflow, Ray, Grafana, and Prometheus are:"
+          echo "  1. Accessible via Tailscale Funnel"
+          echo "  2. Properly protected with OAuth2 authentication"
+          echo ""
+          echo "To enable, ensure your server's Tailscale Funnel is running."
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/integration/test_full_stack.py -v -m external"
+
+  # ============================================================================
+  # FusionAuth SDK Live Tests - Test Platform SDK against live FusionAuth
+  # ============================================================================
+  fusionauth-live-tests:
+    name: FusionAuth SDK Live Integration Tests
+    runs-on: ubuntu-latest
+    # Only run if secrets are available (won't run on forks)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest httpx pydantic tenacity python-dotenv requests
+
+      - name: Check if FusionAuth is accessible
+        id: check_fusionauth
+        env:
+          FUSIONAUTH_URL: ${{ secrets.FUSIONAUTH_URL }}
+          FUSIONAUTH_API_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+        run: |
+          if [ -z "$FUSIONAUTH_API_KEY" ]; then
+            echo "FUSIONAUTH_API_KEY not set - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          URL="${FUSIONAUTH_URL:-https://${PUBLIC_DOMAIN}/fusionauth}"
+
+          echo "Testing FusionAuth at: $URL"
+          if curl -sf -H "Authorization: $FUSIONAUTH_API_KEY" "$URL/api/status" > /dev/null 2>&1; then
+            echo "FusionAuth is accessible!"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "FusionAuth not accessible - skipping live tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run FusionAuth SDK integration tests
+        if: steps.check_fusionauth.outputs.skip != 'true'
+        env:
+          FUSIONAUTH_URL: ${{ secrets.FUSIONAUTH_URL }}
+          FUSIONAUTH_API_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+        run: |
+          pytest tests/platform_sdk/test_integration.py \
+            -v \
+            --tb=short
+
+      - name: Live tests skipped
+        if: steps.check_fusionauth.outputs.skip == 'true'
+        run: |
+          echo "⚠️ FusionAuth SDK live tests skipped - FusionAuth not accessible from CI"
+          echo ""
+          echo "To enable live tests, ensure these GitHub secrets are set:"
+          echo "  - FUSIONAUTH_URL: Your FusionAuth endpoint"
+          echo "  - FUSIONAUTH_API_KEY: Admin API key"
+          echo ""
+          echo "For now, run live tests locally with:"
+          echo "  pytest tests/platform_sdk/test_integration.py -v"
+
+  # Validate Docker builds
+  docker-build:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create dummy secrets for build
+        run: |
+          mkdir -p secrets
+          echo "dummy-password" > secrets/shared_db_password.txt
+          echo "dummy-password" > secrets/grafana_password.txt
+          echo "dummy-password" > secrets/db_password.txt
+
+          # Create minimal .env for compose validation
+          cat > .env << 'EOF'
+          AUTHENTIK_SECRET_KEY=dummy-key-for-ci
+          AUTHENTIK_DB_PASSWORD=dummy-password
+          AUTHENTIK_BOOTSTRAP_PASSWORD=dummy-password
+          SHARED_DB_PASSWORD=dummy-password
+          GRAFANA_ADMIN_PASSWORD=dummy-password
+          EOF
+
+      - name: Validate compose files
+        run: |
+          docker compose -f deploy/compose/docker-compose.yml config -q
+          docker compose -f deploy/compose/docker-compose.infra.yml config -q
+
+      - name: Build MLflow containers (dry-run)
+        run: |
+          if [ -f "mlflow-server/docker/mlflow/Dockerfile" ]; then
+            docker build --no-cache --target=builder -f mlflow-server/docker/mlflow/Dockerfile mlflow-server/docker/mlflow/ || true
+          fi
+
+  # Validate documentation
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for broken internal links
+        run: |
+          # Find markdown files and check for broken relative links
+          find . -name "*.md" -not -path "./.git/*" -not -path "./archived/*" | while read f; do
+            dir=$(dirname "$f")
+            grep -oE '\[.*\]\([^http][^)]+\)' "$f" 2>/dev/null | grep -oE '\([^)]+\)' | tr -d '()' | while read link; do
+              # Remove anchor
+              link_file="${link%%#*}"
+              if [ -n "$link_file" ] && [ ! -f "$dir/$link_file" ] && [ ! -f "$link_file" ]; then
+                echo "Potential broken link in $f: $link"
+              fi
+            done
+          done || true
+
+      - name: Validate README exists
+        run: |
+          if [ ! -f "README.md" ]; then
+            echo "ERROR: README.md is required"
+            exit 1
+          fi
+          echo "✓ README.md exists"

@@ -1,0 +1,53 @@
+# Dashboard provisioning configuration
+# Organizes dashboards into folders by service
+
+apiVersion: 1
+
+providers:
+  # MLflow dashboards
+  - name: "MLflow"
+    orgId: 1
+    folder: "MLflow"
+    folderUid: "mlflow-folder"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/mlflow
+
+  # Ray Compute dashboards
+  - name: "Ray Compute"
+    orgId: 1
+    folder: "Ray Compute"
+    folderUid: "ray-folder"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/ray
+
+  # System/Infrastructure dashboards
+  - name: "System"
+    orgId: 1
+    folder: "System"
+    folderUid: "system-folder"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/system
+
+  # Inference dashboards (when inference stack is running)
+  - name: "Inference"
+    orgId: 1
+    folder: "Inference"
+    folderUid: "inference-folder"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/inference

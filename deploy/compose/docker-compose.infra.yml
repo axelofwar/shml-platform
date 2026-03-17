@@ -1,0 +1,1707 @@
+# ML Platform - Shared Infrastructure
+# Contains: API Gateway, Shared Databases, Unified Monitoring, Auth
+# Can be started independently or via main deploy/compose/docker-compose.yml
+
+services:
+  # ==========================================================================
+  # API GATEWAY & ROUTING
+  # ==========================================================================
+  traefik:
+    image: traefik:v2.11
+    container_name: ${PLATFORM_PREFIX:-shml}-traefik
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.49'
+          memory: 385M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${PLATFORM_PREFIX:-shml}-platform
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.web.address=:80
+      # All traffic on port 80 comes from Tailscale Serve (TLS-terminated).
+      # Apply middleware so backends see X-Forwarded-Proto: https.
+      - --entrypoints.web.http.middlewares=tailscale-https-proto@file
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --log.level=DEBUG
+      - --log.format=common
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --accesslog.format=common
+      - --accesslog.fields.headers.defaultmode=keep
+      - --metrics.prometheus=true
+      - --ping=true
+    ports:
+      # LAN IP and localhost - Tailscale Funnel handles external HTTPS
+      # NOTE: Update LAN_IP binding or use 0.0.0.0 for all interfaces
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
+      - "${LAN_IP:-0.0.0.0}:80:80"
+      - "${LAN_IP:-0.0.0.0}:443:443"
+      # SECURITY: Bind Traefik API to localhost only (was 0.0.0.0)
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ../../logs/traefik:/var/log/traefik
+      # TLS certs from Tailscale - dynamically selected from PUBLIC_DOMAIN
+      - ../../secrets/${PUBLIC_DOMAIN}.crt:/etc/traefik/certs/public-domain.crt:ro
+      - ../../secrets/${PUBLIC_DOMAIN}.key:/etc/traefik/certs/public-domain.key:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
+      - "traefik.http.routers.traefik.entrypoints=web,websecure"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+      # SECURITY: Traefik dashboard requires admin role
+      - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+
+  # ==========================================================================
+  # DATA CATALOG (Iceberg version control)
+  # ==========================================================================
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.107.3
+    container_name: ${PLATFORM_PREFIX:-shml}-nessie
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      # Version store: PostgreSQL (production-grade)
+      NESSIE_VERSION_STORE_TYPE: JDBC2
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: nessie
+      QUARKUS_DATASOURCE_PASSWORD: ${SHARED_DB_PASSWORD}
+      # Cache: 60% of heap (default)
+      JAVA_OPTS: "-Xmx1g -Xms512m"
+    expose:
+      - "19120"  # REST API (Iceberg catalog)
+      - "9000"   # Management/metrics
+    networks:
+      - platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nessie.rule=PathPrefix(`/nessie`)"
+      - "traefik.http.routers.nessie.entrypoints=web,websecure"
+      - "traefik.http.services.nessie.loadbalancer.server.port=19120"
+      - "traefik.http.middlewares.nessie-strip.stripprefix.prefixes=/nessie"
+      - "traefik.http.routers.nessie.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,nessie-strip"
+      - "traefik.http.routers.nessie.priority=100"
+
+  # ==========================================================================
+  # SHARED DATA LAYER
+  # ==========================================================================
+  postgres:
+    build:
+      context: ../../postgres
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-postgres:15-pgvector
+    container_name: ${PLATFORM_PREFIX:-shml}-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 384M
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform
+    expose:
+      - "5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${PLATFORM_PREFIX:-shml}-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.34'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    command: redis-server --maxmemory 400mb --maxmemory-policy allkeys-lru --appendonly yes --save 60 1000
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - platform
+    expose:
+      - "6379"
+
+  # ==========================================================================
+  # FUSIONAUTH - OAuth/SSO (Primary Auth Provider)
+  # ==========================================================================
+  fusionauth:
+    image: fusionauth/fusionauth-app:1.52.0
+    container_name: fusionauth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/fusionauth
+      DATABASE_ROOT_USERNAME: postgres
+      DATABASE_ROOT_PASSWORD: ${SHARED_DB_PASSWORD}
+      DATABASE_USERNAME: fusionauth
+      DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
+      FUSIONAUTH_APP_MEMORY: 384M
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-production}
+      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN}/auth
+      SEARCH_TYPE: database
+    volumes:
+      - fusionauth-config:/usr/local/fusionauth/config
+    networks:
+      - platform
+    # SECURITY: Bind FusionAuth admin to localhost only (was 0.0.0.0)
+    ports:
+      - "127.0.0.1:9011:9011"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9011/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      # Headers middleware to fix X-Forwarded-Proto for HTTPS
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      # Main router for /auth paths
+      - "traefik.http.routers.fusionauth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.fusionauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth.priority=200"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.regex=^/auth(.*)"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.replacement=$$1"
+      - "traefik.http.routers.fusionauth.middlewares=fusionauth-headers,fusionauth-rewrite"
+      # Additional routers for FusionAuth paths (it generates absolute paths from root)
+      - "traefik.http.routers.fusionauth-admin.rule=PathPrefix(`/admin`)"
+      - "traefik.http.routers.fusionauth-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-admin.priority=150"
+      # SECURITY: FusionAuth admin requires platform admin role (was unprotected)
+      - "traefik.http.routers.fusionauth-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,fusionauth-headers"
+      - "traefik.http.routers.fusionauth-admin.service=fusionauth"
+      - "traefik.http.routers.fusionauth-css.rule=PathPrefix(`/css`)"
+      - "traefik.http.routers.fusionauth-css.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-css.priority=150"
+      - "traefik.http.routers.fusionauth-css.service=fusionauth"
+      - "traefik.http.routers.fusionauth-js.rule=PathPrefix(`/js`)"
+      - "traefik.http.routers.fusionauth-js.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-js.priority=150"
+      - "traefik.http.routers.fusionauth-js.service=fusionauth"
+      - "traefik.http.routers.fusionauth-images.rule=PathPrefix(`/images`)"
+      - "traefik.http.routers.fusionauth-images.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-images.priority=150"
+      - "traefik.http.routers.fusionauth-images.service=fusionauth"
+      - "traefik.http.routers.fusionauth-fonts.rule=PathPrefix(`/fonts`)"
+      - "traefik.http.routers.fusionauth-fonts.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-fonts.priority=150"
+      - "traefik.http.routers.fusionauth-fonts.service=fusionauth"
+      # FusionAuth API endpoints
+      - "traefik.http.routers.fusionauth-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.fusionauth-api.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-api.priority=100"
+      - "traefik.http.routers.fusionauth-api.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-api.service=fusionauth"
+      - "traefik.http.routers.fusionauth-oauth.rule=PathPrefix(`/oauth2`)"
+      - "traefik.http.routers.fusionauth-oauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-oauth.priority=150"
+      - "traefik.http.routers.fusionauth-oauth.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-oauth.service=fusionauth"
+      - "traefik.http.routers.fusionauth-well-known.rule=PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.fusionauth-well-known.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-well-known.priority=150"
+      - "traefik.http.routers.fusionauth-well-known.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-well-known.service=fusionauth"
+      # FusionAuth AJAX endpoints (admin UI uses these)
+      - "traefik.http.routers.fusionauth-ajax.rule=PathPrefix(`/ajax`)"
+      - "traefik.http.routers.fusionauth-ajax.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-ajax.priority=150"
+      - "traefik.http.routers.fusionauth-ajax.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-ajax.service=fusionauth"
+      # FusionAuth password/registration endpoints
+      - "traefik.http.routers.fusionauth-password.rule=PathPrefix(`/password`)"
+      - "traefik.http.routers.fusionauth-password.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-password.priority=150"
+      - "traefik.http.routers.fusionauth-password.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-password.service=fusionauth"
+      # FusionAuth user registration endpoints
+      - "traefik.http.routers.fusionauth-registration.rule=PathPrefix(`/registration`)"
+      - "traefik.http.routers.fusionauth-registration.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-registration.priority=150"
+      - "traefik.http.routers.fusionauth-registration.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-registration.service=fusionauth"
+      - "traefik.http.services.fusionauth.loadbalancer.server.port=9011"
+
+  # ==========================================================================
+  # OAUTH2-PROXY - Forward Authentication for Protected Services
+  # ==========================================================================
+  # OAuth2-Proxy acts as a gatekeeper for all protected services.
+  # It integrates with FusionAuth via OIDC and checks that users have valid roles.
+  #
+  # ROLE-BASED ACCESS CONTROL:
+  # - Users MUST be registered to the OAuth2-Proxy application in FusionAuth
+  # - Users MUST have at least one role: admin, developer, or viewer
+  # - If a user authenticates but has no role, they see an "access denied" message
+  # - Self-registration is disabled - admins must create users and assign roles
+  #
+  # To grant access to a new user:
+  # 1. Create user in FusionAuth (Users -> Add)
+  # 2. Add registration for OAuth2-Proxy application
+  # 3. Assign at least "viewer" role
+  # ==========================================================================
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: oauth2-proxy
+    restart: unless-stopped
+    extra_hosts:
+      # Resolve the public domain back to the local Traefik listener.
+      # Using the Tailscale address here can fail from containers when Funnel/TLS
+      # is involved, while the LAN listener serves the same certificate locally.
+      - "${PUBLIC_DOMAIN}:${LAN_IP:-host-gateway}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    # Use Redis session store - sessions are too large for cookie storage
+    # Note: There's a known race condition with parallel requests - the frontend
+    # should wait for auth completion before making API calls
+    command:
+      - "--session-store-type=redis"
+      - "--redis-connection-url=redis://shml-redis:6379"
+    environment:
+      # Provider configuration - FusionAuth as OIDC provider
+      OAUTH2_PROXY_PROVIDER: oidc
+
+      # CRITICAL: Trust X-Forwarded-* headers from Traefik reverse proxy
+      # This allows OAuth2-Proxy to use the original request host for cookie validation
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+
+      # Issuer URL - Use public URL to match FusionAuth's issuer claim in OIDC discovery
+      # FusionAuth's FUSIONAUTH_APP_URL is configured with this public URL
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN}
+      # Skip issuer validation to allow OAuth2-Proxy to work with FusionAuth through Traefik
+      # TODO (security hardening): Remove these once FusionAuth's Tailscale TLS cert is
+      # mounted as a trusted CA inside the oauth2-proxy container:
+      #   1. Copy secrets/${PUBLIC_DOMAIN}.crt into oauth2-proxy container at /etc/ssl/certs/
+      #   2. Set OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY=false
+      #   3. Set OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION=false
+      # NemoClaw JWKS validation also benefits from resolving this.
+      OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION: "true"
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
+      OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${FUSIONAUTH_PROXY_CLIENT_SECRET}
+
+      # Cookie configuration
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_COOKIE_NAME: "_shml_oauth2"
+      # CRITICAL: Cookie path must be "/" so cookie is sent for ALL requests
+      # Without this, cookie is scoped to /oauth2-proxy/ and won't be sent for /ray/*, /api/*, etc.
+      OAUTH2_PROXY_COOKIE_PATH: "/"
+
+      # ===================================================================
+      # ENHANCED SESSION MANAGEMENT (Added 2025-12-06)
+      # ===================================================================
+      # Session duration - 8 hours for good UX without compromising security
+      # Access token lifetime before auto-refresh
+      OAUTH2_PROXY_COOKIE_EXPIRE: "8h"
+
+      # Auto-refresh tokens at 50% lifetime (4 hours) for seamless UX
+      # Prevents sudden session expiration
+      OAUTH2_PROXY_COOKIE_REFRESH: "4h"
+
+      # Enable refresh token flow for transparent re-authentication
+      # User stays logged in for 30 days without re-entering credentials
+      OAUTH2_PROXY_REFRESH_TOKEN: "true"
+
+      # Session persistence via Redis (survives browser/container restarts)
+      # Benefits: sessions persist across OAuth2-Proxy restarts, centralized revocation
+      # Note: There's a race condition where parallel requests can delete sessions
+      # The frontend should wait for auth completion before making API calls
+      OAUTH2_PROXY_SESSION_STORE_TYPE: "redis"
+      OAUTH2_PROXY_REDIS_CONNECTION_URL: "redis://shml-redis:6379"
+
+      # Cookie security hardening
+      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"   # Prevent JavaScript access
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"    # CSRF protection
+
+      # Grace period for temporary network issues (5 minutes)
+      # Prevents hard logout if FusionAuth temporarily unreachable
+      OAUTH2_PROXY_GRACE_PERIOD: "5m"
+
+      # Skip authentication for static assets (performance optimization)
+      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt).*$"
+
+      # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
+      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN}/oauth2-proxy/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN}"
+      # Proxy prefix - tells oauth2-proxy to use /oauth2-proxy instead of default /oauth2
+      OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
+
+      # Upstream configuration (for auth verification only)
+      OAUTH2_PROXY_UPSTREAMS: "static://200"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+
+      # OIDC scope - request roles from FusionAuth
+      # FusionAuth includes 'roles' claim in id_token by default for registered users
+      OAUTH2_PROXY_SCOPE: "openid email profile"
+
+      # ROLE-BASED ACCESS CONTROL
+      # Use FusionAuth's native 'roles' claim (not groups)
+      # oauth2-proxy treats roles as groups internally
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "roles"
+
+      # JWT BEARER TOKEN SUPPORT (v7.0+)
+      # Enable API access via Authorization: Bearer <JWT> headers
+      # OAuth2-Proxy will validate JWT signature against FusionAuth JWKS and check 'aud' claim
+      # This allows programmatic API access (CI/CD, scripts) without browser cookies
+      # Valid JWTs bypass cookie authentication and flow through to role-auth middleware
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+
+      # NOTE: ALLOWED_GROUPS temporarily disabled for debugging
+      # FusionAuth requires JWT Populate lambda to include roles in id_token
+      # Re-enable after confirming lambda is configured:
+      # OAUTH2_PROXY_ALLOWED_GROUPS: "admin,developer,viewer"
+
+      # Access control - NO public registration, email domain not restricted
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "false"
+
+      # Headers to pass to upstream services
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER: "true"
+
+      # DEBUG LOGGING - Enable verbose output for troubleshooting
+      OAUTH2_PROXY_LOGGING_FILENAME: ""
+      OAUTH2_PROXY_LOGGING_MAX_SIZE: "100"
+      OAUTH2_PROXY_LOGGING_MAX_AGE: "7"
+      OAUTH2_PROXY_LOGGING_LOCAL_TIME: "true"
+      OAUTH2_PROXY_LOGGING_COMPRESS: "false"
+      OAUTH2_PROXY_STANDARD_LOGGING: "true"
+      OAUTH2_PROXY_REQUEST_LOGGING: "true"
+      OAUTH2_PROXY_AUTH_LOGGING: "true"
+      # Set log level to debug for detailed output
+      LOG_LEVEL: "debug"
+
+      # Session configuration (moved to enhanced session block above)
+      OAUTH2_PROXY_SKIP_AUTH_ROUTES: "^/auth/.*,^/health.*,^/api/status.*"
+
+      # Custom templates for better user experience
+      # Show clear message when user lacks required role
+      OAUTH2_PROXY_CUSTOM_SIGN_IN_LOGO: "-"
+      OAUTH2_PROXY_BANNER: "-"
+      OAUTH2_PROXY_FOOTER: "SFML Platform - Contact your administrator if you need access"
+
+      # Custom templates directory for error pages
+      OAUTH2_PROXY_CUSTOM_TEMPLATES_DIR: "/templates"
+    volumes:
+      - ../../oauth2-proxy/templates:/templates:ro
+    networks:
+      - platform
+    depends_on:
+      fusionauth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Note: oauth2-proxy is a scratch/distroless image with no shell tools
+    # Using disable healthcheck so Traefik uses container running status instead
+    healthcheck:
+      disable: true
+    labels:
+      - "traefik.enable=true"
+      # Headers middleware to ensure X-Forwarded-Proto is https (Tailscale Funnel terminates TLS)
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      # OAuth2-Proxy routes - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
+      # OAuth2-Proxy handles the /oauth2-proxy prefix internally via OAUTH2_PROXY_PROXY_PREFIX
+      - "traefik.http.routers.oauth2-proxy.rule=PathPrefix(`/oauth2-proxy`)"
+      - "traefik.http.routers.oauth2-proxy.entrypoints=web,websecure"
+      - "traefik.http.routers.oauth2-proxy.priority=300"
+      - "traefik.http.routers.oauth2-proxy.middlewares=oauth2-proxy-headers"
+      - "traefik.http.services.oauth2-proxy.loadbalancer.server.port=4180"
+
+      # Forward auth middleware - other services use this to verify auth
+      # OAuth2-Proxy serves auth endpoint at /oauth2-proxy/auth due to PROXY_PREFIX setting
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.address=http://oauth2-proxy:4180/oauth2-proxy/auth"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.trustForwardHeader=true"
+      # CRITICAL: Forward Cookie header so OAuth2-Proxy can validate session cookies on XHR requests
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authRequestHeaders=Cookie,Authorization,X-Forwarded-Proto,X-Forwarded-Host,X-Forwarded-Uri"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,Authorization"
+
+      # ========================================================================
+      # ROLE-BASED ACCESS MIDDLEWARES
+      # ========================================================================
+      # These middlewares check that authenticated users have the required role.
+      # Roles are passed in X-Auth-Request-Groups header from OAuth2-Proxy.
+      # FusionAuth provides roles via OIDC 'roles' claim.
+      #
+      # ACCESS TIERS:
+      # - viewer: Homer, Grafana (dashboards only)
+      # - developer: MLflow, Ray (requires admin registration)
+      # - elevated-developer: Agent tools, GitHub actions, model management
+      # - admin: All services + admin panels + host access
+      # ========================================================================
+
+      # Developer-level auth: requires developer, elevated-developer, or admin role
+      # Chain: oauth2-auth (authenticate) -> role-auth-developer (check role)
+      # Used for: MLflow, Ray, Chat API
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.address=http://role-auth:8080/auth/developer"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
+      # Elevated developer auth: requires elevated-developer or admin role
+      # Chain: oauth2-auth (authenticate) -> role-auth-elevated (check role)
+      # Used for: Agent tools, GitHub actions, model management
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.address=http://role-auth:8080/auth/elevated-developer"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
+      # Admin-level auth: requires admin role only
+      # Chain: oauth2-auth (authenticate) -> role-auth-admin (check role)
+      # Used for: Traefik dashboard, system administration, host access
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.address=http://role-auth:8080/auth/admin"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+
+      # Error handling middleware - redirects 401 (unauthenticated) to OAuth2 sign-in page
+      # 403 (authenticated but unauthorized) will be handled by role-auth's custom error page
+      # The {url} placeholder is replaced with the original request URL for redirect after login
+      - "traefik.http.middlewares.oauth2-errors.errors.status=401"
+      - "traefik.http.middlewares.oauth2-errors.errors.service=oauth2-proxy"
+      - "traefik.http.middlewares.oauth2-errors.errors.query=/oauth2-proxy/sign_in?rd={url}"
+
+  # ==========================================================================
+  # ROLE-BASED AUTH CHECKER
+  # ==========================================================================
+  # Lightweight nginx+lua service that validates user roles from X-Auth-Request-Groups header.
+  # Used as a second forwardAuth middleware AFTER oauth2-auth to enforce role requirements.
+  #
+  # Endpoints:
+  # - /auth/viewer: Requires viewer, developer, elevated-developer, or admin role
+  # - /auth/developer: Requires developer, elevated-developer, or admin role (for MLflow, Ray)
+  # - /auth/elevated-developer: Requires elevated-developer or admin (for agent tools, GitHub)
+  # - /auth/admin: Requires admin role only (for system administration)
+  #
+  # Usage in Traefik middleware chains:
+  # - Public services: oauth2-errors,oauth2-auth (any authenticated user)
+  # - Developer services: oauth2-errors,oauth2-auth,role-auth-developer
+  # - Elevated dev services: oauth2-errors,oauth2-auth,role-auth-elevated
+  # - Admin services: oauth2-errors,oauth2-auth,role-auth-admin
+  # ==========================================================================
+  role-auth:
+    build:
+      context: ../../scripts/role-auth
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-platform/role-auth:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-role-auth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================================================
+  # SYSTEM MONITORING
+  # ==========================================================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-node-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.42'
+          memory: 109M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/textfile'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - ../../monitoring/prometheus:/textfile:ro
+    networks:
+      - platform
+    expose:
+      - "9100"
+    pid: host
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: ${PLATFORM_PREFIX:-shml}-cadvisor
+    restart: unless-stopped
+    # Enable container labels for Grafana dashboards
+    # v0.47.2 has better Docker compatibility than latest
+    command:
+      - --store_container_labels=true
+      - --docker=unix:///var/run/docker.sock
+      - --housekeeping_interval=30s
+      - --max_housekeeping_interval=60s
+      - --event_storage_event_limit=default=0
+      - --event_storage_age_limit=default=0
+    deploy:
+      resources:
+        limits:
+          cpus: '0.47'
+          memory: 200M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - platform
+    expose:
+      - "8080"
+    privileged: true
+    devices:
+      - /dev/kmsg
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # UNIFIED MONITORING - Federated Prometheus + Grafana
+  # ==========================================================================
+  global-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: global-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ../../monitoring/global-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
+      - global-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.entrypoints=web,websecure"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+      # OAuth2 + Admin role required for Prometheus
+      # Only admins should access raw metrics and query interface
+      - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,prometheus-strip"
+      - "traefik.http.routers.prometheus.priority=100"
+
+  # Prometheus Pushgateway - for batch job metrics (training jobs)
+  pushgateway:
+    image: prom/pushgateway:v1.6.2
+    container_name: ${PLATFORM_PREFIX:-shml}-pushgateway
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    expose:
+      - "9091"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pushgateway.rule=PathPrefix(`/pushgateway`)"
+      - "traefik.http.routers.pushgateway.entrypoints=web,websecure"
+      - "traefik.http.services.pushgateway.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.pushgateway-strip.stripprefix.prefixes=/pushgateway"
+      - "traefik.http.routers.pushgateway.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,pushgateway-strip"
+      - "traefik.http.routers.pushgateway.priority=100"
+
+  # ML SLO Exporter - periodically queries MLflow/Ray for SLO metrics
+  ml-slo-exporter:
+    build: ../../monitoring/ml-slo-exporter
+    container_name: ${PLATFORM_PREFIX:-shml}-ml-slo-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    env_file:
+      - ../../config/mlflow.env
+    environment:
+      RAY_API_URI: http://ray-compute-api:8000
+      SCRAPE_INTERVAL: "60"
+      EXPORTER_PORT: "9092"
+    expose:
+      - "9092"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  unified-grafana:
+    image: grafana/grafana:10.2.2
+    container_name: unified-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN}/grafana"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+      # Anonymous access enabled for Ray Dashboard iframe embedding
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      # =====================================================================
+      # Ray Dashboard Embedding Configuration
+      # Required for Ray Dashboard to display Grafana visualizations
+      # See: https://docs.ray.io/en/latest/cluster/configure-manage-dashboard.html
+      # =====================================================================
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "none"
+      # X-Frame-Options must be disabled for iframe embedding
+      GF_SECURITY_X_FRAME_OPTIONS: ""
+      # =====================================================================
+      # AUTH PROXY MODE - OAuth2-Proxy Integration
+      # Grafana trusts OAuth2-Proxy headers instead of doing its own OAuth
+      # =====================================================================
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-Auth-Request-Email"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "email"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_SYNC_TTL: "60"
+      # Trust all internal Docker network IPs (172.16.0.0/12 covers all Docker bridge networks)
+      GF_AUTH_PROXY_WHITELIST: "172.16.0.0/12,192.168.0.0/16,127.0.0.1"
+      GF_AUTH_PROXY_HEADERS: "Name:X-Auth-Request-User Email:X-Auth-Request-Email"
+      # Map OAuth2-Proxy roles to Grafana roles
+      # X-Auth-Request-Groups contains comma-separated roles from FusionAuth
+      GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN: "false"
+    volumes:
+      - ../../monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../../monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../../monitoring/grafana/dashboards/:/var/lib/grafana/dashboards/:ro
+      - unified-grafana-data:/var/lib/grafana
+    secrets:
+      - grafana_password
+    expose:
+      - "3000"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=web,websecure"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.http.routers.grafana.priority=100"
+      # OAuth2 protection - requires authentication for Grafana
+      # oauth2-errors redirects 401/403 to login page, oauth2-auth checks authentication
+      - "traefik.http.routers.grafana.middlewares=oauth2-errors,oauth2-auth"
+
+  # ==========================================================================
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # SBA RESOURCE PORTAL - Gemini AI Document Q&A
+  # Voice-enabled document analysis with PDF/audio support
+  # --------------------------------------------------------------------------
+  sba-resource-portal:
+    build:
+      context: ../../sba-resource-portal
+      dockerfile: Dockerfile
+      args:
+        GEMINI_API_KEY: ${BNCCYBERSPACE_GOOGLE_API_KEY:-}
+    image: ${PLATFORM_PREFIX:-shml}-sba-resource-portal:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-sba-resource-portal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - platform
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # SBA Resource Portal - Developer role required
+      - "traefik.http.routers.sba-portal.rule=PathPrefix(`/sba-portal`)"
+      - "traefik.http.routers.sba-portal.entrypoints=web,websecure"
+      - "traefik.http.routers.sba-portal.priority=200"
+      - "traefik.http.services.sba-portal.loadbalancer.server.port=80"
+      # Strip prefix before forwarding to service
+      - "traefik.http.middlewares.sba-strip.stripprefix.prefixes=/sba-portal"
+      # OAuth + Developer role required
+      - "traefik.http.routers.sba-portal.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,sba-strip"
+
+  # --------------------------------------------------------------------------
+  # HOMER - Static Dashboard (Root Landing Page)
+  # Lightweight static homepage with service links
+  # https://github.com/bastienwirtz/homer
+  # --------------------------------------------------------------------------
+  homer:
+    image: b4bz/homer:latest
+    container_name: homer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    user: "1000:1000"
+    environment:
+      INIT_ASSETS: "0"  # Don't overwrite our config
+    volumes:
+      - ../../monitoring/homer:/www/assets:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      # Lowest priority - catch-all for root path
+      - "traefik.http.routers.homer.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.homer.entrypoints=web,websecure"
+      - "traefik.http.routers.homer.priority=1"
+      - "traefik.http.services.homer.loadbalancer.server.port=8080"
+      # OAuth protected - requires authentication like other services
+      - "traefik.http.routers.homer.middlewares=oauth2-errors,oauth2-auth"
+
+  # --------------------------------------------------------------------------
+  # POSTGRES BACKUP - Automated Docker-based Database Backups
+  # Runs scheduled backups with retention and notifications
+  # --------------------------------------------------------------------------
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:15-alpine
+    container_name: postgres-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-0.5}'
+          memory: ${BACKUP_MEM_LIMIT:-256M}
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api,gitlab
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
+      # Run every 6 hours (at 00:00, 06:00, 12:00, 18:00)
+      SCHEDULE: "${BACKUP_SCHEDULE:-0 */6 * * *}"
+      BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
+      BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
+      BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
+      HEALTHCHECK_PORT: 8080
+      # Webhook notification on backup completion (optional)
+      WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
+      WEBHOOK_EXTRA_ARGS: ""
+    volumes:
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    networks:
+      - platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # WEBHOOK DEPLOYER - GitHub Push-to-Deploy
+  # Receives GitHub webhooks and triggers deployments with notifications
+  # --------------------------------------------------------------------------
+  webhook-deployer:
+    image: almir/webhook:latest
+    container_name: webhook-deployer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${WEBHOOK_CPU_LIMIT:-0.25}'
+          memory: ${WEBHOOK_MEM_LIMIT:-128M}
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
+    environment:
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      FUSIONAUTH_WEBHOOK_SECRET: "${FUSIONAUTH_WEBHOOK_SECRET:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      DEPLOY_EMAIL: "${DEPLOY_NOTIFICATION_EMAIL:-}"
+    volumes:
+      - ../../scripts/webhook:/etc/webhook:ro
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
+      - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webhook.rule=PathPrefix(`/webhook`)"
+      - "traefik.http.routers.webhook.entrypoints=web,websecure"
+      - "traefik.http.services.webhook.loadbalancer.server.port=9000"
+      - "traefik.http.routers.webhook.priority=100"
+      # Webhooks should be publicly accessible (authenticated via secret)
+      # Do NOT add oauth2-auth middleware here
+
+  # --------------------------------------------------------------------------
+  # CODE-SERVER - VS Code in Browser for Remote Development
+  # Uses coder/code-server for better extension marketplace compatibility
+  # Admin-only OAuth protection via /ide path
+  # --------------------------------------------------------------------------
+  code-server:
+    image: codercom/code-server:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-code-server
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    command:
+      - --auth=none
+      - --bind-addr=0.0.0.0:8080
+      - --app-name=SHML Platform IDE
+      - --extensions-dir=/home/coder/.local/share/code-server/extensions
+      - /home/coder/project
+    deploy:
+      resources:
+        limits:
+          cpus: '${CODE_SERVER_CPU_LIMIT:-4.0}'
+          memory: ${CODE_SERVER_MEM_LIMIT:-4G}
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    environment:
+      DISABLE_TELEMETRY: "true"
+      DISABLE_UPDATE_CHECK: "true"
+      # Use Microsoft's extension gallery for Copilot access
+      EXTENSIONS_GALLERY: '{"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery","itemUrl":"https://marketplace.visualstudio.com/items","cacheUrl":"https://vscode.blob.core.windows.net/gallery/index","controlUrl":"","recommendationsUrl":""}'
+    volumes:
+      - ${PWD}:/home/coder/project:cached
+      - ${HOME}/.local/share/code-server-platform:/home/coder/.local/share/code-server
+      - ${HOME}/.config/code-server-platform:/home/coder/.config/code-server
+    networks:
+      - platform
+    working_dir: /home/coder/project
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.code-server.rule=PathPrefix(`/ide`)"
+      - "traefik.http.routers.code-server.priority=2147483647"
+      - "traefik.http.routers.code-server.entrypoints=web,websecure"
+      - "traefik.http.services.code-server.loadbalancer.server.port=8080"
+      # Strip /ide prefix - code-server serves from root
+      - "traefik.http.middlewares.code-server-strip.stripprefix.prefixes=/ide"
+      # SECURITY: Admin-only OAuth protection
+      - "traefik.http.routers.code-server.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,code-server-strip"
+
+  # ==========================================================================
+  # GITLAB CE (Self-Hosted Git Mirror + Container/Package Registry)
+  # ==========================================================================
+  # GitLab CE for git disaster recovery mirror, container registry, and PyPI
+  # packages. Uses shared PostgreSQL (database: gitlab) and Redis (db 8).
+  # Accessible at /gitlab via Traefik with developer-level OAuth protection.
+  # Container registry available at port 5050.
+  # --------------------------------------------------------------------------
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${GITLAB_CPU_LIMIT:-4.0}'
+          memory: ${GITLAB_MEM_LIMIT:-8G}
+        reservations:
+          cpus: '1.0'
+          memory: 3G
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # --- External URL & path ---
+        external_url 'https://${PUBLIC_DOMAIN}/gitlab'
+
+        # --- Disable bundled services (use shared infra) ---
+        postgresql['enable'] = false
+        redis['enable'] = false
+        nginx['enable'] = false
+        puma['worker_processes'] = 2
+
+        # --- GitLab Workhorse (handles HTTP) ---
+        gitlab_workhorse['listen_network'] = 'tcp'
+        gitlab_workhorse['listen_addr'] = '0.0.0.0:8929'
+
+        # --- Reverse proxy: trust Traefik's X-Forwarded-* headers ---
+        # Required so Rails sees HTTPS scheme and sets Secure session cookies.
+        # Without this, CSRF verification fails for OmniAuth/OIDC flows.
+        gitlab_rails['trusted_proxies'] = ['172.30.0.0/16']
+
+        # --- Security hardening defaults ---
+        gitlab_rails['gitlab_signup_enabled'] = false
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['gitlab_default_projects_features_builds'] = true
+        gitlab_rails['gitlab_default_projects_features_issues'] = true
+
+        # --- Shared PostgreSQL ---
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlab'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = '${SHARED_DB_PASSWORD}'
+        # Reduce connection pressure on shared PostgreSQL
+        gitlab_rails['db_pool'] = 6
+
+        # --- Shared Redis (database 8) ---
+        gitlab_rails['redis_host'] = 'redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_database'] = 8
+
+        # --- Container Registry ---
+        # Registry requires root path URL, not a subpath. Exposed on port 5050
+        # directly. Docker clients push to: <tailscale-ip>:5050
+        registry_external_url 'https://${PUBLIC_DOMAIN}:5050'
+        registry['enable'] = true
+        registry['registry_http_addr'] = '0.0.0.0:5050'
+
+        # --- Monitoring / Prometheus exporter ---
+        gitlab_rails['monitoring_whitelist'] = ['172.30.0.0/16', '127.0.0.0/8']
+        sidekiq['metrics_enabled'] = true
+        gitlab_exporter['enable'] = true
+        gitlab_exporter['listen_address'] = '0.0.0.0'
+        gitlab_exporter['listen_port'] = 9168
+
+        # --- Resource tuning ---
+        sidekiq['max_concurrency'] = 3
+        puma['worker_timeout'] = 60
+        prometheus_monitoring['enable'] = false
+
+        # --- FusionAuth OIDC ---
+        # Manual endpoint config because FusionAuth is behind /auth path prefix
+        # but its discovery document returns URLs without the prefix.
+        gitlab_rails['omniauth_enabled'] = true
+        gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+        gitlab_rails['omniauth_block_auto_created_users'] = false
+        gitlab_rails['omniauth_providers'] = [
+          {
+            name: 'openid_connect',
+            label: 'FusionAuth',
+            args: {
+              name: 'openid_connect',
+              scope: ['openid', 'profile', 'email'],
+              response_type: 'code',
+              issuer: 'https://${PUBLIC_DOMAIN}',
+              client_auth_method: 'basic',
+              discovery: false,
+              uid_field: 'sub',
+              pkce: true,
+              client_options: {
+                identifier: '${GITLAB_OIDC_CLIENT_ID}',
+                secret: '${GITLAB_OIDC_CLIENT_SECRET}',
+                redirect_uri: 'https://${PUBLIC_DOMAIN}/gitlab/users/auth/openid_connect/callback',
+                authorization_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/authorize',
+                token_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/token',
+                userinfo_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/userinfo',
+                jwks_uri: 'https://${PUBLIC_DOMAIN}/auth/.well-known/jwks.json',
+                end_session_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/logout'
+              }
+            }
+          }
+        ]
+
+        # --- Initial root password from secret ---
+        gitlab_rails['initial_root_password'] = File.read('/run/secrets/gitlab_root_password').strip
+      GITLAB_ROOT_PASSWORD_FILE: /run/secrets/gitlab_root_password
+    secrets:
+      - shared_db_password
+      - gitlab_root_password
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - platform
+    expose:
+      - "8929"
+      - "9168"
+    ports:
+      # Container registry - bind to localhost (accessible via Tailscale)
+      - "127.0.0.1:5050:5050"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      # --- GitLab OIDC callback (no OAuth2-Proxy) ---
+      # These paths must bypass OAuth2-Proxy so FusionAuth OIDC redirects can complete.
+      # Higher priority (200) ensures this matches before the catch-all gitlab router (100).
+      - "traefik.http.routers.gitlab-oidc.rule=PathPrefix(`/gitlab/users/auth/`)"
+      - "traefik.http.routers.gitlab-oidc.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab-oidc.priority=200"
+      - "traefik.http.routers.gitlab-oidc.service=gitlab"
+      # --- GitLab Web UI ---
+      - "traefik.http.routers.gitlab.rule=PathPrefix(`/gitlab`)"
+      - "traefik.http.routers.gitlab.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab.priority=100"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=8929"
+      # SECURITY: Developer-level OAuth protection (all paths except OIDC callbacks)
+      - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+      # --- Container Registry (port 5050, direct access via Tailscale) ---
+      # Registry is accessed directly at <tailscale-ip>:5050, not through Traefik
+      # Docker login: docker login ${PUBLIC_DOMAIN}:5050
+
+  # --------------------------------------------------------------------------
+  # GITLAB RUNNER - Persistent CI runner for mirror/security pipelines
+  # --------------------------------------------------------------------------
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -eu
+        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
+          if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
+            echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2
+            exit 1
+          fi
+          gitlab-runner register --non-interactive \
+            --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}" \
+            --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}" \
+            --executor "docker" \
+            --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}" \
+            --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}" \
+            --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}" \
+            --run-untagged="true" \
+            --locked="false"
+        fi
+        if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^  limit = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  name =/a\  limit = 1' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^  request_concurrency = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  limit =/a\  request_concurrency = 1' /etc/gitlab-runner/config.toml
+        fi
+        if grep -q '^concurrent = ' /etc/gitlab-runner/config.toml; then
+          sed -i 's/^concurrent = .*/concurrent = 1/' /etc/gitlab-runner/config.toml
+        else
+          sed -i '1i concurrent = 1' /etc/gitlab-runner/config.toml
+        fi
+        exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_RUNNER_TAGS:-docker,shml}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  # ==========================================================================
+  # CV DATASET CURATION (FiftyOne)
+  # ==========================================================================
+  fiftyone:
+    image: voxel51/fiftyone:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone
+    restart: unless-stopped
+    command: ["python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    environment:
+      FIFTYONE_DATABASE_URI: mongodb://fiftyone-mongodb:27017/fiftyone
+      FIFTYONE_DEFAULT_DATASET_DIR: /fiftyone/datasets
+      # SECURITY FIX: Server-side path prefix for proxy routing (fixes similarity panel)
+      FIFTYONE_SERVER_PATH_PREFIX: /fiftyone
+      FIFTYONE_PATH_PREFIX: /fiftyone
+    volumes:
+      - fiftyone-data:/fiftyone
+      - fiftyone-datasets:/fiftyone/datasets
+      # Dynamic entrypoint patches index.html for any Python version
+      - ../../config/fiftyone:/opt/fiftyone-entrypoint:ro
+      # Share ray data directory so FiftyOne can serve images stored by ray-head
+      - ../../ray_compute/data/ray:/tmp/ray:ro
+    expose:
+      - "5151"
+    networks:
+      - platform
+    depends_on:
+      fiftyone-mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fiftyone.rule=PathPrefix(`/fiftyone`)"
+      - "traefik.http.routers.fiftyone.entrypoints=web,websecure"
+      - "traefik.http.services.fiftyone.loadbalancer.server.port=5151"
+      - "traefik.http.middlewares.fiftyone-strip.stripprefix.prefixes=/fiftyone"
+      - "traefik.http.routers.fiftyone.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,fiftyone-strip"
+      - "traefik.http.routers.fiftyone.priority=100"
+
+  # FiftyOne embedded MongoDB (lightweight, only for FiftyOne metadata)
+  fiftyone-mongodb:
+    image: mongo:7-jammy
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    volumes:
+      - fiftyone-mongodb-data:/data/db
+    expose:
+      - "27017"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # ALERTMANAGER - Alert routing and deduplication
+  # Routes Prometheus alerts to Telegram via severity-based routing
+  # --------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address='
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - ../../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../../monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    expose:
+      - "9093"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alertmanager.rule=PathPrefix(`/alertmanager`)"
+      - "traefik.http.routers.alertmanager.entrypoints=web,websecure"
+      - "traefik.http.services.alertmanager.loadbalancer.server.port=9093"
+      - "traefik.http.routers.alertmanager.middlewares=oauth2-auth@docker"
+
+  # --------------------------------------------------------------------------
+  # ALERTMANAGER-TELEGRAM - Telegram notification bridge
+  # Receives Alertmanager webhooks and forwards to Telegram chat
+  # --------------------------------------------------------------------------
+  alertmanager-telegram:
+    image: metalmatze/alertmanager-bot:0.4.3
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram
+    restart: unless-stopped
+    command:
+      - --alertmanager.url=http://alertmanager:9093
+      - --log.level=info
+      - --store=bolt
+      - --bolt.path=/data/bot.db
+      - --listen.addr=0.0.0.0:9087
+      - --template.paths=/templates/telegram.tmpl
+    environment:
+      TELEGRAM_ADMIN: "${TELEGRAM_CHAT_ID:-0}"
+      TELEGRAM_TOKEN: "${TELEGRAM_BOT_TOKEN:-placeholder}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - alertmanager-telegram-data:/data
+      - ../../monitoring/alertmanager/templates:/templates:ro
+    expose:
+      - "9087"
+    networks:
+      - platform
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9087 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # --------------------------------------------------------------------------
+  # FEATURE-SCHEDULER - Periodic feature materialization via Ray
+  # Submits scheduled_materialize.py to Ray cluster every hour
+  # --------------------------------------------------------------------------
+  feature-scheduler:
+    image: curlimages/curl:8.5.0
+    container_name: ${PLATFORM_PREFIX:-shml}-feature-scheduler
+    restart: unless-stopped
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/scripts/monitoring/feature_scheduler.sh"]
+    environment:
+      RAY_HEAD_ADDRESS: "ray-head:8265"
+      MATERIALIZE_INTERVAL: "${MATERIALIZE_INTERVAL:-3600}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ../../scripts:/scripts:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/feature-scheduler/scheduler.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # SELF-HEALING WATCHDOG - Container health monitoring & auto-restart
+  # Monitors all critical containers, restarts unhealthy ones, reports to Telegram
+  # --------------------------------------------------------------------------
+  watchdog:
+    image: docker:cli
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq procps coreutils util-linux >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
+    environment:
+      CHECK_INTERVAL: "${WATCHDOG_INTERVAL:-60}"
+      MAX_RESTARTS: "${WATCHDOG_MAX_RESTARTS:-3}"
+      COOLDOWN_SECONDS: "900"
+      PLATFORM_PREFIX: "${PLATFORM_PREFIX:-shml}"
+      PROMETHEUS_URL: "http://global-prometheus:9090"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      GITLAB_API_TOKEN: "${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}"
+      EXCLUDED_CONTAINERS: "${WATCHDOG_EXCLUDED:-}"
+      # GPU isolation - protect training on GPU 0, watchdog uses GPU 1 (RTX 2070)
+      TRAINING_GPU: "0"
+      WATCHDOG_GPU: "1"
+      DISPLAY_GPU: "${DISPLAY_GPU:-1}"
+      # Memory leak detection threshold (MB growth per hour)
+      MEMORY_LEAK_THRESHOLD: "100"
+      HOST_MEMORY_HIGH_WATERMARK_PCT: "${HOST_MEMORY_HIGH_WATERMARK_PCT:-92}"
+      HOST_MEMORY_SOFT_WATERMARK_PCT: "${HOST_MEMORY_SOFT_WATERMARK_PCT:-85}"
+      HOST_SWAP_HIGH_WATERMARK_PCT: "${HOST_SWAP_HIGH_WATERMARK_PCT:-25}"
+      DISPLAY_GPU_UTIL_WATERMARK_PCT: "${DISPLAY_GPU_UTIL_WATERMARK_PCT:-60}"
+      DISPLAY_GPU_MEMORY_WATERMARK_MIB: "${DISPLAY_GPU_MEMORY_WATERMARK_MIB:-2048}"
+      LOW_PRIORITY_CONTAINERS: "${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,pii-blur-api,shml-fiftyone,shml-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
+      # Agent service URL for autonomous cross-service resolution
+      AGENT_SERVICE_URL: "http://agent-service:8000"
+      # GitLab application-level health probe (beyond container health)
+      GITLAB_INTERNAL_HEALTH_URL: "http://gitlab:8929/gitlab/users/sign_in"
+      # Max OOM restarts before escalating to agent
+      OOM_RESTART_BUDGET: "5"
+      # Pushgateway for Prometheus metrics export
+      PUSHGATEWAY_URL: "http://${PLATFORM_PREFIX:-shml}-pushgateway:9091"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/watchdog/watchdog.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # WATCHDOG ADMIN — Operations Control Center
+  # Web UI + API for watchdog monitoring, start/stop controls, audit & log viewer
+  # --------------------------------------------------------------------------
+  watchdog-admin:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog-admin
+    restart: unless-stopped
+    entrypoint: ["python3", "/scripts/self-healing/watchdog_admin.py"]
+    environment:
+      ADMIN_PORT: "8099"
+      BASE_PATH: "/watchdog"
+      WATCHDOG_STATE_DIR: "/var/lib/watchdog"
+      WATCHDOG_LOG_DIR: "/var/log/watchdog"
+      GRAFANA_URL: "/grafana/"
+      GRAFANA_EXPLORE_LOGS_URL: "/grafana/explore?orgId=1&left=%7B%22datasource%22:%22loki%22%7D"
+      GRAFANA_DASHBOARD_URL: "/grafana/d/watchdog-overview"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ../../scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog:ro
+    networks:
+      - platform
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.watchdog-admin.rule=PathPrefix(`/watchdog`)"
+      - "traefik.http.routers.watchdog-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.watchdog-admin.priority=100"
+      - "traefik.http.routers.watchdog-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+      - "traefik.http.services.watchdog-admin.loadbalancer.server.port=8099"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8099/watchdog/health\")' 2>/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # NIGHTLY TEST RUNNER - Automated test suite execution with reporting
+  # Runs full pytest suite daily and reports results via Telegram
+  # --------------------------------------------------------------------------
+  nightly-test-runner:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-nightly-test-runner
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/workspace/scripts/monitoring/nightly_test_runner.sh"]
+    working_dir: /workspace
+    environment:
+      TEST_HOUR: "${TEST_HOUR:-3}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TEST_DIR: "/workspace/tests"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - .:/workspace:ro
+      - test-runner-data:/var/log/test-runner
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/test-runner/runner.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+secrets:
+  shared_db_password:
+    file: ../../secrets/shared_db_password.txt
+  grafana_password:
+    file: ../../secrets/grafana_password.txt
+  fusionauth_db_password:
+    file: ../../secrets/fusionauth_db_password.txt
+  oauth2_proxy_cookie_secret:
+    file: ../../secrets/oauth2_proxy_cookie_secret.txt
+  gitlab_root_password:
+    file: ../../secrets/gitlab_root_password.txt
+
+volumes:
+  # Shared Data
+  redis-data:
+    name: ${PLATFORM_PREFIX:-shml}-redis-data
+  postgres-data:
+    name: ${PLATFORM_PREFIX:-shml}-postgres-data
+
+  # Monitoring
+  global-prometheus-data:
+    name: ${PLATFORM_PREFIX:-shml}-global-prometheus-data
+  unified-grafana-data:
+    name: ${PLATFORM_PREFIX:-shml}-unified-grafana-data
+
+  # FusionAuth
+  fusionauth-config:
+    name: ${PLATFORM_PREFIX:-shml}-fusionauth-config
+
+  # Code Server
+  code-server-data:
+    name: ${PLATFORM_PREFIX:-shml}-code-server-data
+  code-server-config:
+    name: ${PLATFORM_PREFIX:-shml}-code-server-config
+
+  # FiftyOne (CV dataset curation)
+  fiftyone-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-data
+  fiftyone-datasets:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-datasets
+  fiftyone-mongodb-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb-data
+
+  # Alertmanager
+  alertmanager-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-data
+  alertmanager-telegram-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram-data
+
+  # Self-healing watchdog
+  watchdog-data:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-data
+  watchdog-logs:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-logs
+
+  # GitLab CE
+  gitlab-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-config
+  gitlab-logs:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
+  gitlab-data:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-data
+  gitlab-runner-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-config
+
+  # Nightly test runner
+  test-runner-data:
+    name: ${PLATFORM_PREFIX:-shml}-test-runner-data
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

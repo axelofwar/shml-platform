@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
+site_name: SHML Platform
+site_url: https://shml-platform.github.io/docs
+site_description: Self-Hosted ML Platform — GPU-optimized training, experiment tracking, model registry
+repo_url: https://github.com/yourusername/shml-platform
+repo_name: shml-platform
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [sdk]
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 3
+
+exclude_docs: |
+  internal/
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourusername/shml-platform
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - SDK:
+    - Overview: sdk/index.md
+    - Client: sdk/client.md
+    - Configuration: sdk/config.md
+    - Training Profiles: sdk/training-profiles.md
+    - Training Runner: sdk/training-runner.md
+    - Integrations:
+      - MLflow: sdk/integrations/mlflow.md
+      - Nessie: sdk/integrations/nessie.md
+      - FiftyOne: sdk/integrations/fiftyone.md
+      - Feature Store: sdk/integrations/feature-store.md
+      - Prometheus: sdk/integrations/prometheus.md
+  - CLI:
+    - Overview: cli/index.md
+    - Training: cli/train.md
+    - Jobs: cli/jobs.md
+    - GPU: cli/gpu.md
+    - Config: cli/config-commands.md
+    - Auth: cli/auth.md
+  - API Reference:
+    - Overview: api/index.md
+    - Jobs API: api/jobs.md
+    - GPU API: api/gpu.md
+    - Admin API: api/admin.md
+  - Guides:
+    - Training Walkthrough: guides/training-walkthrough.md
+    - SOTA Face Detection: guides/SOTA_FACE_DETECTION_TRAINING.md
+    - Data Management: guides/data-management.md
+    - Remote Access: guides/remote-access.md
+    - Monitoring: guides/monitoring.md
+    - MLflow: guides/mlflow.md
+    - GPU Management: guides/gpu-management.md
+    - Agentic Development: guides/AGENTIC_DEVELOPMENT_GUIDE.md
+    - Troubleshooting: guides/troubleshooting.md
+  - Architecture:
+    - Overview: architecture/index.md
+    - Services: architecture/services.md
+    - Security: architecture/security.md
+    - Data Flow: architecture/data-flow.md
+    - Docker Compose: architecture/docker-compose.md
+  - Reference:
+    - Environment Variables: reference/environment-variables.md
+    - Hyperparameters: reference/training-hyperparameters.md
+    - Docker Volumes: reference/docker-volumes.md
+    - Changelog: reference/changelog.md
+  - Admin:
+    - Overview: admin/index.md
+    - User Management: admin/user-management.md
+    - Backup & Restore: admin/backup-restore.md
+    - Platform Operations: admin/platform-operations.md
+    - Secrets Management: admin/secrets-management.md
+    - Infisical Path A: admin/infisical-path-a.md
+    - Repository Publication Policy: admin/repository-publication-policy.md
+    - GitLab Bootstrap & Mirror Setup: admin/gitlab-bootstrap-mirroring.md
+  - Contributing: contributing.md

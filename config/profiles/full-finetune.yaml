@@ -1,0 +1,53 @@
+# ============================================================================
+# Full Fine-Tune Profile
+# ============================================================================
+# Extended training for maximum performance. 50 epochs with aggressive
+# augmentation and patience-based early stopping.
+# Expected duration: ~12 hours on RTX 3090 Ti.
+#
+# Usage:
+#   shml train --profile full-finetune
+#   shml train --profile full-finetune --batch-size 2
+# ============================================================================
+
+model: yolo11x.pt
+data_yaml: wider_face_yolo/data.yaml
+epochs: 50
+batch_size: 4
+imgsz: 1280
+patience: 15
+optimizer: AdamW
+lr0: 0.0003
+lrf: 0.005
+weight_decay: 0.001
+warmup_epochs: 3.0
+
+# Integrations — full stack
+integrations:
+  - mlflow
+  - nessie
+  - fiftyone
+  - features
+  - prometheus
+
+mlflow_experiment: full-finetune
+nessie_branch_prefix: finetune
+
+# Augmentation — aggressive
+augmentation:
+  hsv_h: 0.02
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 10.0
+  translate: 0.15
+  scale: 0.5
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.15
+  copy_paste: 0.1
+  erasing: 0.3
+  crop_fraction: 0.8
+
+# Resources
+gpu_yield: true

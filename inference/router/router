@@ -1,0 +1,27 @@
+#!/bin/bash
+# Router CLI - Hybrid Cloud/Local Inference
+# Uses Gemini for reasoning, Nemotron for execution
+
+# Resolve symlinks to get the real script location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load .env from project root
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+
+    # Map project-specific keys to standard names
+    export GOOGLE_API_KEY="${GOOGLE_API_KEY:-$AXELOFWAR_GOOGLE_API_KEY}"
+fi
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+python3 -m inference.router.cli "$@"

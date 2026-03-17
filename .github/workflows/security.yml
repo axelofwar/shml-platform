@@ -1,0 +1,201 @@
+# Security Scanning Workflow
+# Scans for secrets, vulnerabilities, and security issues
+
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Mondays at 00:00 UTC
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  # Scan for hardcoded secrets
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better detection
+
+      - name: Install Gitleaks
+        run: |
+          wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf gitleaks_8.24.3_linux_x64.tar.gz
+          chmod +x gitleaks
+
+      - name: Run Gitleaks (scan current branch)
+        run: |
+          # Scan commits between base and head.
+          # If base SHA is unavailable (force-push/rebased branch), fall back to
+          # merge-base with origin/main. As a last resort, scan working tree only
+          # to avoid failing on unrelated historical commits.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            if git rev-parse "$BASE_SHA" >/dev/null 2>&1; then
+              echo "Scanning range: $BASE_SHA..${{ github.sha }}"
+              ./gitleaks detect --source . --redact -v --log-opts="$BASE_SHA..${{ github.sha }}"
+            else
+              echo "Base SHA not found (likely force-pushed), computing merge-base with origin/main..."
+              git fetch --no-tags --depth=200 origin main
+              MERGE_BASE="$(git merge-base HEAD origin/main || true)"
+              if [ -n "$MERGE_BASE" ]; then
+                echo "Scanning merge-base range: $MERGE_BASE..${{ github.sha }}"
+                ./gitleaks detect --source . --redact -v --log-opts="$MERGE_BASE..${{ github.sha }}"
+              else
+                echo "Merge-base unavailable, scanning working tree only (--no-git)."
+                ./gitleaks detect --source . --redact -v --no-git
+              fi
+            fi
+          else
+            echo "Non-PR event: scanning working tree only (--no-git)."
+            ./gitleaks detect --source . --redact -v --no-git
+          fi
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --only-verified
+
+  # Scan Python dependencies for vulnerabilities
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Find and audit requirements files
+        run: |
+          set +e  # Don't exit on first failure - audit all files
+          FAILED_FILES=""
+          while IFS= read -r req; do
+            echo "Auditing: $req"
+            if ! pip-audit -r "$req" --ignore-vuln PYSEC-2022-43012; then
+              echo "::warning::Vulnerabilities found in $req"
+              FAILED_FILES="$FAILED_FILES $req"
+            fi
+          done < <(find . -name "requirements*.txt" -type f)
+          if [ -n "$FAILED_FILES" ]; then
+            echo ""
+            echo "::warning::Dependency vulnerabilities found in:$FAILED_FILES"
+            echo "These are tracked for remediation in future PRs"
+          fi
+
+  # Scan Dockerfiles and images
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true  # Don't fail if CodeQL upload has permission issues
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Validate configuration files
+  config-validation:
+    name: Configuration Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for .env files (should not exist)
+        run: |
+          if find . -name ".env" -not -name ".env.example" -type f | grep -q .; then
+            echo "ERROR: .env files should not be committed!"
+            find . -name ".env" -not -name ".env.example" -type f
+            exit 1
+          fi
+          echo "✓ No .env files found in repository"
+
+      - name: Check secrets directory is empty in repo
+        run: |
+          if [ -d "secrets" ]; then
+            if find secrets -type f -name "*.txt" | grep -q .; then
+              echo "ERROR: Secret files should not be committed!"
+              find secrets -type f -name "*.txt"
+              exit 1
+            fi
+          fi
+          echo "✓ No secret files found in repository"
+
+      - name: Scan for common secret patterns
+        run: |
+          # Search for common hardcoded credential patterns
+          if grep -rn --include="*.py" --include="*.sh" --include="*.yml" --include="*.yaml" \
+            -E "(password|secret|api_key|token|credential)\s*=\s*['\"][^'\"]+['\"]" \
+            --exclude-dir=".git" --exclude-dir="archived" --exclude-dir=".venv" . | \
+            grep -v "example" | grep -v "placeholder" | grep -v "getenv" | grep -v "\.example" | \
+            grep -v "your.password" | grep -v "<.*>" | head -20; then
+            echo ""
+            echo "WARNING: Potential hardcoded secrets found (review above)"
+            echo "These may be false positives - please verify"
+          else
+            echo "✓ No obvious hardcoded secrets detected"
+          fi
+
+  # YAML/Docker Compose linting
+  lint:
+    name: Configuration Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint YAML files
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_data: |
+            extends: relaxed
+            rules:
+              line-length: disable
+              truthy: disable
+              document-start: disable
+              comments: disable
+              trailing-spaces: disable
+          file_or_dir: |
+            docker-compose*.yml
+            .github/workflows/*.yml
+
+      - name: Validate Docker Compose syntax
+        run: |
+          # Use docker compose v2 (built into runner)
+          for f in docker-compose*.yml; do
+            echo "Checking syntax: $f"
+            docker compose -f "$f" config --quiet 2>/dev/null || echo "Note: $f may have external dependencies"
+          done

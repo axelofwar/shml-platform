@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  sam-audio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sam-audio
+    restart: unless-stopped
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8017:8000"  # REMOVED: was bypassing auth
+    environment:
+      - SAM_AUDIO_DEVICE=auto
+      - SAM_AUDIO_USE_FP16=true
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=5
+    volumes:
+      - sam-audio-outputs:/app/outputs
+      - /tmp/sam-audio:/tmp/sam-audio
+    networks:
+      - shml-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sam-audio.rule=PathPrefix(`/api/audio/separate`)"
+      - "traefik.http.routers.sam-audio.priority=2147483647"
+      - "traefik.http.services.sam-audio.loadbalancer.server.port=8000"
+      # SECURITY: Require OAuth authentication (was completely unprotected)
+      - "traefik.http.routers.sam-audio.middlewares=oauth2-errors,oauth2-auth,strip-sam-audio-prefix"
+      - "traefik.http.middlewares.strip-sam-audio-prefix.stripprefix.prefixes=/api/audio/separate"
+
+volumes:
+  sam-audio-outputs:
+
+networks:
+  shml-network:
+    external: true

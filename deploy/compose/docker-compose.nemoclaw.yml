@@ -1,0 +1,157 @@
+# NemoClaw — NVIDIA Agentic OS Layer
+#
+# Integrates OpenShell runtime + OpenClaw agent into the SHML platform stack.
+# All traffic enters through Traefik (oauth2-auth + role-auth-elevated-developer).
+# The OpenShell gateway is NEVER exposed directly; all access is proxied.
+#
+# Inference: points at existing nemotron vLLM container (RTX 3090 Ti, GPU 0)
+# Vision:    points at existing qwen3-vl-api container (RTX 2070, GPU 1)
+#
+# Start: docker compose -f deploy/compose/docker-compose.nemoclaw.yml up -d
+# Requires: shml-platform network (docker-compose.networks.yml)
+
+services:
+  # ============================================================================
+  # OpenShell Gateway
+  # Core policy enforcement engine: network egress, filesystem (Landlock),
+  # process (seccomp), and inference routing — all hot-reloadable.
+  # ============================================================================
+  openshell-gateway:
+    build:
+      context: ../../  # project root — uses NemoClaw repo Dockerfile when cloned there
+      dockerfile: nemoclaw/Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-openshell-gateway:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-openshell-gateway
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    environment:
+      # ---- Inference routing ----
+      # Primary: local vLLM (nemotron-3-nano-30b, RTX 3090 Ti)
+      OPENSHELL_INFERENCE_PROVIDER: vllm-local
+      OPENSHELL_INFERENCE_ENDPOINT: http://nemotron:8000/v1
+      OPENSHELL_DEFAULT_MODEL: ${NEMOTRON_MODEL:-nvidia/nemotron-3-nano-30b-a3b}
+      # Cloud escalation endpoint — NemoClaw routes through this when nimcloud profile selected
+      OPENSHELL_CLOUD_ENDPOINT: ${OPENSHELL_CLOUD_ENDPOINT:-https://integrate.api.nvidia.com/v1}
+      OPENSHELL_CLOUD_MODEL: ${OPENSHELL_CLOUD_MODEL:-nvidia/nemotron-3-super-120b-a12b}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      # ---- Gateway settings ----
+      OPENSHELL_GATEWAY_PORT: "9090"
+      OPENSHELL_METRICS_PORT: "9091"
+      OPENSHELL_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # ---- Blueprint ----
+      OPENSHELL_BLUEPRINT_PATH: /blueprints
+      OPENSHELL_DEFAULT_BLUEPRINT: shml-base
+      # ---- Policy ----
+      # Internal Docker network CIDR — agents can reach platform services
+      OPENSHELL_ALLOWLIST_CIDR: ${PLATFORM_CIDR:-172.20.0.0/16}
+      # External allowlist (comma-separated hostnames)
+      OPENSHELL_ALLOWLIST_HOSTS: "api.brave.com,integrate.api.nvidia.com"
+      # ---- Auth integration ----
+      # Validate JWT via FusionAuth JWKS — for API key auth on /api/nemoclaw
+      OPENSHELL_JWKS_URI: http://fusionauth:9011/.well-known/jwks.json
+      OPENSHELL_JWT_ISSUER: ${FUSIONAUTH_ISSUER:-http://fusionauth:9011}
+      # ---- Platform integrations ----
+      MLFLOW_URI: http://mlflow-nginx:80
+      RAY_API_URI: http://ray-compute-api:8000
+      MCP_PLATFORM_URI: http://shml-agent-service:8000/api/agent/mcp
+    volumes:
+      - ../../nemoclaw-blueprint:/blueprints:ro
+      - openshell-data:/var/openshell
+      # Runtime socket — used by nemoclaw CLI on host
+      - /var/run/openshell:/var/run/openshell
+    expose:
+      - "9090"   # Gateway / MCP proxy
+      - "9091"   # Prometheus metrics
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      # ---- Management API (elevated-developer+ only) ----
+      - "traefik.http.routers.nemoclaw.rule=PathPrefix(`/nemoclaw`)"
+      - "traefik.http.routers.nemoclaw.entrypoints=web,websecure"
+      - "traefik.http.routers.nemoclaw.service=openshell-gateway"
+      - "traefik.http.services.openshell-gateway.loadbalancer.server.port=9090"
+      - "traefik.http.routers.nemoclaw.middlewares=oauth2-errors,oauth2-auth,role-auth-elevated"
+      # ---- Internal MCP route (agent-service proxies, developer+ only) ----
+      - "traefik.http.routers.nemoclaw-mcp.rule=PathPrefix(`/api/nemoclaw`)"
+      - "traefik.http.routers.nemoclaw-mcp.entrypoints=web,websecure"
+      - "traefik.http.routers.nemoclaw-mcp.service=openshell-gateway"
+      - "traefik.http.routers.nemoclaw-mcp.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+
+  # ============================================================================
+  # NemoClaw Sandbox Factory
+  # Lightweight sidecar that wraps nemoclaw CLI operations via REST.
+  # Agent-service calls this to create/destroy/query sandboxes per-user-role.
+  # ============================================================================
+  nemoclaw-sandbox-factory:
+    build:
+      context: ../../nemoclaw-blueprint
+      dockerfile: Dockerfile.factory
+    image: ${PLATFORM_PREFIX:-shml}-nemoclaw-factory:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-nemoclaw-factory
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    environment:
+      FACTORY_PORT: "9095"
+      OPENSHELL_GATEWAY_URL: http://openshell-gateway:9090
+      BLUEPRINTS_PATH: /blueprints
+      # JWT validation (reuse FusionAuth JWKS)
+      JWKS_URI: http://fusionauth:9011/.well-known/jwks.json
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: inference
+      POSTGRES_USER: inference
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - ../../nemoclaw-blueprint:/blueprints:ro
+      - /var/run/openshell:/var/run/openshell
+    secrets:
+      - postgres_password
+    expose:
+      - "9095"
+    networks:
+      - platform
+    depends_on:
+      openshell-gateway:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=false"  # Internal only — accessed via agent-service
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  openshell-data:
+
+# ============================================================================
+# Secrets
+# ============================================================================
+secrets:
+  postgres_password:
+    file: ../../secrets/postgres_password
+
+# ============================================================================
+# Networks (external — defined in docker-compose.networks.yml)
+# ============================================================================
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

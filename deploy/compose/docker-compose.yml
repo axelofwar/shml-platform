@@ -1,0 +1,29 @@
+# ML Platform - Main Compose File
+# ================================
+# WARNING: Do NOT use 'docker compose up' directly!
+# Use the start script instead: ./start_all_safe.sh
+#
+# The 'include:' directive causes network definition conflicts when
+# included files have their own network definitions (even with external: true).
+#
+# This file now only documents the compose files available.
+# Use ./start_all_safe.sh for all service management.
+#
+# Available compose files:
+#   deploy/compose/docker-compose.infra.yml           - Infrastructure (Traefik, Postgres, Redis, Auth)
+#   deploy/compose/docker-compose.secrets.yml         - Infisical secrets manager
+#   mlflow-server/docker-compose.yml   - MLflow tracking server
+#   ray_compute/docker-compose.yml     - Ray compute cluster
+#   inference/coding-model/docker-compose.yml - Coding models (30B + 3B)
+#   inference/chat-api/docker-compose.yml     - Chat API
+#   chat-ui-v2/docker-compose.yml      - Chat UI
+#
+# Usage:
+#   ./start_all_safe.sh                # Full restart (recommended)
+#   ./start_all_safe.sh start          # Start all services
+#   ./start_all_safe.sh start inference # Start only inference
+#   ./start_all_safe.sh stop           # Stop all services
+#   ./start_all_safe.sh status         # Show status
+
+# Minimal services definition to prevent 'no services defined' error
+services: {}

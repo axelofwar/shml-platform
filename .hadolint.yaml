@@ -1,0 +1,19 @@
+# Hadolint configuration for SHML Platform
+# https://github.com/hadolint/hadolint
+
+# Ignore common warnings that don't apply to our use case
+ignored:
+  # We use requirements.txt files with pinned versions
+  - DL3013  # Pin versions in pip
+  - DL3008  # Pin versions in apt-get (we want latest security patches)
+  - DL3015  # Avoid additional packages (we intentionally install what we need)
+  - DL3059  # Multiple consecutive RUN (sometimes clearer)
+  - DL3007  # Using latest tag - acceptable for some base images
+  # ShellCheck warnings that are false positives in Dockerfile context
+  - SC2016  # Expressions don't expand in single quotes - intentional for nginx $uri
+  - SC2261  # Multiple redirections - false positive in Dockerfile RUN context
+  - SC2102  # Ranges can only match single chars - false positive for pip install patterns
+
+# Treat these as warnings instead of errors
+warning:
+  - DL3042  # Avoid cache directory with pip

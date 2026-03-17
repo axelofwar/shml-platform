@@ -1,0 +1,106 @@
+# Chat API Service - OpenAI-compatible API with auth, rate limiting, and history
+# ==============================================================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start inference
+# Stop:   ./start_all_safe.sh stop inference
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks created by deploy/compose/docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
+#
+# Provides:
+# - /v1/chat/completions - OpenAI-compatible endpoint for Cursor/editors
+# - /api-keys - API key management for non-OAuth access
+# - /instructions - Persistent user instructions
+# - /conversations - History sync across devices
+# - /metrics - Aggregate platform metrics
+
+services:
+  chat-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-chat-api:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-chat-api
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      # Backend model services
+      - PRIMARY_MODEL_URL=http://coding-model-primary:8000
+      - FALLBACK_MODEL_URL=http://coding-model-fallback:8000
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=3
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=chat_api
+      - POSTGRES_USER=chat_api
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      # Rate limiting by role
+      - RATE_LIMIT_DEVELOPER=100
+      - RATE_LIMIT_VIEWER=20
+      - RATE_LIMIT_ADMIN=0
+      - RATE_LIMIT_WINDOW_SECONDS=60
+      # Model selection
+      - MODEL_AUTO_THRESHOLD_TOKENS=1000
+      # Logging
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # Note: coding-model-primary and coding-model-fallback are started separately
+    # from inference/coding-model/docker-compose.yml before this service
+    labels:
+      - "traefik.enable=true"
+      # Main route - protected by OAuth2 for browser access
+      - "traefik.http.routers.chat-api.rule=PathPrefix(`/chat`)"
+      - "traefik.http.routers.chat-api.priority=250"
+      - "traefik.http.routers.chat-api.entrypoints=web,websecure"
+      - "traefik.http.services.chat-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.chat-strip.stripprefix.prefixes=/chat"
+      - "traefik.http.routers.chat-api.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,chat-strip"
+
+      # API route - API key authentication handled by the service
+      # This bypasses OAuth for Cursor/editors that use API keys
+      # SECURITY: The chat-api service validates API keys internally and enforces:
+      #   - Valid API key required (401 if missing/invalid)
+      #   - Role-based rate limiting (developer: 100/min, admin: unlimited)
+      #   - API keys inherit user's FusionAuth role
+      - "traefik.http.routers.chat-api-direct.rule=PathPrefix(`/api/chat`)"
+      - "traefik.http.routers.chat-api-direct.priority=260"
+      - "traefik.http.routers.chat-api-direct.entrypoints=web,websecure"
+      - "traefik.http.middlewares.chat-api-strip.stripprefix.prefixes=/api/chat"
+      - "traefik.http.routers.chat-api-direct.middlewares=chat-api-strip"
+      - "traefik.http.routers.chat-api-direct.service=chat-api"
+
+secrets:
+  shared_db_password:
+    file: ../../secrets/shared_db_password.txt
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

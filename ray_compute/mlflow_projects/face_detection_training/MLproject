@@ -1,0 +1,13 @@
+name: face_detection_training
+
+conda_env: conda.yaml
+
+entry_points:
+  main:
+    parameters:
+      epochs: {type: int, default: 200}
+      batch_size: {type: int, default: 8}
+      learning_rate: {type: float, default: 0.01}
+      dataset: {type: str, default: "wider_face"}
+      phase: {type: str, default: "phase1"}
+    command: "python train.py --epochs {epochs} --batch-size {batch_size} --lr {learning_rate} --dataset {dataset} --phase {phase}"

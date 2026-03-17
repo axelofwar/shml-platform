@@ -1,0 +1,442 @@
+# Inference Stack - Qwen3-VL + Z-Image + Gateway
+# Integrates with existing shml-platform network
+# RTX 3090 Ti (GPU 0) = Nemotron-3-Nano-30B (primary, ~22.7GB) - RESERVED
+# RTX 2070 (GPU 1)   = Qwen3-VL + Z-Image + PII-Blur (shared, yields)
+# NOTE: Uses shml-postgres from main deploy/compose/docker-compose.yml (database: inference)
+
+services:
+  # ==========================================================================
+  # inference-postgres REMOVED - consolidated into shml-postgres
+  # The 'inference' database is created by postgres/init-databases.sh
+  # ==========================================================================
+
+  # ==========================================================================
+  # Qwen3-VL - LLM for Planning/Architecture (RTX 2070 - 8GB)
+  # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
+  # MOVED TO RTX 2070 to free RTX 3090 for Nemotron (primary coding LLM)
+  # INT4 quantized 8B model fits within 2070's 8GB VRAM
+  # ==========================================================================
+  qwen3-vl-api:
+    build:
+      context: ./qwen3-vl
+      dockerfile: Dockerfile
+    container_name: qwen3-vl-api
+    restart: unless-stopped
+    environment:
+      - MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
+      - QUANTIZATION=int4
+      # IMPORTANT: Use cuda:0 because container only sees one GPU via CUDA_VISIBLE_DEVICES
+      - DEVICE=cuda:0
+      - MAX_NEW_TOKENS=4096
+      - HF_HOME=/models
+      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=1
+      # GPU YIELDING: Unload after 5min idle to free memory for training
+      - UNLOAD_TIMEOUT_SECONDS=300
+      - YIELD_TO_TRAINING=true
+      - MAX_MEMORY_GB=6
+    volumes:
+      - model-cache:/models:ro
+      - ./logs/qwen3-vl:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 12G
+        reservations:
+          cpus: "2.0"
+          memory: 6G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]  # RTX 2070 (8GB) - INT4 8B model fits here
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qwen3-vl.rule=PathPrefix(`/api/llm`)"
+      - "traefik.http.routers.qwen3-vl.priority=2147483647"
+      - "traefik.http.routers.qwen3-vl.entrypoints=web,websecure"
+      - "traefik.http.services.qwen3-vl.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.qwen3-strip.stripprefix.prefixes=/api/llm"
+      # SECURITY: Require FusionAuth authentication for LLM inference
+      - "traefik.http.routers.qwen3-vl.middlewares=oauth2-errors,oauth2-auth,qwen3-strip"
+    # No postgres dependency - qwen3-vl doesn't need DB directly
+
+  # ==========================================================================
+  # Z-Image - Image Generation (RTX 2070 - On-Demand, Yields to Nemotron)
+  # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
+  # Moved to RTX 2070 to keep 3090 reserved for Nemotron
+  # If model is too large, will stay unloaded until explicitly requested
+  # ==========================================================================
+  z-image-api:
+    build:
+      context: ./z-image
+      dockerfile: Dockerfile
+    container_name: z-image-api
+    restart: unless-stopped
+    environment:
+      - MODEL_ID=Tongyi-MAI/Z-Image-Turbo
+      # IMPORTANT: Use cuda:0 because container only sees one GPU via CUDA_VISIBLE_DEVICES
+      - DEVICE=cuda:0
+      - DTYPE=bfloat16
+      - NUM_INFERENCE_STEPS=8
+      - HF_HOME=/models
+      - TRANSFORMERS_OFFLINE=1
+      - HF_HUB_OFFLINE=1
+      - UNLOAD_TIMEOUT_SECONDS=300
+      - YIELD_TO_TRAINING=true
+      - MAX_MEMORY_GB=6
+    volumes:
+      - model-cache:/models:ro
+      - z-image-outputs:/outputs
+      - ./logs/z-image:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 12G
+        reservations:
+          cpus: "2.0"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]  # RTX 2070 (8GB) - freed 3090 for Nemotron
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.z-image.rule=PathPrefix(`/api/image`)"
+      - "traefik.http.routers.z-image.priority=2147483647"
+      - "traefik.http.routers.z-image.entrypoints=web,websecure"
+      - "traefik.http.services.z-image.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.z-image-strip.stripprefix.prefixes=/api/image"
+      # SECURITY: Require FusionAuth authentication for image generation
+      - "traefik.http.routers.z-image.middlewares=oauth2-errors,oauth2-auth,z-image-strip"
+    # No postgres dependency - z-image doesn't need DB directly
+    # No postgres dependency - z-image doesn't need DB directly
+
+  # ==========================================================================
+  # Inference Gateway - Queue, Rate Limiting, Chat History
+  # Uses shml-postgres from main deploy/compose/docker-compose.yml
+  # ==========================================================================
+  inference-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: inference-gateway
+    restart: unless-stopped
+    environment:
+      - QWEN3_VL_URL=http://qwen3-vl-api:8000
+      - Z_IMAGE_URL=http://z-image-api:8000
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=2
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - MAX_QUEUE_SIZE=20
+      - MAX_CONCURRENT_REQUESTS=3
+      - RATE_LIMIT_REQUESTS=60
+      - RATE_LIMIT_WINDOW_SECONDS=60
+      - BACKUP_COMPRESSION=zstd
+      - BACKUP_RETENTION_DAYS=90
+    volumes:
+      - ./backups:/backups
+      - ./logs/gateway:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.inference.rule=PathPrefix(`/inference`)"
+      - "traefik.http.routers.inference.priority=2147483647"
+      - "traefik.http.routers.inference.entrypoints=web,websecure"
+      - "traefik.http.services.inference.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.inference-strip.stripprefix.prefixes=/inference"
+      # SECURITY: Require FusionAuth authentication for inference gateway
+      - "traefik.http.routers.inference.middlewares=oauth2-errors,oauth2-auth,inference-strip"
+    depends_on:
+      qwen3-vl-api:
+        condition: service_started
+      z-image-api:
+        condition: service_started
+
+  # ==========================================================================
+  # PII Face Blurring - SOTA Models (Jan 2026)
+  # YOLOv11m-Face + SegFormer/YOLOv8-seg + BoxMOT/BoT-SORT
+  # Dynamic GPU: RTX 3090 (when not training) or RTX 2070 (fallback)
+  # ==========================================================================
+  pii-blur-api:
+    build:
+      context: ./pii-blur
+      dockerfile: Dockerfile
+    container_name: pii-blur-api
+    restart: unless-stopped
+    environment:
+      # Pinned to RTX 2070 (GPU 1) to keep 3090 free for Nemotron
+      - DEVICE=cuda:0
+      - PRIMARY_GPU=cuda:0
+      - FALLBACK_GPU=cuda:0
+      - PREFER_3090=false
+      - MAX_MEMORY_GB=6.0
+      - UNLOAD_TIMEOUT_SECONDS=300
+      # SOTA Face Detection: YOLOv11m-Face (~97% mAP vs Phase 5: 85.9%)
+      - YOLO_FACE_MODEL=/models/yolo-face/yolov11m-face.pt
+      # Segmentation: SegFormer (quality) or YOLO (speed)
+      - SEGMENTATION_MODE=yolo
+      - SEGFORMER_MODEL=jonathandinu/face-parsing
+      - YOLO_SEG_MODEL=/models/yolo-seg/face_yolov8n-seg2_60.pt
+      # Tracking: BoT-SORT (accuracy) or ByteTrack (speed)
+      - TRACKING_MODE=botsort
+      - REID_WEIGHTS=/models/reid/osnet_x0_25_msmt17.pt
+      # RF-DETR Ensemble for hard cases
+      - ENABLE_RFDETR_FALLBACK=true
+      - RFDETR_CONFIDENCE_THRESHOLD=0.40
+      - RFDETR_MODEL_SIZE=medium
+      # License Plate Detection
+      - ENABLE_LICENSE_PLATE_DETECTION=true
+      - LICENSE_PLATE_CONF_THRESHOLD=0.30
+      # Auto-calculate concurrent jobs based on GPU memory
+      - MAX_CONCURRENT_JOBS=0
+      - HF_HOME=/models
+      - TORCH_HOME=/models/torch
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=3
+    volumes:
+      - model-cache:/models
+      - pii-blur-outputs:/outputs
+      - ./logs/pii-blur:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 16G
+        reservations:
+          cpus: "2.0"
+          memory: 8G
+          devices:
+            # Pinned to RTX 2070 (GPU 1) - 3090 reserved for Nemotron
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pii-blur.rule=PathPrefix(`/api/pii`)"
+      - "traefik.http.routers.pii-blur.priority=2147483647"
+      - "traefik.http.routers.pii-blur.entrypoints=web,websecure"
+      - "traefik.http.services.pii-blur.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.pii-blur-strip.stripprefix.prefixes=/api/pii"
+      - "traefik.http.routers.pii-blur.middlewares=oauth2-errors,oauth2-auth,pii-blur-strip"
+
+  # ==========================================================================
+  # PII Blur POC UI (React/Vite - Nginx production server)
+  # ==========================================================================
+  pii-ui:
+    build:
+      context: ./pii-ui
+      dockerfile: Dockerfile
+    container_name: pii-ui
+    restart: unless-stopped
+    networks:
+      - shml-platform
+    expose:
+      - "80"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pii-ui.rule=PathPrefix(`/pii`)"
+      - "traefik.http.routers.pii-ui.priority=2147483647"
+      - "traefik.http.routers.pii-ui.entrypoints=web,websecure"
+      - "traefik.http.services.pii-ui.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.pii-ui-strip.stripprefix.prefixes=/pii"
+      - "traefik.http.routers.pii-ui.middlewares=oauth2-errors,oauth2-auth,pii-ui-strip"
+
+  # ==========================================================================
+  # Audio Copyright Detection & AI Replacement (CPU - No GPU needed)
+  # ==========================================================================
+  audio-copyright-api:
+    build:
+      context: ./audio-copyright
+      dockerfile: Dockerfile
+    container_name: audio-copyright-api
+    restart: unless-stopped
+    environment:
+      - MUSICGEN_MODEL=facebook/musicgen-small
+      - POSTGRES_HOST=shml-postgres
+      - POSTGRES_DB=inference
+      - POSTGRES_USER=inference
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      - REDIS_HOST=shml-redis
+      - REDIS_PORT=6379
+      - REDIS_DB=4
+      - MUSIC_DB_PATH=/app/music_database
+    volumes:
+      - ./audio-copyright/music_database:/app/music_database
+      - audio-outputs:/outputs
+      - ./logs/audio-copyright:/app/logs
+    networks:
+      - shml-platform
+    expose:
+      - "8000"
+    secrets:
+      - shared_db_password
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audio-copyright.rule=PathPrefix(`/api/audio`)"
+      - "traefik.http.routers.audio-copyright.priority=2147483647"
+      - "traefik.http.routers.audio-copyright.entrypoints=web,websecure"
+      - "traefik.http.services.audio-copyright.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.audio-copyright-strip.stripprefix.prefixes=/api/audio"
+      - "traefik.http.routers.audio-copyright.middlewares=oauth2-errors,oauth2-auth,audio-copyright-strip"
+
+  # ==========================================================================
+  # shl-nano — Tier-0 domain nano-model (T8.4)
+  # RTX 2070 (GPU 1) — ~2 GB VRAM inference, port 8021
+  # Only started after base pretrain + SFT are complete.
+  # Set NANO_SERVICE_URL=http://shl-nano:8021 in agent-service env to activate.
+  # ==========================================================================
+  shl-nano:
+    build:
+      context: ./shl-nano-server
+      dockerfile: Dockerfile
+    container_name: shl-nano
+    restart: unless-stopped
+    profiles:
+      - nano          # opt-in: docker compose --profile nano up shl-nano
+    environment:
+      - CUDA_VISIBLE_DEVICES=0   # container sees only 1 GPU (mapped to host GPU 1)
+      - MODEL_RUN=shl-nano-sft
+      - MAX_NEW_TOKENS=512
+      - NANO_CONFIDENCE_THRESHOLD=0.55
+      - VRAM_FLOOR_MIB=512
+      - PORT=8021
+    volumes:
+      - shl-nano-runs:/app/runs:ro
+    networks:
+      - shml-platform
+    expose:
+      - "8021"
+    ports:
+      - "8021:8021"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]        # host GPU 1 = RTX 2070
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8021/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=false"   # internal only
+
+volumes:
+  # inference-postgres-data removed - using shml-postgres
+  model-cache:
+    name: hf-model-cache
+  z-image-outputs:
+    name: z-image-outputs
+  pii-blur-outputs:
+    name: pii-blur-outputs
+  shl-nano-runs:
+    name: shl-nano-runs
+  audio-outputs:
+    name: audio-outputs
+
+networks:
+  shml-platform:
+    external: true
+
+secrets:
+  shared_db_password:
+    file: ../secrets/shared_db_password.txt

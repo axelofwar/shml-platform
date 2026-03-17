@@ -1,0 +1,71 @@
+# Grafana Dashboard Provisioning
+# Auto-loads dashboards from filesystem
+
+apiVersion: 1
+
+providers:
+  - name: 'Platform Dashboards'
+    orgId: 1
+    folder: 'Platform'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/platform
+      foldersFromFilesStructure: true
+
+  - name: 'MLflow Dashboards'
+    orgId: 1
+    folder: 'MLflow'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/mlflow
+      foldersFromFilesStructure: true
+
+  - name: 'Ray Dashboards'
+    orgId: 1
+    folder: 'Ray'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/ray
+      foldersFromFilesStructure: true
+
+  - name: 'ML SLO Dashboards'
+    orgId: 1
+    folder: 'ML SLOs'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/ml-slos
+      foldersFromFilesStructure: true
+
+  - name: 'Training Dashboards'
+    orgId: 1
+    folder: 'Training'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/training
+      foldersFromFilesStructure: true
+
+  - name: 'System Dashboards'
+    orgId: 1
+    folder: 'System'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/system
+      foldersFromFilesStructure: true

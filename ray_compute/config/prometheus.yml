@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ray-compute'
+    environment: 'production'
+
+# Alertmanager configuration (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # - 'alertmanager:9093'  # Uncomment if you add Alertmanager
+
+# Load alert rules
+rule_files:
+  - '/etc/prometheus/alerts.yml'
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter - Host metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'ray-compute-host'
+
+  # cAdvisor - Container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # Ray Head Node
+  - job_name: 'ray-head'
+    static_configs:
+      - targets: ['ray-head:8265']
+    metrics_path: '/metrics'
+
+  # Ray Compute API
+  - job_name: 'ray-compute-api'
+    static_configs:
+      - targets: ['ray-compute-api:8000']
+    metrics_path: '/metrics'
+
+  # MLflow Server (via nginx proxy)
+  - job_name: 'mlflow'
+    static_configs:
+      - targets: ['mlflow-nginx:80']
+    metrics_path: '/metrics'

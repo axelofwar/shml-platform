@@ -1,0 +1,52 @@
+# Ray Compute Prometheus Configuration
+# Scrapes: Ray head node, Ray workers (auto-discovered), Ray API metrics
+# Retention: 7 days (high-cardinality Ray metrics)
+# See: https://docs.ray.io/en/latest/cluster/metrics.html
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ml-platform'
+    service: 'ray-compute'
+
+scrape_configs:
+  # ==========================================================================
+  # Ray Cluster - HTTP Service Discovery (RECOMMENDED)
+  # Auto-discovers all Ray nodes as the cluster scales up/down
+  # This is the official Ray-recommended approach for production
+  # ==========================================================================
+  - job_name: 'ray-cluster'
+    http_sd_configs:
+      - url: 'http://ray-head:8265/api/prometheus/sd'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):(\d+)'
+        replacement: '${1}'
+      - target_label: component
+        replacement: 'ray-worker'
+
+  # Ray Head Node Metrics (static - always available)
+  - job_name: 'ray-head'
+    static_configs:
+      - targets: ['ray-head:8080']
+        labels:
+          component: 'ray-head'
+          instance: 'ray-head-node'
+
+  # Ray Dashboard API Metrics
+  - job_name: 'ray-dashboard'
+    metrics_path: '/api/prometheus_metrics'
+    static_configs:
+      - targets: ['ray-head:8265']
+        labels:
+          component: 'ray-dashboard'
+
+  # Ray Compute API Metrics (FastAPI)
+  - job_name: 'ray-compute-api'
+    static_configs:
+      - targets: ['ray-compute-api:8000']
+        labels:
+          component: 'ray-api'

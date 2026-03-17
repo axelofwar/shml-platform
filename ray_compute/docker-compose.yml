@@ -1,0 +1,353 @@
+# Ray Compute - Distributed GPU Computing
+# ========================================
+# IMPORTANT: Use ./start_all_safe.sh to manage this service!
+#
+# Start:  ./start_all_safe.sh start ray
+# Stop:   ./start_all_safe.sh stop ray
+# Status: ./start_all_safe.sh status
+#
+# This file uses external networks/volumes created by deploy/compose/docker-compose.infra.yml.
+# Running standalone will fail unless infrastructure is already running.
+
+services:
+  # ==========================================================================
+  # RAY CLUSTER HEAD NODE
+  # ==========================================================================
+  ray-head:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.ray-head
+    image: ${PLATFORM_PREFIX:-shml}-ray-head:2.35.0-gpu-mlflow3
+    container_name: ray-head
+    restart: unless-stopped
+    shm_size: 2gb
+    command: >
+      ray start --head
+      --port=6379
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --metrics-export-port=8080
+      --num-cpus=8
+      --num-gpus=${RAY_NUM_GPUS:-1}
+      --object-store-memory=536870912
+      --block
+    environment:
+      - RAY_memory_monitor_refresh_ms=0
+      - CUDA_VISIBLE_DEVICES=${RAY_VISIBLE_GPUS:-0}
+      - NVIDIA_VISIBLE_DEVICES=${RAY_VISIBLE_GPUS:-0}
+      # =======================================================================
+      # CUDA/PyTorch Configuration
+      # Disable NVML warnings - container has GPU compute but not monitoring libs
+      # PyTorch will still work correctly for training/inference
+      # =======================================================================
+      - CUDA_LAUNCH_BLOCKING=0
+      # PYTORCH_CUDA_ALLOC_CONF: max_split_size_mb helps with OOM, removed expandable_segments (causes assertion failures)
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      # Force PyTorch to skip NVML initialization (prevents false "CUDA unavailable" errors)
+      - TORCH_NVML_BASED_CUDA_CHECK=0
+      # =======================================================================
+      # gRPC and Log Streaming Optimization
+      # Increase timeouts for log streaming to handle large log files
+      # Default is 30s which times out on jobs with verbose output
+      # =======================================================================
+      - GRPC_KEEPALIVE_TIME_MS=30000
+      - GRPC_KEEPALIVE_TIMEOUT_MS=60000
+      - GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS=1
+      - RAY_MAX_LIMIT_FROM_API_SERVER=50000
+      - RAY_MAX_LIMIT_FROM_DATA_SOURCE=50000
+      # MPS DISABLED: Was blocking CUDA context initialization in containers
+      # The host MPS daemon at /tmp/nvidia-mps uses 100% thread allocation,
+      # which blocks ALL new CUDA processes trying to attach.
+      # Ray gets exclusive GPU access when training (acceptable trade-off).
+      # See: LESSONS_LEARNED.md for full explanation.
+      # - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+      # - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
+      # MLflow 3.x: Use nginx proxy (handles --static-prefix /mlflow routing)
+      - MLFLOW_TRACKING_URI=http://mlflow-nginx:80
+      - MLFLOW_S3_ENDPOINT_URL=
+      # =======================================================================
+      # Ray Dashboard -> Prometheus/Grafana Integration
+      # These enable the cluster utilization and autoscaler charts in Ray Dashboard
+      # See: https://docs.ray.io/en/latest/cluster/configure-manage-dashboard.html
+      # =======================================================================
+      # Prometheus endpoint for Ray head node health checks (internal Docker network)
+      - RAY_PROMETHEUS_HOST=http://ray-prometheus:9090
+      # Prometheus datasource name in Grafana (must match datasources.yml)
+      - RAY_PROMETHEUS_NAME=Ray Metrics
+      # Grafana endpoint for head node health checks (internal Docker network)
+      - RAY_GRAFANA_HOST=http://unified-grafana:3000
+      # Grafana endpoint for browser iframes (external URL via reverse proxy)
+      - RAY_GRAFANA_IFRAME_HOST=https://${PUBLIC_DOMAIN}/grafana
+      # Grafana organization ID (default: 1)
+      - RAY_GRAFANA_ORG_ID=1
+    volumes:
+      - ray-data:/tmp/ray          # K8s: PVC ray-data (10Gi)
+      - job-workspaces:/opt/ray/job_workspaces  # K8s: PVC job-workspaces (50Gi)
+      - mlflow-artifacts:/mlflow/artifacts
+      # nvidia-mps volume removed - MPS disabled for Ray containers
+    networks:
+      - platform
+    expose:
+      - "6379"    # Ray internal
+      - "8265"    # Dashboard (via Traefik /ray)
+      - "8080"    # Metrics
+      - "10001"   # Client port
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 48G  # Increased from 24G - OOM at epoch 14 with 1280px images
+        reservations:
+          cpus: '2.0'
+          memory: 16G  # Increased baseline reservation
+          devices:
+            - driver: nvidia
+              device_ids: ['${RAY_PRIMARY_GPU_ID:-0}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ray", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ray-dashboard.rule=PathPrefix(`/ray`)"
+      - "traefik.http.routers.ray-dashboard.entrypoints=web,websecure"
+      - "traefik.http.services.ray-dashboard.loadbalancer.server.port=8265"
+      - "traefik.http.middlewares.ray-stripprefix.stripprefix.prefixes=/ray"
+      # OAuth2 + Developer role required for Ray Dashboard
+      # Requires developer or admin role to access Ray compute resources
+      - "traefik.http.routers.ray-dashboard.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,ray-stripprefix"
+      - "traefik.http.routers.ray-dashboard.priority=100"
+
+  # ==========================================================================
+  # RAY COMPUTE API
+  # ==========================================================================
+  ray-compute-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ray-compute-api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.87'
+          memory: 640M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      # Database (uses postgres from infra)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ray_compute
+      - POSTGRES_USER=ray_compute
+      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
+      # Cache (uses redis from infra)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=1
+      # Ray Connection
+      - RAY_ADDRESS=http://ray-head:8265
+      # MLflow Integration
+      - MLFLOW_TRACKING_URI=http://mlflow-nginx:80
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_SECRET_KEY=${RAY_API_SECRET_KEY:-change-me-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - JOB_WORKSPACE=/opt/ray/job_workspaces
+      - ARTIFACT_RETENTION_HOURS=24
+      # OAuth (optional - use FusionAuth)
+      - OAUTH_ENABLED=${OAUTH_ENABLED:-false}
+      - FUSIONAUTH_URL=${FUSIONAUTH_URL:-http://fusionauth:9011}
+      - FUSIONAUTH_CLIENT_ID=${FUSIONAUTH_RAY_CLIENT_ID}
+      - FUSIONAUTH_CLIENT_SECRET=${FUSIONAUTH_RAY_CLIENT_SECRET}
+      # API Keys for CI/CD access (bypasses OAuth) - loaded from local .env
+      - CICD_ADMIN_KEY=${CICD_ADMIN_KEY}
+      - CICD_DEVELOPER_KEY=${CICD_DEVELOPER_KEY}
+      - CICD_ELEVATED_DEVELOPER_KEY=${CICD_ELEVATED_DEVELOPER_KEY}
+      - CICD_VIEWER_KEY=${CICD_VIEWER_KEY}
+      - API_KEY_ENABLED=false
+      # Observability
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - ray-api-logs:/app/logs        # K8s: PVC ray-api-logs (5Gi)
+      - ray-artifacts:/app/artifacts  # K8s: PVC ray-artifacts (20Gi)
+      - job-workspaces:/opt/ray/job_workspaces  # shared with ray-head
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    secrets:
+      - shared_db_password
+    expose:
+      - "8000"
+    networks:
+      - platform
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.ray-api.loadbalancer.server.port=8000"
+      # Replace /api/ray/* with /api/v1/* (API expects /api/v1 prefix)
+      - "traefik.http.middlewares.ray-api-rewrite.replacepathregex.regex=^/api/(ray|compute)/(.*)"
+      - "traefik.http.middlewares.ray-api-rewrite.replacepathregex.replacement=/api/v1/$$2"
+
+      # =======================================================================
+      # ROUTER 1: Browser/Cookie Authentication (via OAuth2-Proxy)
+      # For users accessing via web browser - uses OAuth2-Proxy forward auth
+      # =======================================================================
+      - "traefik.http.routers.ray-api.rule=PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)"
+      - "traefik.http.routers.ray-api.entrypoints=web,websecure"
+      - "traefik.http.routers.ray-api.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,ray-api-rewrite"
+      - "traefik.http.routers.ray-api.priority=300"
+
+      # =======================================================================
+      # ROUTER 2: JWT Bearer Token Authentication (Direct API Access)
+      # For programmatic access - validates JWT at backend, bypasses OAuth2-Proxy
+      # Requires Authorization: Bearer <token> header
+      # Higher priority ensures JWT requests are handled by this router
+      # =======================================================================
+      - "traefik.http.routers.ray-api-jwt.rule=(PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)) && HeadersRegexp(`Authorization`, `^Bearer .+`)"
+      - "traefik.http.routers.ray-api-jwt.entrypoints=web,websecure"
+      - "traefik.http.routers.ray-api-jwt.middlewares=ray-api-rewrite"
+      - "traefik.http.routers.ray-api-jwt.priority=400"
+      - "traefik.http.routers.ray-api-jwt.service=ray-api"
+
+      # =======================================================================
+      # ROUTER 3: API Key Authentication (CI/CD and SDK Access)
+      # For programmatic access via X-API-Key header, bypasses OAuth2-Proxy
+      # Requires X-API-Key: <key> header
+      # Highest priority ensures API key requests bypass OAuth
+      # =======================================================================
+      - "traefik.http.routers.ray-api-key.rule=(PathPrefix(`/api/ray`) || PathPrefix(`/api/compute`)) && HeadersRegexp(`X-API-Key`, `.+`)"
+      - "traefik.http.routers.ray-api-key.entrypoints=web,websecure"
+      - "traefik.http.routers.ray-api-key.middlewares=ray-api-rewrite"
+      - "traefik.http.routers.ray-api-key.priority=500"
+      - "traefik.http.routers.ray-api-key.service=ray-api"
+
+  # ==========================================================================
+  # RAY PROMETHEUS - Service-Specific Metrics (7d retention)
+  # ==========================================================================
+  ray-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ray-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.8'
+          memory: 384M
+        reservations:
+          cpus: '0.15'
+          memory: 192M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ray-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - platform
+    depends_on:
+      - ray-head
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # RAY COMPUTE UI (Next.js Dashboard)
+  # ==========================================================================
+  ray-compute-ui:
+    build:
+      context: ./web_ui
+      dockerfile: Dockerfile
+      # CRITICAL: Do NOT pass absolute URLs as build args - they get baked into JS
+      # The frontend uses relative URLs to avoid mixed content errors
+    image: ${PLATFORM_PREFIX:-shml}-ray-compute-ui:latest
+    container_name: ray-compute-ui
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      # CRITICAL: Do NOT set NEXT_PUBLIC_API_URL - it causes mixed content errors
+      # The frontend uses relative URLs (/api/ray) which work with both HTTP and HTTPS
+      - NODE_ENV=production
+    # SECURITY: No direct port binding — all access goes through Traefik + OAuth
+    # Port 3002 was previously bound here but Docker ignored 127.0.0.1 and
+    # exposed on 0.0.0.0, bypassing OAuth. Removed to close the security gap.
+    # Access via: https://<host>/ray/ui  (OAuth2 + role-auth-developer)
+    networks:
+      - platform
+    depends_on:
+      ray-compute-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/ray/ui"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      # Service definition
+      - "traefik.http.services.ray-ui.loadbalancer.server.port=3000"
+      # Static assets route (no auth required - Next.js assets, favicon, etc.)
+      - "traefik.http.routers.ray-ui-assets.rule=PathPrefix(`/ray/ui/_next`) || PathPrefix(`/ray/ui/favicon.ico`)"
+      - "traefik.http.routers.ray-ui-assets.entrypoints=web,websecure"
+      - "traefik.http.routers.ray-ui-assets.priority=500"
+      - "traefik.http.routers.ray-ui-assets.service=ray-ui"
+      # Main UI route (requires OAuth2-Proxy authentication + developer role)
+      # Priority 400 ensures /ray/ui ALWAYS wins over /ray (priority 100)
+      - "traefik.http.routers.ray-ui.rule=PathPrefix(`/ray/ui`)"
+      - "traefik.http.routers.ray-ui.entrypoints=web,websecure"
+      - "traefik.http.routers.ray-ui.priority=400"
+      - "traefik.http.routers.ray-ui.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+
+secrets:
+  shared_db_password:
+    file: ../secrets/shared_db_password.txt
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true
+
+volumes:
+  # nvidia-mps volume removed - MPS disabled for Ray containers
+  # (Host MPS daemon blocks CUDA context init in containers)
+  ray-prometheus-data:
+    name: ${PLATFORM_PREFIX:-shml}-ray-prometheus-data
+    external: true
+  mlflow-artifacts:
+    external: true
+  # Named volumes for K8s portability (replaces bind mounts)
+  ray-data:
+    name: ${PLATFORM_PREFIX:-shml}-ray-data
+  job-workspaces:
+    name: ${PLATFORM_PREFIX:-shml}-job-workspaces
+  ray-api-logs:
+    name: ${PLATFORM_PREFIX:-shml}-ray-api-logs
+  ray-artifacts:
+    name: ${PLATFORM_PREFIX:-shml}-ray-artifacts

@@ -1,0 +1,53 @@
+# ============================================================================
+# Balanced Profile
+# ============================================================================
+# Production-quality training with reasonable time/quality tradeoff.
+# 10 epochs, full resolution, moderate augmentation.
+# Expected duration: ~2.5 hours on RTX 3090 Ti.
+#
+# Usage:
+#   shml train --profile balanced
+#   shml train --profile balanced --epochs 20
+# ============================================================================
+
+model: yolo11x.pt
+data_yaml: wider_face_yolo/data.yaml
+epochs: 10
+batch_size: 4
+imgsz: 1280
+patience: 10
+optimizer: AdamW
+lr0: 0.0005
+lrf: 0.01
+weight_decay: 0.001
+warmup_epochs: 2.0
+
+# Integrations — full stack
+integrations:
+  - mlflow
+  - nessie
+  - fiftyone
+  - features
+  - prometheus
+
+mlflow_experiment: balanced-training
+nessie_branch_prefix: experiment
+
+# Augmentation — moderate
+augmentation:
+  hsv_h: 0.015
+  hsv_s: 0.5
+  hsv_v: 0.3
+  degrees: 5.0
+  translate: 0.1
+  scale: 0.4
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 0.8
+  mixup: 0.1
+  copy_paste: 0.05
+  erasing: 0.2
+  crop_fraction: 1.0
+
+# Resources
+gpu_yield: true

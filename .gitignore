@@ -1,0 +1,419 @@
+# ML Platform - Comprehensive Git Ignore
+# Version: 0.1.0
+# Last Updated: 2025-11-23
+
+# ============================================================================
+# SENSITIVE CREDENTIALS & SECRETS
+# ============================================================================
+
+# Remote access scripts with credentials
+REMOTE_ACCESS_COMPLETE.sh
+
+# Secret files
+secrets/
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+*password*.txt
+*credential*.txt
+*token*.txt
+.env
+.env.*
+!.env.example
+
+# Obsidian editor config (personal workspace settings)
+docs/obsidian-vault/
+
+# MCP config (contains local filesystem paths)
+mcp/mcp-config.json
+
+# SSH keys
+id_rsa
+id_rsa.pub
+*.ppk
+
+# ============================================================================
+# DOCKER & CONTAINERS
+# ============================================================================
+
+# Docker volumes and persistent data
+**/data/postgres/
+**/data/redis/
+**/data/grafana/
+**/data/mlflow/
+**/data/ray/
+**/data/authentik/
+**/data/prometheus/
+
+# Docker Compose overrides (keep template)
+docker-compose.override.yml
+!docker-compose.override.yml.example
+
+# Container logs
+**/logs/*.log
+**/logs/**/*.log
+
+# Backup files
+**/backups/*.tar.gz
+**/backups/*.sql
+**/backups/*.dump
+
+# ============================================================================
+# PYTHON
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# ============================================================================
+# NODE.JS & JAVASCRIPT
+# ============================================================================
+
+# Dependencies
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Production build
+/build
+/dist
+/.next
+/out
+
+# Misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ============================================================================
+# MLFLOW
+# ============================================================================
+
+# MLflow artifacts (if local)
+mlruns/
+mlflow-artifacts/
+mlflow.db
+
+# MLflow tracking server data (use Docker volumes instead)
+mlflow_data/
+
+# ============================================================================
+# RAY
+# ============================================================================
+
+# Ray temporary files
+/tmp/ray/
+ray_results/
+ray_dashboard/
+*.ray
+
+# Ray session data
+/tmp/ray_tmp*/
+
+# ============================================================================
+# MACHINE LEARNING
+# ============================================================================
+
+# Model files (large binaries)
+*.h5
+*.hdf5
+*.pb
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.tflite
+*.mlmodel
+
+# Training data and runtime data (use volume mounts)
+data/
+
+# Wget artifacts
+wget-log*
+
+# Datasets
+*.csv
+*.parquet
+*.feather
+*.hdf
+!**/examples/**/*.csv
+
+# Tensorboard logs
+runs/
+tensorboard_logs/
+
+# Weights & Biases
+wandb/
+
+# ============================================================================
+# IDEs & EDITORS
+# ============================================================================
+
+# VSCode
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================================
+# OPERATING SYSTEM
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE_BIN/
+
+# ============================================================================
+# LOGS & TEMPORARY FILES
+# ============================================================================
+
+# General logs
+*.log
+logs/
+*.out
+*.err
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.cache
+.cache/
+
+# PID files
+*.pid
+
+# ============================================================================
+# SSL/TLS CERTIFICATES
+# ============================================================================
+
+*.crt
+*.cer
+*.der
+*.csr
+!traefik/certs/.gitkeep
+
+# ============================================================================
+# DOCUMENTATION (Archived)
+# ============================================================================
+
+# Keep archived docs but don't track changes
+archived/*.md
+!archived/README.md
+
+# ============================================================================
+# PROJECT SPECIFIC
+# ============================================================================
+
+# Traefik certificates (auto-generated)
+traefik/acme.json
+traefik/certs/*.json
+
+# Authentik media
+authentik/media/
+authentik/certs/
+
+# Prometheus data
+prometheus/data/
+
+# Grafana data
+grafana/data/
+grafana.db
+
+# Test results
+test-results/
+.pytest_cache/
+
+# Terraform (if used)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Ansible (if used)
+*.retry
+
+# ============================================================================
+# ALLOWED EXCEPTIONS
+# ============================================================================
+
+# Keep example/template files
+!.env.example
+!docker-compose.override.yml.example
+!secrets/README.md
+!config/**/*.example
+
+# Keep small example data
+!examples/**/*.csv
+!examples/**/*.json
+
+# Keep documentation images
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.svg
+
+# Keep archived README
+!archived/README.md
+backups/
+
+# Environment backup files (may contain secrets)
+*-env.backup
+*.env.backup
+
+# Archived docs that may contain example secrets
+archived/v0.1.0-consolidation/OAUTH_QUICKSTART.md
+archived/v0.1.0-consolidation/OAUTH_SETUP_COMPLETE.md
+archived/v0.1.0-consolidation/REMOTE_ACCESS_GUIDE.md
+.cache_ggshield
+container_id_reference.txt
+
+# Large image files
+monitoring/homer/logo.png
+monitoring/homer/logo2.png
+monitoring/homer/logo2_transparent.png
+
+# Large research files (store separately or use Git LFS)
+docs/research/*.pdf
+assets/logo/Gemini_Generated_Image_*.png
+
+# Archived backups (not tracked)
+backups/platform/repo_backup_*
+
+# Training data (large datasets)
+ray_compute/data/wider_face_data/
+ray_compute/data/yfcc100m/
+data/yfcc100m/
+data/models/
+*.zip
+*.tar.gz
+
+# Next.js build artifacts
+.next/
+ray_compute/web_ui/.next/
+chat-ui-v2/.next/
+
+# Loki data
+monitoring/loki/data/
+
+# Job workspaces with training data
+ray_compute/data/job_workspaces/
+
+# All ray compute data
+ray_compute/data/
+# Monitoring data directories
+monitoring/tempo/data/
+monitoring/loki/data/
+site/
+
+# Archived code (preserved in git history)
+archived/
+docs/internal/archived_originals/
+docs/internal/archived_approaches/
+monitoring/grafana/dashboards/archived/
+
+# Generated outputs (not source code)
+ray_compute/evaluation_results/
+
+# Embedded/vendored git repositories (use submodules if needed)
+inference/llama-cpp/llama-src/
+inference/llama-cpp/llama.cpp/
+libs/hermes-self-evolution/

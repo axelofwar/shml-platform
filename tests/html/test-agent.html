@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Service Test - ACE Workflow</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 32px; margin-bottom: 10px; }
+        .header p { opacity: 0.9; }
+        .content {
+            padding: 30px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .test-section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: white;
+        }
+        button.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        button.success { background: #28a745; }
+        button.danger { background: #dc3545; }
+        button.info { background: #17a2b8; }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .output {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.6;
+        }
+        .output .stage {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+        .output .tool {
+            color: #ce9178;
+        }
+        .output .error {
+            color: #f48771;
+        }
+        .output .success {
+            color: #6a9955;
+        }
+        .output .timestamp {
+            color: #858585;
+            font-size: 11px;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #495057;
+            font-weight: 600;
+        }
+        .input-group input,
+        .input-group textarea,
+        .input-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+        .input-group input:focus,
+        .input-group textarea:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .input-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        .workflow-viz {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+        }
+        .workflow-stage {
+            flex: 1;
+            text-align: center;
+            padding: 20px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+        .workflow-stage.active {
+            background: #e7f3ff;
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+        .workflow-stage.completed {
+            background: #d4edda;
+            border-color: #28a745;
+        }
+        .workflow-stage h3 {
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: #495057;
+        }
+        .workflow-stage.active h3 {
+            color: #667eea;
+        }
+        .workflow-stage.completed h3 {
+            color: #28a745;
+        }
+        .arrow {
+            display: flex;
+            align-items: center;
+            color: #e0e0e0;
+            font-size: 24px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            text-align: center;
+            border: 2px solid #e0e0e0;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        .stat-card .label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Agent Service Test</h1>
+            <p>ACE Workflow (Generator → Reflector → Curator)</p>
+        </div>
+
+        <div class="content">
+            <!-- Test 1: Health Check -->
+            <div class="test-section">
+                <h2>1. Health Check</h2>
+                <div class="button-group">
+                    <button class="primary" onclick="testHealth()">Check Health</button>
+                </div>
+                <div id="health-output" class="output">Ready to test...</div>
+            </div>
+
+            <!-- Test 2: Synchronous Execution -->
+            <div class="test-section">
+                <h2>2. Synchronous Execution (No Streaming)</h2>
+                <div class="input-group">
+                    <label>Task:</label>
+                    <textarea id="sync-task" placeholder="e.g., Create a Python function that calculates fibonacci">Create a Python function that adds two numbers</textarea>
+                </div>
+                <div class="input-group">
+                    <label>Category:</label>
+                    <select id="sync-category">
+                        <option value="coding">Coding</option>
+                        <option value="research">Research</option>
+                        <option value="general">General</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button class="primary" onclick="testSync()">Execute</button>
+                </div>
+                <div id="sync-output" class="output">Ready to execute...</div>
+            </div>
+
+            <!-- Test 3: WebSocket Streaming -->
+            <div class="test-section">
+                <h2>3. WebSocket Streaming (Real-Time ACE Workflow)
+                    <span id="ws-status" class="status disconnected">Disconnected</span>
+                </h2>
+
+                <div class="workflow-viz">
+                    <div id="stage-generator" class="workflow-stage">
+                        <h3>📝 Generator</h3>
+                        <p>Creates initial solution</p>
+                    </div>
+                    <div class="arrow">→</div>
+                    <div id="stage-reflector" class="workflow-stage">
+                        <h3>🔍 Reflector</h3>
+                        <p>Critiques & improves</p>
+                    </div>
+                    <div class="arrow">→</div>
+                    <div id="stage-curator" class="workflow-stage">
+                        <h3>✨ Curator</h3>
+                        <p>Extracts lessons</p>
+                    </div>
+                </div>
+
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="value" id="stat-iterations">0</div>
+                        <div class="label">Iterations</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="value" id="stat-tools">0</div>
+                        <div class="label">Tool Calls</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="value" id="stat-duration">0s</div>
+                        <div class="label">Duration</div>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label>Task:</label>
+                    <textarea id="ws-task" placeholder="e.g., Calculate the square root of 144">Calculate 5 squared using Python</textarea>
+                </div>
+                <div class="button-group">
+                    <button class="success" onclick="connectWebSocket()">Connect</button>
+                    <button class="info" onclick="sendTask()" id="send-button" disabled>Send Task</button>
+                    <button class="danger" onclick="disconnectWebSocket()">Disconnect</button>
+                </div>
+                <div id="ws-output" class="output">Not connected...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let startTime = null;
+        let stats = { iterations: 0, tools: 0, duration: 0 };
+
+        function log(elementId, message, className = '') {
+            const output = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const line = `<span class="timestamp">[${timestamp}]</span> ${className ? `<span class="${className}">` : ''}${message}${className ? '</span>' : ''}\n`;
+            output.innerHTML += line;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearOutput(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        // Test 1: Health Check
+        async function testHealth() {
+            clearOutput('health-output');
+            log('health-output', 'Testing health endpoint...', 'stage');
+
+            try {
+                const response = await fetch('/api/agent/health', {
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    log('health-output', `HTTP ${response.status}: ${response.statusText}`, 'error');
+                    const text = await response.text();
+                    log('health-output', text.substring(0, 500));
+                    return;
+                }
+
+                const data = await response.json();
+                log('health-output', `✅ ${data.status.toUpperCase()}`, 'success');
+                log('health-output', JSON.stringify(data, null, 2));
+            } catch (error) {
+                log('health-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Test 2: Synchronous Execution
+        async function testSync() {
+            clearOutput('sync-output');
+            const task = document.getElementById('sync-task').value;
+            const category = document.getElementById('sync-category').value;
+
+            if (!task.trim()) {
+                log('sync-output', '❌ Please enter a task', 'error');
+                return;
+            }
+
+            log('sync-output', 'Executing agent workflow...', 'stage');
+            log('sync-output', `Task: ${task}`);
+            log('sync-output', `Category: ${category}`);
+            log('sync-output', '');
+
+            const sessionId = 'sync-' + Date.now();
+            startTime = Date.now();
+
+            try {
+                const response = await fetch('/api/agent/api/v1/agent/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        user_id: 'test-user',
+                        session_id: sessionId,
+                        task: task,
+                        category: category,
+                        max_iterations: 5
+                    })
+                });
+
+                if (!response.ok) {
+                    log('sync-output', `HTTP ${response.status}: ${response.statusText}`, 'error');
+                    const text = await response.text();
+                    log('sync-output', text.substring(0, 1000));
+                    return;
+                }
+
+                const data = await response.json();
+                const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+                log('sync-output', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'stage');
+                log('sync-output', '🎯 GENERATOR OUTPUT:', 'stage');
+                log('sync-output', data.generator_output || 'N/A');
+                log('sync-output', '');
+
+                log('sync-output', '🔍 REFLECTOR OUTPUT:', 'stage');
+                log('sync-output', data.reflector_output || 'N/A');
+                log('sync-output', '');
+
+                log('sync-output', '✨ CURATOR LESSONS:', 'stage');
+                if (data.curator_lessons && data.curator_lessons.length > 0) {
+                    data.curator_lessons.forEach((lesson, i) => {
+                        log('sync-output', `${i + 1}. ${lesson}`);
+                    });
+                } else {
+                    log('sync-output', 'None extracted');
+                }
+                log('sync-output', '');
+
+                log('sync-output', '🛠️ TOOL RESULTS:', 'tool');
+                if (data.tool_results && data.tool_results.length > 0) {
+                    data.tool_results.forEach((result, i) => {
+                        log('sync-output', `${i + 1}. ${JSON.stringify(result)}`);
+                    });
+                } else {
+                    log('sync-output', 'No tools used');
+                }
+                log('sync-output', '');
+
+                log('sync-output', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'success');
+                log('sync-output', '✅ FINAL ANSWER:', 'success');
+                log('sync-output', data.final_answer || 'N/A');
+                log('sync-output', '');
+                log('sync-output', `⏱️ Completed in ${duration}s (${data.iterations || 0} iterations)`, 'success');
+
+            } catch (error) {
+                log('sync-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Test 3: WebSocket Streaming
+        function connectWebSocket() {
+            if (ws) {
+                log('ws-output', '⚠️ Already connected', 'error');
+                return;
+            }
+
+            clearOutput('ws-output');
+            resetWorkflow();
+            stats = { iterations: 0, tools: 0, duration: 0 };
+            updateStats();
+
+            const sessionId = 'ws-' + Date.now();
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/agent/ws/agent/${sessionId}`;
+
+            log('ws-output', `Connecting to: ${wsUrl}`, 'stage');
+            updateStatus('connecting');
+
+            ws = new WebSocket(wsUrl);
+            startTime = Date.now();
+
+            ws.onopen = () => {
+                log('ws-output', '✅ Connected!', 'success');
+                updateStatus('connected');
+                document.getElementById('send-button').disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            ws.onerror = (error) => {
+                log('ws-output', `❌ WebSocket error: ${error}`, 'error');
+                updateStatus('disconnected');
+            };
+
+            ws.onclose = () => {
+                log('ws-output', '🔌 Disconnected', 'error');
+                updateStatus('disconnected');
+                document.getElementById('send-button').disabled = true;
+                ws = null;
+            };
+        }
+
+        function sendTask() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('ws-output', '❌ Not connected', 'error');
+                return;
+            }
+
+            const task = document.getElementById('ws-task').value;
+            if (!task.trim()) {
+                log('ws-output', '❌ Please enter a task', 'error');
+                return;
+            }
+
+            clearOutput('ws-output');
+            resetWorkflow();
+            startTime = Date.now();
+            stats = { iterations: 0, tools: 0, duration: 0 };
+
+            log('ws-output', '📤 Sending task...', 'stage');
+            log('ws-output', `Task: ${task}`);
+            log('ws-output', '');
+
+            ws.send(JSON.stringify({
+                type: 'agent_request',
+                user_id: 'test-user',
+                task: task,
+                category: 'coding'
+            }));
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            updateStatus('disconnected');
+        }
+
+        function handleWebSocketMessage(message) {
+            switch (message.type) {
+                case 'stage_output':
+                    log('ws-output', `━━━ ${message.stage.toUpperCase()} ━━━`, 'stage');
+                    log('ws-output', message.content);
+                    log('ws-output', '');
+                    updateWorkflowStage(message.stage, 'active');
+                    stats.iterations++;
+                    break;
+
+                case 'tool_execution':
+                    log('ws-output', `🛠️ Tool: ${message.tool}`, 'tool');
+                    log('ws-output', `Status: ${message.status}`);
+                    if (message.result) {
+                        log('ws-output', `Result: ${message.result}`);
+                    }
+                    log('ws-output', '');
+                    stats.tools++;
+                    break;
+
+                case 'approval_request':
+                    log('ws-output', '⚠️ APPROVAL REQUESTED', 'error');
+                    log('ws-output', `Tool: ${message.action.tool}`);
+                    log('ws-output', JSON.stringify(message.action, null, 2));
+                    log('ws-output', '');
+                    // Auto-approve for demo
+                    ws.send(JSON.stringify({
+                        type: 'approval_response',
+                        tool_call_id: message.action.id,
+                        approved: true
+                    }));
+                    log('ws-output', '✅ Auto-approved', 'success');
+                    log('ws-output', '');
+                    break;
+
+                case 'complete':
+                    stats.duration = ((Date.now() - startTime) / 1000).toFixed(2);
+                    log('ws-output', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'success');
+                    log('ws-output', '✅ WORKFLOW COMPLETE', 'success');
+                    log('ws-output', '');
+                    log('ws-output', message.final_answer || 'No final answer');
+                    log('ws-output', '');
+                    log('ws-output', `⏱️ Completed in ${stats.duration}s`, 'success');
+                    updateWorkflowStage('curator', 'completed');
+                    break;
+
+                case 'error':
+                    log('ws-output', `❌ Error in ${message.stage || 'unknown'}: ${message.error}`, 'error');
+                    break;
+
+                default:
+                    log('ws-output', `📥 ${message.type}: ${JSON.stringify(message)}`);
+            }
+
+            updateStats();
+        }
+
+        function updateStatus(status) {
+            const statusEl = document.getElementById('ws-status');
+            statusEl.className = `status ${status}`;
+            statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+
+        function updateWorkflowStage(stage, state) {
+            ['generator', 'reflector', 'curator'].forEach(s => {
+                const el = document.getElementById(`stage-${s}`);
+                el.classList.remove('active', 'completed');
+                if (s === stage) {
+                    el.classList.add(state);
+                } else if (['generator', 'reflector'].includes(s) && stage === 'curator') {
+                    el.classList.add('completed');
+                } else if (s === 'generator' && stage === 'reflector') {
+                    el.classList.add('completed');
+                }
+            });
+        }
+
+        function resetWorkflow() {
+            ['generator', 'reflector', 'curator'].forEach(s => {
+                document.getElementById(`stage-${s}`).className = 'workflow-stage';
+            });
+        }
+
+        function updateStats() {
+            document.getElementById('stat-iterations').textContent = stats.iterations;
+            document.getElementById('stat-tools').textContent = stats.tools;
+            document.getElementById('stat-duration').textContent = stats.duration + 's';
+        }
+
+        // Auto-test health on load
+        window.addEventListener('load', () => {
+            setTimeout(() => testHealth(), 500);
+        });
+    </script>
+</body>
+</html>

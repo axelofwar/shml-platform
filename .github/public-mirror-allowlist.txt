@@ -1,0 +1,57 @@
+# Public mirror allowlist patterns (glob)
+#
+# Files in the public mirror must match at least one of these patterns.
+# Treat this as a strict publication boundary.
+
+# Repository metadata and policy
+README.md
+LICENSE
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+CHANGELOG.md
+.env.example
+AGENTS.md
+mkdocs.yml
+.gitignore
+.gitleaks.toml
+.pre-commit-config.yaml
+.gitguardian.yml
+.gitguardian.yaml
+.hadolint.yaml
+
+# GitHub workflows and templates
+.github/workflows/*.yml
+.github/workflows/*.yaml
+.github/public-mirror-*.txt
+.github/publication-gates.md
+
+# Documentation (internal docs excluded by denylist)
+docs/**
+
+# Core code and platform modules
+cli/**
+libs/**
+sdk/**
+tests/**
+inference/**
+ray_compute/**
+mlflow-server/**
+fusionauth/**
+oauth2-proxy/**
+config/**
+scripts/**
+monitoring/**
+pipelines/**
+postgres/**
+chat-ui-v2/**
+sba-resource-portal/**
+
+# Compose and service definitions
+deploy/compose/docker-compose*.yml
+*.service
+run_tests.sh
+start_all_safe.sh
+stop_all.sh
+stop_dev.sh
+start_all_dev.sh
+check_platform_status.sh

@@ -1,0 +1,19 @@
+name: face_detection_training
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch::pytorch=2.1.2
+  - pytorch::torchvision=0.16.2
+  - pytorch::torchaudio=2.1.2
+  - pytorch::pytorch-cuda=12.1
+  - pip
+  - pip:
+    - mlflow==2.17.2
+    - ray[default]==2.8.1
+    - ultralytics==8.3.59
+    - opencv-python
+    - pandas
+    - numpy

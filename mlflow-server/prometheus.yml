@@ -1,0 +1,32 @@
+# MLflow Prometheus Configuration
+# Scrapes: MLflow server, MLflow API, Nginx metrics
+# Retention: 30 days (experiment tracking metrics)
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ml-platform'
+    service: 'mlflow'
+
+scrape_configs:
+  # MLflow Server Metrics (if exposed)
+  - job_name: 'mlflow-server'
+    static_configs:
+      - targets: ['mlflow-server:5000']
+        labels:
+          component: 'mlflow-server'
+
+  # MLflow API Metrics
+  - job_name: 'mlflow-api'
+    static_configs:
+      - targets: ['mlflow-api:8000']
+        labels:
+          component: 'mlflow-api'
+
+  # Nginx Metrics (via stub_status if configured)
+  - job_name: 'mlflow-nginx'
+    static_configs:
+      - targets: ['mlflow-nginx:80']
+        labels:
+          component: 'mlflow-nginx'
