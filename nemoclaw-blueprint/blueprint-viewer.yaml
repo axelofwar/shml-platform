@@ -1,0 +1,62 @@
+# NemoClaw Blueprint — Viewer Role
+# Minimal access: read-only sandbox, web search egress only.
+# No shell execution, no Ray/MLflow access.
+
+apiVersion: nemoclaw/v1alpha1
+kind: Blueprint
+metadata:
+  name: blueprint-viewer
+  version: "0.1.0"
+  description: "Viewer role — read-only sandbox, web search only"
+  labels:
+    platform: shml
+    role: viewer
+
+extends: shml-base
+
+sandbox:
+  filesystem:
+    allowedRead:
+      - /sandbox
+      - /tmp
+      - /etc/ssl/certs
+    allowedWrite:
+      - /tmp   # No /sandbox write — read-only
+    blockedPaths:
+      - /etc/passwd
+      - /etc/shadow
+
+  resources:
+    memory: "512m"
+    cpus: "0.5"
+    pidsLimit: 64
+    timeout: 300
+
+network:
+  defaultEgress: deny
+  allowlist:
+    - host: "api.brave.com"
+      ports: [443]
+      description: "Brave Search API"
+  # Viewer cannot reach internal platform services directly
+  blockedInternalServices:
+    - mlflow-nginx
+    - ray-compute-api
+    - ray-head
+    - nemotron
+    - qwen3-vl-api
+
+mcp:
+  servers:
+    - name: shml-platform
+      url: "${MCP_PLATFORM_URI}"
+      transport: http
+      allowedTools:
+        - training_status   # read-only status
+        - gpu_status        # read-only GPU info
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"

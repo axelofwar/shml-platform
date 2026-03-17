@@ -1,0 +1,12 @@
+[Unit]
+Description=SHML Platform — repo state scanner + Kanban SOT sync
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/shml-platform
+ExecStart=/usr/bin/env bash -lc 'bash scripts/platform/scan_repo_state.sh'
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+SuccessExitStatus=0 1

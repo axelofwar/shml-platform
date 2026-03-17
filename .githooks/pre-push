@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REMOTE_NAME="${1:-}"
+
+if [[ -z "$REMOTE_NAME" ]]; then
+  exit 0
+fi
+
+if [[ "${DUAL_PUSH_ACTIVE:-0}" == "1" ]]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+ENV_FILE="$REPO_ROOT/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  exit 0
+fi
+
+read_env() {
+  local key="$1"
+  python3 - "$ENV_FILE" "$key" <<'PY'
+import re
+import sys
+
+path, key = sys.argv[1], sys.argv[2]
+pat = re.compile(r'^\s*' + re.escape(key) + r'\s*=\s*(.*)\s*$')
+value = ''
+with open(path, encoding='utf-8') as handle:
+    for line in handle:
+        match = pat.match(line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        break
+print(value)
+PY
+}
+
+mapfile -t PUSH_LINES
+
+if [[ ${#PUSH_LINES[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+REFSPECS=()
+ZERO_SHA='0000000000000000000000000000000000000000'
+for line in "${PUSH_LINES[@]}"; do
+  read -r local_ref local_sha remote_ref remote_sha <<<"$line"
+  if [[ -z "${remote_ref:-}" ]]; then
+    continue
+  fi
+
+  if [[ "$local_sha" == "$ZERO_SHA" ]]; then
+    REFSPECS+=(":$remote_ref")
+  else
+    REFSPECS+=("$local_ref:$remote_ref")
+  fi
+done
+
+if [[ ${#REFSPECS[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+if [[ "$REMOTE_NAME" == "origin" ]]; then
+  GITLAB_PAT="$(read_env GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN)"
+  if [[ -z "$GITLAB_PAT" ]]; then
+    echo "pre-push mirror skipped: missing GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN" >&2
+    exit 1
+  fi
+
+  GITLAB_INTERNAL_URL="http://oauth2:${GITLAB_PAT}@shml-gitlab:8929/gitlab/ml-platform/shml-platform.git"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "pre-push mirror failed: docker is required for origin->gitlab mirroring in this environment" >&2
+    exit 1
+  fi
+
+  docker run --rm --network shml-platform -v "$REPO_ROOT":/repo -w /repo alpine/git \
+    -c safe.directory=/repo -c credential.helper= -c core.hooksPath=/dev/null push "$GITLAB_INTERNAL_URL" "${REFSPECS[@]}"
+elif [[ "$REMOTE_NAME" == "gitlab" ]]; then
+  GITLAB_PAT="$(read_env GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN)"
+  if [[ -z "$GITLAB_PAT" ]]; then
+    echo "pre-push mirror skipped: missing GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN" >&2
+    exit 1
+  fi
+
+  GITLAB_INTERNAL_URL="http://oauth2:${GITLAB_PAT}@shml-gitlab:8929/gitlab/ml-platform/shml-platform.git"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "pre-push mirror failed: docker is required for gitlab remote mirroring in this environment" >&2
+    exit 1
+  fi
+
+  docker run --rm --network shml-platform -v "$REPO_ROOT":/repo -w /repo alpine/git \
+    -c safe.directory=/repo -c credential.helper= -c core.hooksPath=/dev/null push "$GITLAB_INTERNAL_URL" "${REFSPECS[@]}"
+fi
+
+exit 0

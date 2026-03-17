@@ -1,0 +1,13 @@
+[Unit]
+Description=SHML Autonomous Guard Remediation
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/shml-platform
+ExecStart=/usr/bin/env bash -lc 'cd "$HOME/Projects/shml-platform" && ./scripts/monitoring/autonomous_service_guard.sh remediate'
+SuccessExitStatus=1 2
+
+[Install]
+WantedBy=default.target

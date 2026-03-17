@@ -1,0 +1,25 @@
+[Unit]
+Description=SHL Nano Pipeline — nanochat training pipeline (T8)
+After=network-online.target docker.service
+Wants=network-online.target
+# Don't run if autoresearch is pinning GPU 0 and GPU 1 is also constrained
+# (the pipeline script itself handles VRAM wait-loops)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/shml-platform
+# Source .env for Telegram creds; run pipeline from stage 1 (skips done stages)
+ExecStart=/usr/bin/env bash -lc '\
+    set -a; \
+    source "$HOME/Projects/shml-platform/ray_compute/.env" 2>/dev/null || true; \
+    set +a; \
+    exec bash "$HOME/Projects/shml-platform/scripts/data/shl_nano_pipeline.sh"'
+# Allow long training runs — base pretrain ~45m + SFT ~90m
+TimeoutStartSec=7200
+StandardOutput=journal
+StandardError=journal
+# Non-zero exit is OK (pipeline skips completed stages)
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,79 @@
+# NemoClaw Blueprint — Developer Role
+# Full sandbox r/w, platform APIs (Ray, MLflow, Nessie), web search.
+# No Docker socket, no secrets directory.
+
+apiVersion: nemoclaw/v1alpha1
+kind: Blueprint
+metadata:
+  name: blueprint-developer
+  version: "0.1.0"
+  description: "Developer role — full sandbox, Ray/MLflow/Nessie access"
+  labels:
+    platform: shml
+    role: developer
+
+extends: shml-base
+
+sandbox:
+  filesystem:
+    allowedRead:
+      - /sandbox
+      - /tmp
+      - /etc/ssl/certs
+      - /usr/lib/x86_64-linux-gnu
+    allowedWrite:
+      - /sandbox
+      - /tmp
+    blockedPaths:
+      - /etc/passwd
+      - /etc/shadow
+      - /var/run/docker.sock  # no direct Docker socket
+
+  resources:
+    memory: "2g"
+    cpus: "1.0"
+    pidsLimit: 256
+    timeout: 600
+
+network:
+  defaultEgress: deny
+  allowlist:
+    # Internal platform services
+    - cidr: "${OPENSHELL_ALLOWLIST_CIDR}"
+      ports: [80, 443, 8000, 5000, 8265, 19120, 6379]
+      description: "SHML platform network — Ray, MLflow, Nessie, inference endpoints"
+    # Web search
+    - host: "api.brave.com"
+      ports: [443]
+    # GitHub API (GitHubSkill)
+    - host: "api.github.com"
+      ports: [443]
+
+mcp:
+  servers:
+    - name: shml-platform
+      url: "${MCP_PLATFORM_URI}"
+      transport: http
+      allowedTools:
+        - training_status
+        - gpu_status
+        - mlflow_query
+        - ray_submit_job
+        - ray_job_status
+        - vision_analyze
+        - list_sandboxes
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+    - name: git
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-git", "--repository", "/sandbox"]
+    # Scoped filesystem: /sandbox only (not platform root)
+    - name: sandbox-filesystem
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/sandbox"]

@@ -1,0 +1,25 @@
+# Cline Rules for SHML Platform
+# These instructions are automatically injected into every Cline conversation.
+
+## Context
+- This is the SHML Platform workspace (ML/AI platform with RAY, MLflow, monitoring)
+- Local LLM: Qwen3.5-27B-Q4_K_M running via llama.cpp on RTX 3090 Ti
+- API endpoint: http://localhost:8000/v1
+
+## Code Standards
+- Prefer Python 3.10+ type hints and async/await patterns
+- Follow existing project structure and naming conventions
+- Use descriptive variable names; avoid single-letter names except loop indices
+- Always include error handling and logging
+
+## Infrastructure
+- Docker Compose services in shml-platform/
+- MLflow tracking at http://localhost:5000
+- Ray cluster dashboard at http://localhost:8265
+- Monitoring (Grafana) at http://localhost:3000
+
+## Behavior
+- Before making changes, read relevant files to understand context
+- Make targeted, minimal changes unless refactoring is explicitly requested
+- Explain non-obvious decisions with inline comments
+- Run status checks before assuming services are up or down

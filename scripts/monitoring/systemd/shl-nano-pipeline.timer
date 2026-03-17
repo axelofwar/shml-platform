@@ -1,0 +1,14 @@
+[Unit]
+Description=SHL Nano Pipeline — run nightly at 2am (after autoresearch typically finishes)
+
+[Timer]
+# First run 5 min after boot (in case of reboot during pipeline)
+OnBootSec=5m
+# Nightly at 02:00 local time — autoresearch usually finishes by ~01:30
+OnCalendar=*-*-* 02:00:00
+AccuracySec=5m
+Persistent=true
+Unit=shl-nano-pipeline.service
+
+[Install]
+WantedBy=timers.target

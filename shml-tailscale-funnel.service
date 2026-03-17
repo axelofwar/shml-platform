@@ -1,0 +1,29 @@
+[Unit]
+Description=SHML Platform Tailscale Funnel
+Documentation=https://github.com/axelofwar/shml-platform
+After=network-online.target tailscaled.service
+Requires=tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+WorkingDirectory=/opt/shml-platform
+ExecStart=/opt/shml-platform/scripts/platform/ensure_tailscale_funnel.sh
+ExecStop=/bin/bash -lc 'tailscale funnel --https=443 off >/dev/null 2>&1 || tailscale funnel reset >/dev/null 2>&1 || true'
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=120
+TimeoutStopSec=60
+Environment=EXPECTED_HOSTNAME=shml-platform
+Environment=EXPECTED_DOMAIN=${PUBLIC_DOMAIN}
+Environment=TAILSCALE_FUNNEL_TARGET_PORT=80
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shml-tailscale-funnel
+
+[Install]
+WantedBy=multi-user.target

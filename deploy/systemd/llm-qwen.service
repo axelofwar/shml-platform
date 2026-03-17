@@ -1,0 +1,46 @@
+[Unit]
+Description=Qwen3.5-27B LLM Inference Server (llama.cpp)
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network.target
+# Don't start if training is active
+Conflicts=shml-training-gpu0.service
+
+[Service]
+Type=exec
+User=axelofwar
+Group=axelofwar
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+
+# llama.cpp configuration
+Environment=LLM_PORT=8000
+Environment=LLM_GPU_LAYERS=99
+Environment=LLM_CONTEXT_LEN=32768
+
+# Set library path for llama.cpp shared libraries
+Environment=LD_LIBRARY_PATH=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373
+
+ExecStart=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373/llama-server \
+    --model /home/axelofwar/Projects/shml-platform/inference/llama-cpp/models/Qwen3.5-27B-Q4_K_M.gguf \
+    --port 8000 \
+    --host 0.0.0.0 \
+    --n-gpu-layers 99 \
+    --ctx-size 32768 \
+    --flash-attn \
+    --metrics \
+    --chat-template chatml
+
+ExecStop=/bin/kill -SIGTERM $MAINPID
+Restart=on-failure
+RestartSec=30
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-qwen
+
+[Install]
+WantedBy=multi-user.target

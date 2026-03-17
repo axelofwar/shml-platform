@@ -1,0 +1,108 @@
+# NemoClaw Blueprint — Elevated Developer Role
+# Adds Docker management, broader internal network, platform code read access.
+# secrets/ directory is explicitly blocked even for elevated role.
+
+apiVersion: nemoclaw/v1alpha1
+kind: Blueprint
+metadata:
+  name: blueprint-elevated
+  version: "0.1.0"
+  description: "Elevated developer — Docker mgmt, platform code read, CUDA tools"
+  labels:
+    platform: shml
+    role: elevated-developer
+
+extends: blueprint-developer
+
+sandbox:
+  filesystem:
+    allowedRead:
+      - /sandbox
+      - /tmp
+      - /etc/ssl/certs
+      - /usr/lib/x86_64-linux-gnu
+      # Platform code (read-only) — for code analysis, editing proposals
+      - /opt/shml-platform/inference
+      - /opt/shml-platform/config
+      - /opt/shml-platform/mcp
+      - /opt/shml-platform/sdk
+      - /opt/shml-platform/cli
+      - /opt/shml-platform/chat-ui-v2/src
+    allowedWrite:
+      - /sandbox
+      - /tmp
+    blockedPaths:
+      - /etc/passwd
+      - /etc/shadow
+      # SECURITY: secrets directory is ALWAYS blocked, even elevated
+      - /opt/shml-platform/secrets
+      - /opt/shml-platform/.env
+
+  resources:
+    memory: "4g"
+    cpus: "2.0"
+    pidsLimit: 512
+    timeout: 1200   # 20 min for longer-running tasks
+
+network:
+  defaultEgress: deny
+  allowlist:
+    - cidr: "${OPENSHELL_ALLOWLIST_CIDR}"
+      ports: [80, 443, 8000, 8080, 5000, 8265, 19120, 6379, 9090, 9095]
+      description: "Full platform network including NemoClaw factory"
+    - host: "api.brave.com"
+      ports: [443]
+    - host: "api.github.com"
+      ports: [443]
+    - host: "ghcr.io"
+      ports: [443]
+      description: "GitHub Container Registry for image pulls"
+    # Docker socket access via Docker-in-Docker proxy (not raw socket)
+    - host: "docker-proxy"
+      ports: [2375]
+      description: "Docker proxy for container management (elevated only)"
+
+mcp:
+  servers:
+    - name: shml-platform
+      url: "${MCP_PLATFORM_URI}"
+      transport: http
+      allowedTools:
+        - training_status
+        - gpu_status
+        - mlflow_query
+        - ray_submit_job
+        - ray_job_status
+        - vision_analyze
+        - list_sandboxes
+        - create_sandbox
+        - destroy_sandbox
+        - get_sandbox_policy
+        - update_sandbox_policy
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+    - name: git
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-git", "--repository", "/sandbox"]
+    - name: sandbox-filesystem
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/sandbox"]
+    # Platform code read (separate from sandbox write space)
+    - name: platform-code-readonly
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@modelcontextprotocol/server-filesystem"
+        - "/opt/shml-platform/inference"
+        - "/opt/shml-platform/config"
+        - "/opt/shml-platform/sdk"
+      # filesystem MCP: read-only mode
+      env:
+        MCP_FILESYSTEM_READONLY: "true"

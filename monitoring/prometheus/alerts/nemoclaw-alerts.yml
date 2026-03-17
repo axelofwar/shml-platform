@@ -1,0 +1,145 @@
+# NemoClaw / OpenShell Alert Rules
+# Loaded by global Prometheus alongside platform-alerts.yml
+#
+# Key signals:
+# - Policy violations (blocked egress) → warning/critical depending on frequency
+# - Sandbox lifecycle anomalies
+# - Factory/gateway health
+# - Cloud escalation rate (cost signal)
+
+groups:
+  # ============================================================================
+  # NemoClaw Policy Alerts
+  # ============================================================================
+  - name: nemoclaw-policy
+    rules:
+      # Any blocked egress attempt surfaces immediately — "agent tried to call home"
+      - alert: NemoClawEgressBlocked
+        expr: increase(nemoclaw_policy_block_total{event_type="egress_blocked"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "OpenShell policy blocked egress in sandbox"
+          description: >
+            Sandbox {{ $labels.sandbox_name }} (role={{ $labels.user_role }})
+            attempted an unauthorized outbound connection that was blocked by
+            OpenShell network policy. Review audit logs in Loki (job=nemoclaw).
+
+      # High frequency of policy blocks = suspicious agent behavior
+      - alert: NemoClawEgressBlockedHigh
+        expr: increase(nemoclaw_policy_block_total{event_type="egress_blocked"}[15m]) > 5
+        for: 1m
+        labels:
+          severity: critical
+          component: nemoclaw
+        annotations:
+          summary: "High rate of OpenShell policy violations"
+          description: >
+            More than 5 egress blocks in 15 minutes across NemoClaw sandboxes.
+            Possible prompt injection or exfiltration attempt. Check Loki
+            logs: {job="nemoclaw", event_type="egress_blocked"}.
+
+      # Filesystem access violation (Landlock enforcement)
+      - alert: NemoClawFilesystemViolation
+        expr: increase(nemoclaw_policy_block_total{event_type="filesystem_blocked"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: nemoclaw
+        annotations:
+          summary: "OpenShell Landlock filesystem violation"
+          description: >
+            A sandbox attempted to access a path outside its Landlock policy.
+            Sandbox: {{ $labels.sandbox_name }}. This may indicate privilege
+            escalation or a compromised agent. Investigate immediately.
+
+  # ============================================================================
+  # NemoClaw Sandbox Lifecycle Alerts
+  # ============================================================================
+  - name: nemoclaw-lifecycle
+    rules:
+      # Too many active sandboxes = possible resource exhaustion
+      - alert: NemoClawSandboxCountHigh
+        expr: sum(nemoclaw_sandbox_active) > 15
+        for: 5m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "High number of active NemoClaw sandboxes"
+          description: "{{ $value }} sandboxes active. Review for leaked/zombie sandboxes."
+
+      # Sandbox creation failures
+      - alert: NemoClawSandboxCreateFailing
+        expr: rate(nemoclaw_sandbox_created_total[5m]) == 0 and rate(nemoclaw_policy_block_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "NemoClaw sandbox creation appears stalled"
+          description: "No sandboxes created in 5m but policy events are firing. Factory may be unhealthy."
+
+      # High sandbox create latency
+      - alert: NemoClawSandboxSlowCreate
+        expr: histogram_quantile(0.95, rate(nemoclaw_sandbox_create_latency_seconds_bucket[5m])) > 30
+        for: 3m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "NemoClaw sandbox creation slow (p95 > 30s)"
+          description: "p95 sandbox creation latency is {{ $value }}s. OpenShell gateway may be overloaded."
+
+  # ============================================================================
+  # NemoClaw Service Health Alerts
+  # ============================================================================
+  - name: nemoclaw-health
+    rules:
+      # OpenShell gateway down
+      - alert: NemoClawGatewayDown
+        expr: up{job="openshell-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: nemoclaw
+        annotations:
+          summary: "OpenShell gateway is unreachable"
+          description: >
+            The NemoClaw OpenShell gateway has been down for 2 minutes.
+            All OpenShell sandboxes and NemoClaw-mediated cloud inference are unavailable.
+            Platform falls back to legacy SandboxSkill (Docker isolation).
+
+      # Sandbox factory down
+      - alert: NemoClawFactoryDown
+        expr: up{job="nemoclaw-factory"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "NemoClaw sandbox factory is unreachable"
+          description: >
+            The sandbox factory sidecar is down. New sandbox provisioning via MCP
+            tools create_sandbox/destroy_sandbox will fail. OpenShellSkill falls
+            back to legacy Docker SandboxSkill automatically.
+
+  # ============================================================================
+  # NemoClaw Inference / Cloud Escalation Alerts
+  # ============================================================================
+  - name: nemoclaw-inference
+    rules:
+      # Cloud escalation rate too high (cost signal)
+      - alert: NemoClawCloudEscalationHigh
+        expr: increase(nemoclaw_policy_block_total{event_type="cloud_escalation"}[30m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+          component: nemoclaw
+        annotations:
+          summary: "NemoClaw cloud inference escalation rate high"
+          description: >
+            More than 20 cloud escalations in 30 minutes via nimcloud profile.
+            Check local model health (Nemotron container) and NVIDIA API costs.

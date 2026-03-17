@@ -24,7 +24,7 @@ secrets/
 !.env.example
 
 # Obsidian editor config (personal workspace settings)
-docs/obsidian-vault/.obsidian/
+docs/obsidian-vault/
 
 # MCP config (contains local filesystem paths)
 mcp/mcp-config.json
@@ -194,13 +194,8 @@ ray_dashboard/
 *.tflite
 *.mlmodel
 
-# Training data (should use volume mounts)
-data/raw/
-data/processed/
-data/train/
-data/test/
-data/val/
-data/models/
+# Training data and runtime data (use volume mounts)
+data/
 
 # Wget artifacts
 wget-log*

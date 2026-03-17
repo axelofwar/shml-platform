@@ -1,0 +1,104 @@
+# NemoClaw Blueprint — Admin Role
+# Unrestricted internal access. Cloud escalation enabled.
+# Platform root readable (still blocks secrets/).
+# Operator approval flow NOT required — admin bypasses policy prompts.
+
+apiVersion: nemoclaw/v1alpha1
+kind: Blueprint
+metadata:
+  name: blueprint-admin
+  version: "0.1.0"
+  description: "Admin role — full platform access, cloud escalation, operator bypass"
+  labels:
+    platform: shml
+    role: admin
+
+extends: blueprint-elevated
+
+inference:
+  defaultProfile: vllm
+  # Admins can explicitly switch to cloud Nemotron-Super-120B
+  cloudEnabled: true
+  cloudProfile: nimcloud
+
+sandbox:
+  filesystem:
+    allowedRead:
+      - /sandbox
+      - /tmp
+      - /etc/ssl/certs
+      - /usr/lib/x86_64-linux-gnu
+      - /opt/shml-platform   # full platform tree (minus secrets override below)
+    allowedWrite:
+      - /sandbox
+      - /tmp
+      - /opt/shml-platform/config   # admin can write config changes
+    blockedPaths:
+      - /etc/passwd
+      - /etc/shadow
+      # Even admin cannot read raw secret files — must use Infisical API
+      - /opt/shml-platform/secrets
+
+  resources:
+    memory: "8g"
+    cpus: "4.0"
+    pidsLimit: 1024
+    timeout: 3600   # 1 hour
+
+network:
+  defaultEgress: deny
+  allowlist:
+    # Full internal CIDR
+    - cidr: "${OPENSHELL_ALLOWLIST_CIDR}"
+      ports: []   # all ports on internal network
+      description: "Full platform network"
+    # External services
+    - host: "api.brave.com"
+      ports: [443]
+    - host: "api.github.com"
+      ports: [443]
+    - host: "ghcr.io"
+      ports: [443]
+    - host: "integrate.api.nvidia.com"
+      ports: [443]
+      description: "NVIDIA cloud inference — Nemotron-Super-120B"
+    - host: "pypi.org"
+      ports: [443]
+      description: "Package installation in sandbox"
+    - host: "files.pythonhosted.org"
+      ports: [443]
+
+  # Admin does NOT require operator approval for policy changes
+  operatorApproval:
+    enabled: false
+
+mcp:
+  servers:
+    - name: shml-platform
+      url: "${MCP_PLATFORM_URI}"
+      transport: http
+      # Admin gets all tools
+      allowedTools: ["*"]
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+    - name: git
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-git", "--repository", "/opt/shml-platform"]
+    - name: platform-filesystem
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@modelcontextprotocol/server-filesystem"
+        - "/opt/shml-platform"
+      env:
+        MCP_FILESYSTEM_BLOCKED_PATHS: "/opt/shml-platform/secrets"
+    - name: obsidian-vault
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/opt/shml-platform/docs/obsidian-vault"]

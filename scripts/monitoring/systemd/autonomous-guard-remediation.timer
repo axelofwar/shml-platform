@@ -1,0 +1,12 @@
+[Unit]
+Description=Run SHML Autonomous Guard Remediation every 5 minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5m
+AccuracySec=30s
+Persistent=true
+Unit=autonomous-guard-remediation.service
+
+[Install]
+WantedBy=timers.target

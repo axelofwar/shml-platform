@@ -1,0 +1,192 @@
+# NemoClaw Blueprint — SHML Platform Base
+#
+# Versioned base blueprint consumed by the OpenShell gateway.
+# All role-specific blueprints inherit from this via `extends: shml-base`.
+#
+# Blueprint lifecycle:
+#   1. resolve  — verify digest, check resource plan
+#   2. plan     — allocate sandbox resources
+#   3. apply    — create OpenShell sandbox with policy
+#   4. monitor  — liveness + policy violation reporting
+#
+# Docs: https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html
+
+apiVersion: nemoclaw/v1alpha1
+kind: Blueprint
+metadata:
+  name: shml-base
+  version: "0.1.0"
+  description: >
+    Base SHML platform blueprint. Tight policy sandbox with access to internal
+    Docker network services only. Role-specific blueprints extend this file.
+  labels:
+    platform: shml
+    tier: base
+    managed-by: nemoclaw
+
+# ---------------------------------------------------------------------------
+# Inference configuration
+# ---------------------------------------------------------------------------
+inference:
+  # Profile selected by nemoclaw CLI --profile flag or OPENSHELL_INFERENCE_PROVIDER env
+  defaultProfile: vllm
+  profiles:
+    # Local vLLM — Nemotron-3-Nano-30B on RTX 3090 Ti (GPU 0)
+    vllm:
+      provider: vllm
+      endpoint: "${OPENSHELL_INFERENCE_ENDPOINT}"
+      model: "${OPENSHELL_DEFAULT_MODEL}"
+      description: "Local Nemotron-3-Nano-30B via vLLM on RTX 3090 Ti"
+
+    # Local vLLM — Qwen3-VL-8B-Instruct on RTX 2070 (GPU 1) for vision tasks
+    qwen-vl:
+      provider: vllm
+      endpoint: "http://qwen3-vl-api:8000/v1"
+      model: "Qwen/Qwen3-VL-8B-Instruct"
+      description: "Vision model on RTX 2070 — always safe during training"
+      capabilities:
+        - vision
+        - multimodal
+
+    # NIM local — for future NIM deployment (requires resolving CUDA MPS contention)
+    nim-local:
+      provider: nim
+      endpoint: "${NIM_ENDPOINT:-http://nim:8000/v1}"
+      model: "${OPENSHELL_DEFAULT_MODEL}"
+      description: "Local NVIDIA NIM container (requires CUDA MPS resolution)"
+      enabled: false  # disabled until MPS issue resolved
+
+    # NVIDIA Cloud — Nemotron-Super-120B escalation path
+    nimcloud:
+      provider: nvidia-cloud
+      endpoint: "${OPENSHELL_CLOUD_ENDPOINT}"
+      model: "${OPENSHELL_CLOUD_MODEL}"
+      apiKeyEnv: NVIDIA_API_KEY
+      description: "Cloud escalation to Nemotron-Super-120B"
+      # Cloud calls are logged to handoff_log table for skill evolution
+      logHandoffs: true
+
+  # Intent-based profile routing (overridden by explicit --profile flag)
+  routing:
+    vision: qwen-vl          # image attachments or vision keywords
+    coding: vllm             # code keywords → local Nemotron
+    general: vllm            # default
+    escalation: nimcloud     # when local exceeds failover threshold
+
+# ---------------------------------------------------------------------------
+# Sandbox policy
+# ---------------------------------------------------------------------------
+sandbox:
+  # Filesystem policy (Landlock — locked at sandbox creation, cannot hot-reload)
+  filesystem:
+    allowedRead:
+      - /sandbox
+      - /tmp
+      - /etc/ssl/certs          # TLS root CAs for outbound HTTPS
+      - /usr/lib/x86_64-linux-gnu   # shared libs
+    allowedWrite:
+      - /sandbox
+      - /tmp
+    blockedPaths:
+      - /etc/passwd
+      - /etc/shadow
+      - /proc/sysrq-trigger
+
+  # Process policy (seccomp — locked at sandbox creation)
+  process:
+    profile: restricted        # blocks privilege escalation, dangerous syscalls
+    allowedSyscalls: default   # nemoclaw default seccomp allowlist
+    blockedSyscalls:
+      - ptrace
+      - mount
+      - pivot_root
+      - unshare
+
+  # Resource limits per sandbox
+  resources:
+    memory: "2g"
+    cpus: "1.0"
+    pidsLimit: 256
+    timeout: 600               # seconds — matches platform SANDBOX_TIMEOUT_SECONDS
+
+# ---------------------------------------------------------------------------
+# Network policy (hot-reloadable at runtime)
+# ---------------------------------------------------------------------------
+network:
+  # Default: deny all outbound except explicit allowlist
+  defaultEgress: deny
+
+  allowlist:
+    # Internal platform services (Docker network CIDR)
+    - cidr: "${OPENSHELL_ALLOWLIST_CIDR}"
+      description: "SHML platform Docker network"
+      ports: [80, 443, 8000, 8080, 5000, 5432, 6379, 19120, 9090]
+
+    # Web search (brave)
+    - host: "api.brave.com"
+      ports: [443]
+      description: "Brave Search API for WebSearchSkill"
+
+  # Hosts that must ALWAYS be blocked (cannot be overridden by role blueprints)
+  hardBlock:
+    - "metadata.google.internal"   # GCP metadata — prevents credential exfil
+    - "169.254.169.254"            # AWS/Azure IMDS
+    - "100.100.100.200"            # Alibaba metadata
+
+  # Operator approval flow: when agent hits a blocked host, surface in TUI
+  operatorApproval:
+    enabled: true
+    webhookUrl: "http://shml-agent-service:8000/api/agent/policy-approval"
+
+# ---------------------------------------------------------------------------
+# MCP tool access (which platform MCP servers this sandbox can call)
+# ---------------------------------------------------------------------------
+mcp:
+  servers:
+    - name: shml-platform
+      url: "${MCP_PLATFORM_URI}"
+      transport: http
+      # Tools available to all sandboxes (read-only + vision)
+      allowedTools:
+        - training_status
+        - gpu_status
+        - mlflow_query
+        - vision_analyze
+        - list_sandboxes
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  # Prometheus metrics exported by OpenShell gateway
+  metrics:
+    enabled: true
+    port: 9091
+    labels:
+      platform: shml
+      blueprint_version: "0.1.0"
+
+  # Structured audit log — all policy decisions, inference calls, tool invocations
+  auditLog:
+    enabled: true
+    destination: stdout        # Promtail scrapes container stdout → Loki
+    format: json
+    fields:
+      - sandbox_name
+      - user_id
+      - user_role
+      - event_type            # policy_block | inference_call | tool_invocation | sandbox_lifecycle
+      - blueprint
+      - inference_profile
+
+  # OTel traces sent to existing collector
+  tracing:
+    enabled: true
+    endpoint: "http://otel-collector:4317"
+    protocol: grpc
