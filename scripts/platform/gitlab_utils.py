@@ -152,6 +152,7 @@ def create_issue(
     description: str = "",
     labels: list[str] | None = None,
     confidential: bool = False,
+    milestone_id: int | None = None,
 ) -> Issue:
     """Create a new issue. Returns the created Issue."""
     pid = _project_id()
@@ -162,6 +163,8 @@ def create_issue(
         body["labels"] = ",".join(labels)
     if confidential:
         body["confidential"] = True
+    if milestone_id is not None:
+        body["milestone_id"] = milestone_id
     d = _api("POST", f"/projects/{pid}/issues", data=body)
     return Issue.from_dict(d)
 
@@ -231,6 +234,7 @@ def upsert_issue(
     labels: list[str] | None = None,
     comment: str | None = None,
     close_if_resolved: bool = False,
+    milestone_id: int | None = None,
 ) -> Issue:
     """
     Find an open issue whose title contains `search_title`.
@@ -262,6 +266,7 @@ def upsert_issue(
         title or search_title,
         description=description,
         labels=labels,
+        milestone_id=milestone_id,
     )
 
 
