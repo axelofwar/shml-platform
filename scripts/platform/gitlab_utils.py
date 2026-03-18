@@ -506,9 +506,18 @@ def _cli_setup_board(args: list[str]) -> int:
         ("source::scan", "#FF6347", "Auto-created by scan_repo_state"),
         ("source::autoresearch", "#FF6347", "Auto-created by autoresearch"),
         ("source::ci", "#8B4513", "Auto-created by CI pipeline"),
-        # Status workflow labels
-        ("status::in-progress", "#1F75FE", "Actively being worked on"),
+        # Status workflow labels (JIRA-style board columns)
+        ("status::backlog", "#808080", "Prioritised but not yet ready to start"),
         ("status::ready", "#00C853", "Ready to start, no blockers"),
+        ("status::in-progress", "#1F75FE", "Actively being worked on"),
+        # Robotics component labels
+        ("component::mujoco", "#FF8C00", "MuJoCo headless RL simulation"),
+        ("component::isaac-sim", "#76B900", "NVIDIA Isaac Sim / photorealistic"),
+        ("component::ros2", "#22314E", "ROS2 Jazzy / Humble"),
+        ("component::urdf", "#8B008B", "Robot description / URDF / MJCF / USD"),
+        ("component::rl-training", "#DC143C", "Reinforcement learning training"),
+        ("component::world-model", "#4169E1", "Dreamer V3 / world model training"),
+        ("source::robotics-sim", "#FF8C00", "Auto-created by robotics sim crash/failure"),
         # PII / ML-specific
         ("metric::recall-primary", "#FF6347", "Recall is the primary success metric (PII)"),
         ("component::pii-blurring", "#C71585", "PII face blurring pipeline"),
@@ -524,9 +533,18 @@ def _cli_setup_board(args: list[str]) -> int:
     milestone_defs = [
         ("v1.0 — Platform Stability", "Core services healthy, CI green, watchdog operational"),
         ("v1.1 — GitLab Integration", "Full GitLab-centric workflow: issues, CI, mirror"),
-        ("v2.0 — Training Pipeline", "Autoresearch, model evaluation, MLflow tracking"),        ("PII SOTA — recall > 0.760", "Beat Phase 9 recall (0.729) → 0.760+ on WIDER Face; mAP50 ≥ 0.798 floor"),
+        ("v2.0 — Training Pipeline", "Autoresearch, model evaluation, MLflow tracking"),
+        ("PII SOTA — recall > 0.760", "Beat Phase 9 recall (0.729) → 0.760+ on WIDER Face; mAP50 ≥ 0.798 floor"),
         ("Platform Brain v1", "Redis pub/sub + GitLab webhooks + cross-service event routing live"),
-        ("Production Deploy", "PII blurring model in prod inference pipeline, end-to-end validated"),    ]
+        ("Production Deploy", "PII blurring model in prod inference pipeline, end-to-end validated"),
+        # Robotics milestones
+        ("Phase 0 — Platform Audit", "All services healthy, watchdog 100% coverage, GitLab board live, NemoClaw tested"),
+        ("Sim Foundation", "colcon builds, URDF valid, MuJoCo envs working, platform connected"),
+        ("RL Training", "PPO/SAC training, MLflow logging, Grafana dashboards, FiftyOne pipeline"),
+        ("Isaac Sim", "Photorealistic backend, FiftyOne domain gap, DCGM monitoring"),
+        ("AutoResearch — Robotics", "3 LLM-driven mutation loops: RL, curriculum, world model"),
+        ("Hardware Deploy", "ROSMASTER M3 PRO: policy deployed, Zenoh DDS, on-robot ROS2 Humble"),
+    ]
 
     for title, desc in milestone_defs:
         ms = ensure_milestone(title, description=desc)
@@ -534,6 +552,158 @@ def _cli_setup_board(args: list[str]) -> int:
 
     print("Board setup complete.")
     return 0
+
+
+def _cli_seed_phase0_issues(args: list[str]) -> int:
+    """CLI: seed-phase0-issues — Create GitLab issues for all Phase 0 tasks.
+
+    Idempotent: uses upsert_issue so re-running won't create duplicates.
+    """
+    # Find milestone IDs
+    ms_list = list_milestones()
+    ms_map = {m["title"]: m["id"] for m in ms_list}
+    phase0_ms_id = ms_map.get("Phase 0 — Platform Audit")
+
+    if not phase0_ms_id:
+        print("  ⚠ Milestone 'Phase 0 — Platform Audit' not found — run setup-board first")
+        phase0_ms_id = None
+
+    phase0_issues = [
+        {
+            "title": "Phase 0.1: GitLab project & JIRA-style board setup",
+            "labels": ["type::chore", "component::ci-cd", "priority::critical", "status::backlog"],
+            "description": (
+                "## Goal\nSet up GitLab Issues as single source of truth for all task tracking.\n\n"
+                "### Checklist\n"
+                "- [ ] Run `python3 scripts/platform/gitlab_utils.py setup-board` to create all labels/milestones\n"
+                "- [ ] Run `python3 scripts/platform/gitlab_utils.py seed-phase0-issues` to create all Phase 0 issues\n"
+                "- [ ] Verify Labels Board at `/-/boards` shows 5 columns (backlog/ready/in-progress/blocked/closed)\n"
+                "- [ ] All Phase 0-5 tasks exist as issues with correct labels + milestones\n\n"
+                "**Blocks:** All other Phase 0 tasks\n"
+                "**Gate:** GitLab board shows correct JIRA-style columns"
+            ),
+        },
+        {
+            "title": "Phase 0.2: Migrate Obsidian kanban → GitLab Issues",
+            "labels": ["type::chore", "component::ci-cd", "priority::high", "status::backlog"],
+            "description": (
+                "## Goal\nStop writing to KANBAN.md/TRACK-8-NANOCHAT.md/PLATFORM_STATUS.md. "
+                "All state tracking via GitLab Issues API.\n\n"
+                "### Checklist\n"
+                "- [ ] Create `scripts/data/update_gitlab_board.sh` (replaces update_kanban.sh)\n"
+                "- [ ] Create `scripts/platform/gitlab_board_updater.py` (replaces kanban_updater.py)\n"
+                "- [ ] Update `scripts/platform/scan_repo_state.sh` — remove Obsidian writes, add GitLab transitions\n"
+                "- [ ] Rename systemd timer `shl-nano-kanban.*` → `shl-gitlab-sync.*`\n"
+                "- [ ] Archive `docs/obsidian-vault/50-Projects/{KANBAN.md,TRACK-8-NANOCHAT.md,PLATFORM_STATUS.md}`\n"
+                "- [ ] Verify 30min scan produces correct GitLab issue transitions\n\n"
+                "**Depends on:** Phase 0.1"
+            ),
+        },
+        {
+            "title": "Phase 0.3: Full service health audit (all 23+ containers)",
+            "labels": ["type::chore", "component::infra", "priority::critical", "status::backlog"],
+            "description": (
+                "## Goal\nVerify every container is healthy, every Traefik route resolves, "
+                "every auth chain works.\n\n"
+                "### Checklist\n"
+                "- [ ] Run `scripts/platform/platform_audit.sh` → produces `data/platform-audit/audit-YYYY-MM-DD.json`\n"
+                "- [ ] Every container in `docker ps` shows healthy/running\n"
+                "- [ ] Every Traefik route resolves to correct backend\n"
+                "- [ ] Full OAuth2 login flow works for all 4 roles\n"
+                "- [ ] Database connectivity verified (all PostgreSQL instances)\n"
+                "- [ ] Monitoring stack: all Prometheus scrape targets UP, Grafana loading, "
+                "Alertmanager → Telegram functional\n"
+                "- [ ] `data/platform-audit/audit-YYYY-MM-DD.json` shows 0 failures\n\n"
+                "**Depends on:** Phase 0.1"
+            ),
+        },
+        {
+            "title": "Phase 0.4: Service location & Traefik label reconciliation",
+            "labels": ["type::chore", "component::infra", "priority::high", "status::backlog"],
+            "description": (
+                "## Goal\nEnsure all compose files, Traefik labels, network memberships, "
+                "and volumes are correct after v0.2 refactor.\n\n"
+                "### Checklist\n"
+                "- [ ] Every labeled service has `traefik.enable=true`, correct rule, priority, middleware chain\n"
+                "- [ ] All services on `shml-platform` network; databases also on `shml-core-net`\n"
+                "- [ ] No stale/missing environment variable references\n"
+                "- [ ] Compose file audit: walk every `deploy/compose/*.yml` and `inference/docker-compose*.yml`\n\n"
+                "**Depends on:** Phase 0.3"
+            ),
+        },
+        {
+            "title": "Phase 0.5: Watchdog completeness audit (100% container coverage)",
+            "labels": ["type::chore", "component::watchdog", "priority::critical", "status::backlog"],
+            "description": (
+                "## Goal\nEnsure watchdog monitors 100% of running containers.\n\n"
+                "### Checklist\n"
+                "- [ ] Compare watchdog critical + standard container lists against `docker ps` output\n"
+                "- [ ] Every HTTP-accessible service has a watchdog probe URL\n"
+                "- [ ] Training protection covers all GPU-using services\n"
+                "- [ ] Memory leak monitoring covers all long-running services\n"
+                "- [ ] Restart order respects service dependencies\n"
+                "- [ ] Every failure mode sends Telegram notification\n"
+                "- [ ] GitLab issue templates correct for all failure types\n\n"
+                "**Depends on:** Phase 0.3"
+            ),
+        },
+        {
+            "title": "Phase 0.6: NemoClaw autonomous remediation enhancements",
+            "labels": ["type::feature", "component::watchdog", "component::agent-service", "priority::high", "status::backlog"],
+            "description": (
+                "## Goal\nExtend watchdog → agent-service → NemoClaw chain for fully autonomous uptime.\n\n"
+                "### Changes\n"
+                "- Lower cascade threshold 3→2 unhealthy containers\n"
+                "- Single-service root cause: LLM diagnosis before 3rd restart attempt\n"
+                "- NemoClaw sandbox for repair (elevated-developer role)\n"
+                "- Proactive health forecasting (hourly, via scan_repo_state.sh)\n"
+                "- Service dependency graph for cascade restarts\n"
+                "- Tiered Telegram notifications (immediate/5min/hourly/daily)\n"
+                "- Auto-escalation chain: watchdog → agent → NemoClaw → human\n\n"
+                "### Files\n"
+                "- `scripts/self-healing/watchdog.sh` — cascade threshold, dependency graph\n"
+                "- `inference/agent-service/skills/platform-health/SKILL.md` — LLM diagnosis prompts\n"
+                "- `scripts/platform/scan_repo_state.sh` — proactive forecasting\n\n"
+                "**Depends on:** Phase 0.5"
+            ),
+        },
+        {
+            "title": "Phase 0 gate: Verification checklist",
+            "labels": ["type::chore", "component::infra", "priority::critical", "status::backlog"],
+            "description": (
+                "## Phase 0 is complete when ALL pass:\n\n"
+                "- [ ] Every container in `docker ps` healthy/running\n"
+                "- [ ] Every Traefik route resolves to correct backend\n"
+                "- [ ] Full OAuth2 login flow works for all 4 roles\n"
+                "- [ ] Watchdog monitors 100% of running containers\n"
+                "- [ ] NemoClaw sandbox remediation tested (stop non-critical service → auto-recovery + Telegram)\n"
+                "- [ ] GitLab Issues board shows all tasks with correct `status::` labels\n"
+                "- [ ] Obsidian markdown generation fully stopped\n"
+                "- [ ] `data/platform-audit/audit-YYYY-MM-DD.json` shows 0 failures\n"
+                "- [ ] Telegram receives: hourly digest, daily report, immediate alerts for test failures\n"
+                "- [ ] CI (GitHub + GitLab) green on main branch\n\n"
+                "**Blocks:** Phase 1 (Sim-Only Foundation)"
+            ),
+        },
+    ]
+
+    print(f"Seeding {len(phase0_issues)} Phase 0 issues...")
+    ok = 0
+    fail = 0
+    for item in phase0_issues:
+        try:
+            kwargs: dict = {"title": item["title"], "description": item.get("description", ""), "labels": item.get("labels", [])}
+            if phase0_ms_id:
+                kwargs["milestone_id"] = phase0_ms_id
+            issue = upsert_issue(item["title"][:50], **kwargs)
+            print(f"  ✓ #{issue.iid:4d}  {item['title'][:65]}")
+            ok += 1
+        except Exception as e:
+            print(f"  ✗ FAILED  {item['title'][:60]} — {e}")
+            fail += 1
+
+    print(f"\nDone: {ok} created/updated, {fail} failed.")
+    return 0 if fail == 0 else 1
 
 
 def _cli_setup_webhook(args: list[str]) -> int:
@@ -712,13 +882,14 @@ def main() -> int:
         print(
             "Usage: python3 gitlab_utils.py <command> [args...]\n\n"
             "Commands:\n"
-            "  create-issue    Create a new issue\n"
-            "  upsert-issue    Find or create an issue (idempotent)\n"
-            "  add-comment     Add a comment to an issue\n"
-            "  list-issues     List open issues\n"
-            "  setup-board     Create labels and milestones\n"
-            "  setup-webhook   Register GitLab outbound webhook\n"
-            "  migrate-kanban  Migrate KANBAN.md items to GitLab issues\n",
+            "  create-issue      Create a new issue\n"
+            "  upsert-issue      Find or create an issue (idempotent)\n"
+            "  add-comment       Add a comment to an issue\n"
+            "  list-issues       List open issues\n"
+            "  setup-board       Create labels and milestones (incl. robotics)\n"
+            "  seed-phase0-issues  Create all Phase 0 tracking issues\n"
+            "  setup-webhook     Register GitLab outbound webhook\n"
+            "  migrate-kanban    Migrate KANBAN.md items to GitLab issues\n",
             file=sys.stderr,
         )
         return 1
@@ -732,6 +903,7 @@ def main() -> int:
         "add-comment": _cli_add_comment,
         "list-issues": _cli_list_issues,
         "setup-board": _cli_setup_board,
+        "seed-phase0-issues": _cli_seed_phase0_issues,
         "setup-webhook": _cli_setup_webhook,
         "migrate-kanban": _cli_migrate_kanban,
     }
