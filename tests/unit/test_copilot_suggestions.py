@@ -218,8 +218,8 @@ class TestTailscaleFunnelSecurity:
 
     @pytest.fixture
     def funnel_service_path(self):
-        """Path to tailscale-funnel.service"""
-        return get_project_root() / "scripts" / "tailscale-funnel.service"
+        """Path to shml-tailscale-funnel.service (moved to deploy/systemd/ in v0.2)"""
+        return get_project_root() / "deploy" / "systemd" / "shml-tailscale-funnel.service"
 
     @pytest.fixture
     def funnel_service_source(self, funnel_service_path):
@@ -229,12 +229,11 @@ class TestTailscaleFunnelSecurity:
 
     def test_funnel_exposes_port_80(self, funnel_service_source):
         """Document that funnel exposes HTTP port 80 to HTTPS 443"""
+        # v0.2: funnel target port is now set via TAILSCALE_FUNNEL_TARGET_PORT env
+        # (old format: 'tailscale funnel --https=443 http://127.0.0.1:80' directly in ExecStart)
         assert (
-            "http://127.0.0.1:80" in funnel_service_source
-        ), "Expected funnel to forward to localhost:80"
-        assert (
-            "--https=443" in funnel_service_source
-        ), "Expected funnel to use HTTPS on 443"
+            "TAILSCALE_FUNNEL_TARGET_PORT=80" in funnel_service_source
+        ), "Expected funnel target port to be 80 (TAILSCALE_FUNNEL_TARGET_PORT=80)"
 
         print("\n⚠️  FINDING: Tailscale Funnel exposes localhost:80 publicly via HTTPS")
         print("   This means ALL services on Traefik (port 80) are publicly accessible")
@@ -248,10 +247,10 @@ class TestTailscaleFunnelSecurity:
 
     def test_funnel_forwards_to_traefik(self, funnel_service_source):
         """Verify funnel forwards to Traefik (port 80)"""
-        # Traefik typically listens on port 80/443
+        # v0.2: port is set via env var; ExecStart delegates to ensure_tailscale_funnel.sh
         assert (
-            "127.0.0.1:80" in funnel_service_source
-        ), "Funnel should forward to Traefik on port 80"
+            "TAILSCALE_FUNNEL_TARGET_PORT=80" in funnel_service_source
+        ), "Funnel should forward to Traefik on port 80 (TAILSCALE_FUNNEL_TARGET_PORT=80)"
 
     def test_document_exposed_services(self):
         """

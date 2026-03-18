@@ -19,9 +19,9 @@ class TestTraefikConfiguration:
 
     @pytest.fixture
     def chat_ui_compose(self):
-        """Load chat-ui deploy/compose/docker-compose.yml."""
+        """Load chat-ui-v2 docker-compose.yml (renamed from chat-ui/ in v0.2)."""
         compose_path = os.path.join(
-            os.path.dirname(__file__), "../../chat-ui/docker-compose.yml"
+            os.path.dirname(__file__), "../../chat-ui-v2/docker-compose.yml"
         )
         with open(compose_path) as f:
             return yaml.safe_load(f)
@@ -95,20 +95,19 @@ class TestTraefikConfiguration:
 
     def test_coding_model_routes_have_oauth_and_role(self, coding_model_compose):
         """Coding model routes should require OAuth + developer role."""
-        # Check primary
-        primary_labels = coding_model_compose["services"]["coding-model-primary"][
-            "labels"
-        ]
-        primary_middleware = None
-        for label in primary_labels:
-            if "coding-model-primary.middlewares=" in label:
-                primary_middleware = label
-                break
-
-        assert primary_middleware is not None
-        assert "oauth2-errors" in primary_middleware
-        assert "oauth2-auth" in primary_middleware
-        assert "role-auth-developer" in primary_middleware
+        # coding-model-primary is commented out (no dedicated GPU available); only fallback is active.
+        # When primary is re-enabled, add its assertions back here.
+        if "coding-model-primary" in coding_model_compose.get("services", {}):
+            primary_labels = coding_model_compose["services"]["coding-model-primary"]["labels"]
+            primary_middleware = None
+            for label in primary_labels:
+                if "coding-model-primary.middlewares=" in label:
+                    primary_middleware = label
+                    break
+            assert primary_middleware is not None
+            assert "oauth2-errors" in primary_middleware
+            assert "oauth2-auth" in primary_middleware
+            assert "role-auth-developer" in primary_middleware
 
         # Check fallback
         fallback_labels = coding_model_compose["services"]["coding-model-fallback"][
