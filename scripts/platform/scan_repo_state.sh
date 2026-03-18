@@ -207,6 +207,12 @@ if [[ -f "$UPDATE_KANBAN" ]]; then
     bash "$UPDATE_KANBAN" 2>&1 | sed 's/^/[update_kanban] /' || true
 fi
 
+# ── Sync GitLab board (Phase 0.2) ────────────────────────────────────────────
+UPDATE_GITLAB_BOARD="$PLATFORM_DIR/scripts/platform/update_gitlab_board.sh"
+if [[ -f "$UPDATE_GITLAB_BOARD" ]]; then
+    bash "$UPDATE_GITLAB_BOARD" 2>&1 | sed 's/^/[gitlab_board] /' || true
+fi
+
 # ── Write PLATFORM_STATUS.md ─────────────────────────────────────────────────
 _ar_status="🔄 Running (PID $AR_PID) | mAP50=$AR_MAP50 epoch=$AR_EPOCH"
 $AR_DONE && _ar_status="✅ Round 2 complete | mAP50=$AR_MAP50"
