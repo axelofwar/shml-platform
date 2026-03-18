@@ -196,6 +196,7 @@ ray_dashboard/
 
 # Training data and runtime data (use volume mounts)
 data/
+data
 
 # Wget artifacts
 wget-log*
@@ -209,6 +210,7 @@ wget-log*
 
 # Tensorboard logs
 runs/
+runs
 tensorboard_logs/
 
 # Weights & Biases
@@ -269,6 +271,7 @@ $RECYCLE_BIN/
 # General logs
 *.log
 logs/
+logs
 *.out
 *.err
 
@@ -354,6 +357,7 @@ test-results/
 # Keep archived README
 !archived/README.md
 backups/
+backups
 
 # Environment backup files (may contain secrets)
 *-env.backup
@@ -399,10 +403,14 @@ ray_compute/data/job_workspaces/
 
 # All ray compute data
 ray_compute/data/
+ray_compute/data
 # Monitoring data directories
 monitoring/tempo/data/
 monitoring/loki/data/
 site/
+site
+.public-mirror
+mlflow-server/logs
 
 # Archived code (preserved in git history)
 archived/
@@ -416,3 +424,24 @@ ray_compute/evaluation_results/
 # Embedded/vendored git repositories (use submodules if needed)
 inference/llama-cpp/llama-src/
 inference/llama-cpp/llama.cpp/
+
+# =============================================================================
+# Phase 7 Hardening (2025-03-18) - Additions after workspace reorganization
+# =============================================================================
+
+# Compressed SQL/database backups (caught one committed backup: ray_compute/backups/)
+# Note: **/backups/*.sql already covered at line 60, but .sql.gz was not
+**/backups/*.sql.gz
+**/backups/*.sql.bz2
+**/backups/*.pgdump
+
+# Explicit safety net (line 359 has backups/ but it can be overridden by tracked files)
+ray_compute/backups/
+
+# Model weights and checkpoints (data/models/ already on L389, explicit patterns)
+**/*.ckpt
+**/*.safetensors.index.json
+
+# Editor artifacts
+**/.idea/
+**/__pycache__/

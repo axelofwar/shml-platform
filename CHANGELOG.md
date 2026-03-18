@@ -44,6 +44,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Phase 7: Deploy library modularization + workspace hardening** (2025-03-18)
+  - **Modular deploy libraries** — Extracted 657 lines of inline bash from `start_all_safe.sh` into 6 focused modules:
+    - `scripts/deploy/lib.sh` — core env, colors, log helpers, privilege checks, Tailscale
+    - `scripts/deploy/networks.sh` — network constants + `ensure_networks()`
+    - `scripts/deploy/docker.sh` — `dc_pull/up/stop/down/restart`, conflict cleanup, retry backoff
+    - `scripts/deploy/health.sh` — `wait_for_health/http/middleware` with strict/warn modes
+    - `scripts/deploy/gpu.sh` — MPS daemon management, VRAM verification
+    - `scripts/deploy/backup.sh` — backup discovery, DB restore, pre-restart snapshot
+  - **`Taskfile.yml`** — Primary developer entrypoint (~40 tasks: start/stop/restart per stack, gpu, logs, systemd:install)
+  - **`VERSION`** — Canonical version file (`0.1.0`)
+  - **Workspace layout** — Agent context moved to `.agent/` (symlinks to obsidian vault); systemd units to `deploy/systemd/`; management scripts to `scripts/deploy/` with thin root wrappers
+  - **Root wrappers** — `stop_all.sh`, `stop_dev.sh`, `start_all_dev.sh`, `check_platform_status.sh`, `run_tests.sh` converted to single-`exec` pass-throughs to `scripts/deploy/`
+  - **Repo hardening** — Archived `ml-platform.service` (stale `/opt/` paths), `sfml-platform.service` (compat wrapper superseded by `shml-platform.service`), `scripts/tailscale-funnel.service` (orphan, canonical at `deploy/systemd/`)
+  - **Security** — `ray_compute/backups/postgres/*.sql.gz` removed from git tracking; added `**/backups/*.sql.gz`, `ray_compute/backups/` to `.gitignore`; removed 4 `.DS_Store` files
+  - **`.gitignore` hardening** — Added compressed SQL/dump patterns, `ray_compute/backups/`, `**/*.ckpt`, `**/*.safetensors.index.json`, `**/.idea/`, `**/__pycache__/`
+
+- **Inference image registry + restart hardening** (2026-03-17)
+  - `.gitlab-ci.yml` — added a `container_registry_build` job that publishes curated inference images to the GitLab Container Registry using commit-SHA tags and buildx registry cache
+  - `scripts/ci/build_registry_images.sh` — added a build/push helper for hot-path inference images with reusable registry cache layers to reduce rebuild time in CI/CD
+  - `inference/docker-compose.inference.yml` — switched core inference services to registry-aware `image` tags with configurable pull policy so deploy/restart paths can reuse prebuilt images instead of rebuilding locally
+  - `inference/gpu-manager/docker-compose.yml`, `inference/embedding-service/docker-compose.yml`, `inference/coding-model/docker-compose.yml`, and `inference/nemotron/docker-compose.yml` — added registry-aware image references for supporting services and reduced Nemotron build context to the service directory to cut unnecessary cache invalidation
+  - `start_all_safe.sh` — added compose conflict cleanup for foreign named containers, centralized compose up/down helpers, optional registry pulls, and `down --remove-orphans` teardown for inference restarts so existing `pii-ui` and `gpu-control-proxy` containers no longer block safe restart flows
+
+- **Unified GPU manager service alignment** (2026-03-17)
+  - `inference/gpu-manager/main.py` — aligned managed GPU 0 and GPU 1 service groups with `inference/docker-compose.inference.yml` so `qwen3-vl-api`, `z-image-api`, and other shared inference services are no longer misreported as GPU 0 workloads
+  - `inference/gpu-manager/main.py` — updated PII yield/restore behavior to stop GPU 1 blocker services and restore the normal shared GPU 1 stack without incorrectly treating the training fallback as a baseline service
+  - `inference/gpu-manager/main.py` — made `/training/start` honor the requested GPU list instead of always assuming only GPU 0
+  - `start_all_safe.sh` — now starts and stops `inference/gpu-manager/docker-compose.yml` with the inference stack so the gateway and Ray yield paths can reach a live manager
+  - `inference/gpu-manager/docker-compose.yml` — replaced the broken `curl`-based healthcheck with a Python stdlib health probe so the manager can become healthy without adding extra packages to the image
+
+- **VS Code large-workspace hardening** (2026-03-17)
+  - `.vscode/settings.json` — disabled Continue tab autocomplete and Copilot next edit suggestions in this workspace, limited Pylance to open files, disabled Python indexing, reduced Git repo scanning, enabled large-file optimizations, and disabled symlink-following in search
+  - `.vscode/extensions.json` — marked `continue.continue` and `saoudrizwan.claude-dev` as unwanted recommendations for this workspace to reduce overlapping AI/indexing activity
+- **Runtime artifact externalization** (2026-03-17)
+  - Moved bulky runtime trees out of the repo root into `/home/axelofwar/Projects/shml-platform-storage`
+  - Replaced `backups`, `runs`, `logs`, `site`, `.public-mirror`, `ray_compute/data`, `mlflow-server/logs`, and `data` with symlinks to the external storage root so existing paths continue to work without code changes or re-downloads
+
 - **deploy/compose/docker-compose.infra.yml** — 6 new services: alertmanager, alertmanager-telegram, feature-scheduler, watchdog, watchdog-admin, nightly-test-runner
 - **monitoring/homer/config.yml** — Added Watchdog Ops Center and Watchdog Dashboard entries
 - **Test suite** — Expanded from 114 → 223 tests (109 new tests for Phase 5)

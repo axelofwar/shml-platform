@@ -1,1 +1,1 @@
-docs/obsidian-vault/70-Internal/USER.md
+.agent/USER.md

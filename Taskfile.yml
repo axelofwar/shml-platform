@@ -1,0 +1,262 @@
+# Taskfile.yml — SHML Platform Developer Entrypoint
+# https://taskfile.dev
+#
+# Usage:
+#   task                   # Default: show status
+#   task start             # Start all services
+#   task start:inference   # Start inference stack only
+#   task restart:ray       # Restart Ray stack
+#   task stop              # Stop all services
+#   task deploy            # Pull from registry then start all
+#   task status            # Show health status
+#   task build             # Rebuild all images
+#   task logs -- <service> # Follow logs for a service
+#
+# Install task: https://taskfile.dev/installation/
+#   brew install go-task  |  go install github.com/go-task/task/v3/cmd/task@latest
+
+version: "3"
+
+set: [pipefail]
+
+vars:
+  DEPLOY: ./scripts/deploy/start_all_safe.sh
+
+# =============================================================================
+# Default: show status
+# =============================================================================
+tasks:
+  default:
+    desc: Show platform status
+    cmds:
+      - "{{.DEPLOY}} status"
+    silent: true
+
+  # ===========================================================================
+  # Start
+  # ===========================================================================
+  start:
+    desc: Start all services (local/cached images)
+    cmds:
+      - "{{.DEPLOY}} start"
+
+  "start:infra":
+    desc: Start infrastructure (Traefik, Postgres, Redis, Nessie)
+    cmds:
+      - "{{.DEPLOY}} start infra"
+
+  "start:auth":
+    desc: Start auth stack (FusionAuth, OAuth2 Proxy, Role Auth)
+    cmds:
+      - "{{.DEPLOY}} start auth"
+
+  "start:mlflow":
+    desc: Start MLflow tracking server
+    cmds:
+      - "{{.DEPLOY}} start mlflow"
+
+  "start:ray":
+    desc: Start Ray compute cluster
+    cmds:
+      - "{{.DEPLOY}} start ray"
+
+  "start:inference":
+    desc: Start inference stack (coding models, chat API, embedding)
+    cmds:
+      - "{{.DEPLOY}} start inference"
+
+  "start:monitoring":
+    desc: Start monitoring stack (Prometheus, Grafana, Alertmanager)
+    cmds:
+      - "{{.DEPLOY}} start monitoring"
+
+  "start:devtools":
+    desc: Start devtools (VS Code Server, Homer, GitLab, FiftyOne)
+    cmds:
+      - "{{.DEPLOY}} start devtools"
+
+  "start:agent":
+    desc: Start ACE Agent service
+    cmds:
+      - "{{.DEPLOY}} start agent"
+
+  "start:watchdog":
+    desc: Start self-healing watchdog
+    cmds:
+      - "{{.DEPLOY}} restart watchdog"
+
+  # ===========================================================================
+  # Stop
+  # ===========================================================================
+  stop:
+    desc: Stop all services (preserves containers)
+    cmds:
+      - "{{.DEPLOY}} stop"
+
+  "stop:inference":
+    cmds:
+      - "{{.DEPLOY}} stop inference"
+
+  "stop:ray":
+    cmds:
+      - "{{.DEPLOY}} stop ray"
+
+  # ===========================================================================
+  # Restart (remove + recreate — clean slate)
+  # ===========================================================================
+  restart:
+    desc: "Full restart: backup → down all → start all"
+    cmds:
+      - "{{.DEPLOY}} restart"
+
+  "restart:infra":
+    cmds:
+      - "{{.DEPLOY}} restart infra"
+
+  "restart:auth":
+    cmds:
+      - "{{.DEPLOY}} restart auth"
+
+  "restart:mlflow":
+    cmds:
+      - "{{.DEPLOY}} restart mlflow"
+
+  "restart:ray":
+    cmds:
+      - "{{.DEPLOY}} restart ray"
+
+  "restart:inference":
+    cmds:
+      - "{{.DEPLOY}} restart inference"
+
+  "restart:monitoring":
+    cmds:
+      - "{{.DEPLOY}} restart monitoring"
+
+  "restart:agent":
+    cmds:
+      - "{{.DEPLOY}} restart agent"
+
+  # ===========================================================================
+  # Down
+  # ===========================================================================
+  down:
+    desc: Remove all containers (no volume removal)
+    cmds:
+      - "{{.DEPLOY}} down"
+
+  # ===========================================================================
+  # Deploy (registry-first: pull then start)
+  # ===========================================================================
+  deploy:
+    desc: Pull from GitLab registry then start all services
+    cmds:
+      - "{{.DEPLOY}} deploy"
+
+  "deploy:inference":
+    desc: Pull + start inference services from registry
+    cmds:
+      - "{{.DEPLOY}} deploy inference"
+
+  "deploy:ray":
+    cmds:
+      - "{{.DEPLOY}} deploy ray"
+
+  # ===========================================================================
+  # Status & Diagnostics
+  # ===========================================================================
+  status:
+    desc: Show service health status and access URLs
+    cmds:
+      - "{{.DEPLOY}} status"
+    silent: true
+
+  diagnose:
+    desc: Debug OAuth2/Traefik middleware issues
+    cmds:
+      - "{{.DEPLOY}} diagnose"
+
+  "fix-oauth":
+    desc: Fix FusionAuth OAuth client callback URLs
+    cmds:
+      - "{{.DEPLOY}} fix-oauth"
+
+  # ===========================================================================
+  # Build
+  # ===========================================================================
+  build:
+    desc: Rebuild all custom container images
+    cmds:
+      - "{{.DEPLOY}} build"
+
+  # ===========================================================================
+  # Logs
+  # ===========================================================================
+  logs:
+    desc: "Follow logs for a service: task logs -- <container_name>"
+    cmds:
+      - docker logs -f {{.CLI_ARGS}}
+
+  # ===========================================================================
+  # GPU
+  # ===========================================================================
+  gpu:
+    desc: Show GPU status (nvidia-smi)
+    cmds:
+      - nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits
+    silent: true
+
+  # ===========================================================================
+  # Cleanup
+  # ===========================================================================
+  cleanup:
+    desc: "Backup → stop → remove all platform containers and networks"
+    cmds:
+      - "{{.DEPLOY}} cleanup"
+
+  # ===========================================================================
+  # Systemd (Phase 7)
+  # ===========================================================================
+  "systemd:install":
+    desc: Install platform systemd service units (requires sudo)
+    cmds:
+      - |
+        for unit in deploy/systemd/*.service; do
+          name=$(basename "$unit")
+          echo "Installing $name → /etc/systemd/system/$name"
+          sudo ln -sf "$(pwd)/$unit" "/etc/systemd/system/$name"
+        done
+        sudo systemctl daemon-reload
+        echo "✓ Systemd units installed. Enable with: sudo systemctl enable <unit>"
+
+  "systemd:status":
+    desc: Show status of all platform systemd units
+    cmds:
+      - |
+        for unit in deploy/systemd/*.service; do
+          name=$(basename "$unit")
+          systemctl is-active "$name" 2>/dev/null && echo "● $name: active" || echo "○ $name: inactive"
+        done
+
+  # ===========================================================================
+  # Dev (Phase 8 placeholders — SDK/training editable install)
+  # ===========================================================================
+  "dev:sdk":
+    desc: Clone shml-sdk and install in editable mode
+    cmds:
+      - |
+        if [ ! -d "../shml-sdk" ]; then
+          git clone "${GITLAB_URL:-git@gitlab:shml}/shml-sdk.git" ../shml-sdk
+        fi
+        pip install -e ../shml-sdk
+        echo "✓ shml-sdk installed in editable mode from ../shml-sdk"
+
+  "dev:training":
+    desc: Clone shml-training and install in editable mode
+    cmds:
+      - |
+        if [ ! -d "../shml-training" ]; then
+          git clone "${GITLAB_URL:-git@gitlab:shml}/shml-training.git" ../shml-training
+        fi
+        pip install -e ../shml-training
+        echo "✓ shml-training installed in editable mode from ../shml-training"

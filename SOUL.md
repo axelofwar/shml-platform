@@ -1,1 +1,1 @@
-docs/obsidian-vault/70-Internal/SOUL.md
+.agent/SOUL.md

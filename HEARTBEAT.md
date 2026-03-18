@@ -1,1 +1,1 @@
-docs/obsidian-vault/70-Internal/HEARTBEAT.md
+.agent/HEARTBEAT.md

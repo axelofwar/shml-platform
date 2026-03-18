@@ -1,1 +1,1 @@
-docs/obsidian-vault/70-Internal/TOOLS.md
+.agent/TOOLS.md
