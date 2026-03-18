@@ -25,6 +25,22 @@
 # checks. This middleware overrides the proto header so backends know
 # the original connection was HTTPS.
 http:
+  # ==========================================================================
+  # REGISTRY AUTH BYPASS
+  # GitLab JWT auth endpoint must be unprotected so `docker login/push/pull`
+  # can authenticate against the container registry without oauth2-proxy
+  # intercepting the token exchange.
+  # Priority 250 > gitlab router priority 100 = matches first, no middleware.
+  # ==========================================================================
+  routers:
+    gitlab-registry-jwt:
+      rule: "PathPrefix(`/gitlab/jwt/auth`)"
+      service: "gitlab@docker"
+      priority: 250
+      entryPoints:
+        - web
+        - websecure
+
   middlewares:
     tailscale-https-proto:
       headers:

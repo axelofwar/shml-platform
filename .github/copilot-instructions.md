@@ -534,10 +534,27 @@ async def get_current_user_from_proxy(request: Request) -> Optional[dict]:
 
 ### Platform Management
 
-**✅ ALWAYS use start_all_safe.sh for service management:**
+**✅ Preferred: use `task` (Taskfile.yml) for all day-to-day operations:**
 
 ```bash
-# Restart specific service stack (CORRECT METHOD)
+# Install Task once: brew install go-task
+task                           # Show platform status
+task start                     # Start all services
+task start:inference           # Start inference stack only
+task restart:ray               # Restart Ray compute stack
+task restart:mlflow            # Restart MLflow stack
+task restart:infra             # Restart Traefik/OAuth/FusionAuth
+task restart:inference         # Restart inference services
+task stop                      # Stop all services
+task status                    # Detailed health status
+task gpu                       # GPU VRAM + utilization
+task logs -- <service>         # Follow service logs
+task systemd:install           # Install systemd unit files
+```
+
+**✅ Direct orchestrator access when needed:**
+
+```bash
 ./start_all_safe.sh restart ray       # Restart Ray services
 ./start_all_safe.sh restart mlflow    # Restart MLflow services
 ./start_all_safe.sh restart infra     # Restart Traefik/OAuth/FusionAuth
@@ -562,11 +579,32 @@ docker logs oauth2-proxy -f
 - Inference model loading states
 - WebSocket connections
 
-**start_all_safe.sh ensures:**
+**start_all_safe.sh / task ensures:**
 - Database migrations run before services start
 - Proper dependency ordering (postgres → app → ui)
 - Orphaned containers are cleaned up
 - Health checks validate services before proceeding
+
+### Deploy Library Pattern
+
+Orchestration logic is split into 6 modular, guard-gated bash libraries in `scripts/deploy/`:
+
+| Library | Functions |
+|---------|-----------|
+| `lib.sh` | `load_shml_env`, log helpers, `can_run_privileged`, Tailscale helpers |
+| `networks.sh` | `ensure_networks()`, `PLATFORM_NETWORK`, `CORE_NETWORK` |
+| `docker.sh` | `dc_pull/up/stop/down/restart`, `cleanup_compose_conflicts` |
+| `health.sh` | `wait_for_health`, `wait_for_http`, `wait_for_middleware` |
+| `gpu.sh` | `check_mps_status`, `stop_mps_daemon`, `verify_gpu_access` |
+| `backup.sh` | `find_best_backup`, `restore_database_from_backup`, `create_pre_restart_backup` |
+
+Each module uses an idempotency guard (`[[ -n "${_SHML_LIB_LOADED:-}" ]] && return 0`) so sourcing from multiple entry-points is safe.
+
+Workspace layout:
+- `scripts/deploy/` — library modules + real script implementations
+- `deploy/systemd/` — canonical systemd unit files
+- `.agent/` — agent context (AGENTS.md + symlinks to obsidian vault)
+- `Taskfile.yml` — primary developer task runner (delegates to `start_all_safe.sh`)
 
 ### Documentation Updates
 

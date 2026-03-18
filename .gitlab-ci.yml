@@ -28,6 +28,8 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   DOCKER_BUILDKIT: "1"
+  SHML_REGISTRY_IMAGE_PREFIX: "$CI_REGISTRY_IMAGE/containers"
+  SHML_IMAGE_TAG: "$CI_COMMIT_SHA"
 
 # ---------------------------------------------------------------------------
 # Reusable before_script for Python test jobs
@@ -379,6 +381,29 @@ compose_validate:
           ok = False
       sys.exit(0 if ok else 1)
       "
+
+container_registry_build:
+  stage: build
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+      changes:
+        - .gitlab-ci.yml
+        - inference/**/*
+        - chat-ui-v2/**/*
+        - deploy/compose/**/*.yml
+        - scripts/ci/build_registry_images.sh
+  before_script:
+    - docker info
+  script:
+    - scripts/ci/build_registry_images.sh
 
 # ===========================================================================
 # STAGE: mirror

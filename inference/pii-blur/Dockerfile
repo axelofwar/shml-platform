@@ -1,40 +1,37 @@
 # PII Face Blurring Service - SOTA Models (Jan 2026)
 # YOLOv11m-Face (detection) + SegFormer (segmentation) + BoxMOT/BoT-SORT (tracking)
 # RF-DETR (fallback detection + license plates)
-FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
+# Inherits: base-cuda-cudnn (SHML base layer → pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime)
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-cuda-cudnn:${BASE_TAG}
 
 WORKDIR /app
 
 # Set shell to bash with pipefail for safer piped commands
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Prevent interactive prompts during apt-get
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=UTC
+# base-cuda-cudnn already provides: pytorch base, uv, curl, DEBIAN_FRONTEND=noninteractive,
+# TZ=UTC, HF_HOME=/models/huggingface, TORCH_HOME=/models/torch
 
-# Model cache environment - persist across rebuilds
-ENV HF_HOME=/models/huggingface
-ENV TORCH_HOME=/models/torch
-
-# Install system dependencies + uv for fast dependency resolution
+# CV system libs specific to pii-blur (ffmpeg, OpenCV deps, libgomp for YOLO)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
-    curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv - 10-100x faster than pip
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    mv /root/.local/bin/uv /usr/local/bin/
-
 # Install Python dependencies with uv
-# Use --link-mode=copy to avoid symlink issues, let UV resolve versions
+# Install numpy first to avoid NumPy 2.x ABI mismatches with torch/rfdetr deps.
+RUN uv pip install --system --no-cache numpy==1.26.4
+
+# Use lowest-direct resolution to reduce unnecessary version upgrades.
 COPY requirements.txt .
-RUN uv pip install --system --no-cache --compile-bytecode -r requirements.txt
+RUN uv pip install --system --no-cache --compile-bytecode \
+    --resolution=lowest-direct \
+    -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
@@ -52,32 +49,32 @@ RUN mkdir -p /models/yolo-face /models/yolo-seg /models/segformer /models/reid \
 # Download RF-DETR models (base COCO model for face fallback)
 # Use || true so build doesn't fail if rfdetr package has import issues
 RUN python -c "\
-from rfdetr import RFDETRBase; \
-print('Downloading RF-DETR Base...'); \
-model = RFDETRBase(); \
-print('RF-DETR Base downloaded successfully')" || echo "RF-DETR Base download skipped (will download on first use)"
+    from rfdetr import RFDETRBase; \
+    print('Downloading RF-DETR Base...'); \
+    model = RFDETRBase(); \
+    print('RF-DETR Base downloaded successfully')" || echo "RF-DETR Base download skipped (will download on first use)"
 
 # Download RF-DETR Medium for license plate detection (better accuracy)
 RUN python -c "\
-from rfdetr import RFDETRMedium; \
-print('Downloading RF-DETR Medium...'); \
-model = RFDETRMedium(); \
-print('RF-DETR Medium downloaded successfully')" || echo "RF-DETR Medium download skipped (will download on first use)"
+    from rfdetr import RFDETRMedium; \
+    print('Downloading RF-DETR Medium...'); \
+    model = RFDETRMedium(); \
+    print('RF-DETR Medium downloaded successfully')" || echo "RF-DETR Medium download skipped (will download on first use)"
 
 # Download YOLOv11m-face model
 RUN python -c "\
-from ultralytics import YOLO; \
-import os; \
-os.makedirs('/models/yolo-face', exist_ok=True); \
-print('Note: YOLOv11m-face will be downloaded on first use from HuggingFace')"
+    from ultralytics import YOLO; \
+    import os; \
+    os.makedirs('/models/yolo-face', exist_ok=True); \
+    print('Note: YOLOv11m-face will be downloaded on first use from HuggingFace')"
 
 # Download SegFormer for face segmentation
 RUN python -c "\
-from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation; \
-print('Downloading SegFormer nvidia/segformer-b0-finetuned-ade-512-512...'); \
-processor = SegformerImageProcessor.from_pretrained('nvidia/segformer-b0-finetuned-ade-512-512'); \
-model = SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b0-finetuned-ade-512-512'); \
-print('SegFormer downloaded successfully')" || echo "SegFormer download skipped (will download on first use)"
+    from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation; \
+    print('Downloading SegFormer nvidia/segformer-b0-finetuned-ade-512-512...'); \
+    processor = SegformerImageProcessor.from_pretrained('nvidia/segformer-b0-finetuned-ade-512-512'); \
+    model = SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b0-finetuned-ade-512-512'); \
+    print('SegFormer downloaded successfully')" || echo "SegFormer download skipped (will download on first use)"
 
 # Copy license plate detection config (uses RF-DETR fine-tuned on Roboflow dataset)
 COPY scripts/download_plate_model.py ./scripts/

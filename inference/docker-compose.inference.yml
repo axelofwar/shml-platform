@@ -17,6 +17,8 @@ services:
   # INT4 quantized 8B model fits within 2070's 8GB VRAM
   # ==========================================================================
   qwen3-vl-api:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/qwen3-vl-api:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./qwen3-vl
       dockerfile: Dockerfile
@@ -52,10 +54,10 @@ services:
           memory: 6G
           devices:
             - driver: nvidia
-              device_ids: ["1"]  # RTX 2070 (8GB) - INT4 8B model fits here
-              capabilities: [gpu]
+              device_ids: [ "1" ] # RTX 2070 (8GB) - INT4 8B model fits here
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -71,13 +73,15 @@ services:
       - "traefik.http.routers.qwen3-vl.middlewares=oauth2-errors,oauth2-auth,qwen3-strip"
     # No postgres dependency - qwen3-vl doesn't need DB directly
 
-  # ==========================================================================
-  # Z-Image - Image Generation (RTX 2070 - On-Demand, Yields to Nemotron)
-  # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
-  # Moved to RTX 2070 to keep 3090 reserved for Nemotron
-  # If model is too large, will stay unloaded until explicitly requested
-  # ==========================================================================
+    # ==========================================================================
+    # Z-Image - Image Generation (RTX 2070 - On-Demand, Yields to Nemotron)
+    # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
+    # Moved to RTX 2070 to keep 3090 reserved for Nemotron
+    # If model is too large, will stay unloaded until explicitly requested
+    # ==========================================================================
   z-image-api:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/z-image-api:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./z-image
       dockerfile: Dockerfile
@@ -113,10 +117,10 @@ services:
           memory: 8G
           devices:
             - driver: nvidia
-              device_ids: ["1"]  # RTX 2070 (8GB) - freed 3090 for Nemotron
-              capabilities: [gpu]
+              device_ids: [ "1" ] # RTX 2070 (8GB) - freed 3090 for Nemotron
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -133,11 +137,13 @@ services:
     # No postgres dependency - z-image doesn't need DB directly
     # No postgres dependency - z-image doesn't need DB directly
 
-  # ==========================================================================
-  # Inference Gateway - Queue, Rate Limiting, Chat History
-  # Uses shml-postgres from main deploy/compose/docker-compose.yml
-  # ==========================================================================
+    # ==========================================================================
+    # Inference Gateway - Queue, Rate Limiting, Chat History
+    # Uses shml-postgres from main deploy/compose/docker-compose.yml
+    # ==========================================================================
   inference-gateway:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/inference-gateway:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./gateway
       dockerfile: Dockerfile
@@ -178,7 +184,7 @@ services:
           cpus: "0.25"
           memory: 256M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -204,6 +210,8 @@ services:
   # Dynamic GPU: RTX 3090 (when not training) or RTX 2070 (fallback)
   # ==========================================================================
   pii-blur-api:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/pii-blur-api:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./pii-blur
       dockerfile: Dockerfile
@@ -265,10 +273,10 @@ services:
           devices:
             # Pinned to RTX 2070 (GPU 1) - 3090 reserved for Nemotron
             - driver: nvidia
-              device_ids: ["1"]
-              capabilities: [gpu]
+              device_ids: [ "1" ]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -286,6 +294,8 @@ services:
   # PII Blur POC UI (React/Vite - Nginx production server)
   # ==========================================================================
   pii-ui:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/pii-ui:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./pii-ui
       dockerfile: Dockerfile
@@ -304,7 +314,7 @@ services:
           cpus: "0.1"
           memory: 64M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:80/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -322,6 +332,8 @@ services:
   # Audio Copyright Detection & AI Replacement (CPU - No GPU needed)
   # ==========================================================================
   audio-copyright-api:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/audio-copyright-api:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: ./audio-copyright
       dockerfile: Dockerfile
@@ -356,7 +368,7 @@ services:
           cpus: "1.0"
           memory: 2G
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 60s
       timeout: 30s
       retries: 3
@@ -383,9 +395,9 @@ services:
     container_name: shl-nano
     restart: unless-stopped
     profiles:
-      - nano          # opt-in: docker compose --profile nano up shl-nano
+      - nano # opt-in: docker compose --profile nano up shl-nano
     environment:
-      - CUDA_VISIBLE_DEVICES=0   # container sees only 1 GPU (mapped to host GPU 1)
+      - CUDA_VISIBLE_DEVICES=0 # container sees only 1 GPU (mapped to host GPU 1)
       - MODEL_RUN=shl-nano-sft
       - MAX_NEW_TOKENS=512
       - NANO_CONFIDENCE_THRESHOLD=0.55
@@ -409,16 +421,16 @@ services:
           memory: 1G
           devices:
             - driver: nvidia
-              device_ids: ["1"]        # host GPU 1 = RTX 2070
-              capabilities: [gpu]
+              device_ids: [ "1" ] # host GPU 1 = RTX 2070
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8021/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8021/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     labels:
-      - "traefik.enable=false"   # internal only
+      - "traefik.enable=false" # internal only
 
 volumes:
   # inference-postgres-data removed - using shml-postgres

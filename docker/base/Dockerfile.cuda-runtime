@@ -1,0 +1,39 @@
+# SHML Base Image: CUDA Runtime
+# Inherits: nvidia/cuda:12.1.0-runtime-ubuntu22.04
+# Used by: base-python-gpu (next layer), and any service needing bare CUDA runtime
+#
+# Registry: ${SHML_REGISTRY_IMAGE_PREFIX}/base-cuda-runtime:${SHML_IMAGE_TAG}
+
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Standard HuggingFace / model cache paths
+    HF_HOME=/models \
+    TORCH_HOME=/models/torch \
+    TRANSFORMERS_OFFLINE=0 \
+    HF_HUB_OFFLINE=0
+
+# Python 3.11 + curl for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 \
+        python3.11-venv \
+        python3-pip \
+        curl \
+        ca-certificates \
+    && update-alternatives --install /usr/bin/python  python  /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root runtime user
+RUN useradd -m -u 1000 -s /bin/bash inference
+
+WORKDIR /app
+
+HEALTHCHECK --interval=60s --timeout=30s --start-period=300s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000

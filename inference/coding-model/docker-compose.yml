@@ -115,10 +115,11 @@ services:
   # Always available, handles requests when primary is yielded to training
   # ===========================================================================
   coding-model-fallback:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/coding-model-fallback:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${PLATFORM_PREFIX:-shml}-coding-model:latest
     container_name: coding-model-fallback
     restart: unless-stopped
     env_file:
@@ -165,14 +166,14 @@ services:
           memory: 8G
           devices:
             - driver: nvidia
-              device_ids: ["1"]
-              capabilities: [gpu]
+              device_ids: [ "1" ]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:8000/health" ]
       interval: 60s
       timeout: 30s
       retries: 3
-      start_period: 180s  # Faster startup for smaller model
+      start_period: 180s # Faster startup for smaller model
     labels:
       - "traefik.enable=true"
       # Fallback router - lower priority, catches requests when primary unhealthy

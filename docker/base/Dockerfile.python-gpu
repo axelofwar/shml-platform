@@ -1,0 +1,25 @@
+# SHML Base Image: Python GPU Services
+# Inherits: base-cuda-runtime (SHML layer)
+# Used by: inference/qwen3-vl, inference/embedding-service, inference/nemotron,
+#           inference/z-image, and any GPU-accelerated Python FastAPI service
+#
+# Registry: ${SHML_REGISTRY_IMAGE_PREFIX}/base-python-gpu:${SHML_IMAGE_TAG}
+#
+# Build:
+#   docker build \
+#     --build-arg BASE_REGISTRY=<registry>/containers \
+#     --build-arg BASE_TAG=latest \
+#     -f Dockerfile.python-gpu -t shml/base-python-gpu .
+
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-cuda-runtime:${BASE_TAG}
+
+# Install uv for fast GPU dependency resolution (avoids pip slowness on large ML packages)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && uv --version
+
+# Offline inference mode by default — override at runtime for first pull
+ENV TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_OFFLINE=1

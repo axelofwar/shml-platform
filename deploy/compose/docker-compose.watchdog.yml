@@ -1,0 +1,117 @@
+# SHML Platform - Self-Healing Watchdog Layer
+# Services: watchdog (health monitor + auto-restart), watchdog-admin (ops UI)
+# Networks:
+#   - shml-platform: All services communicate through platform network
+#
+# Prerequisites: All other layers should be running first.
+# Usage: managed by start_all_safe.sh start watchdog (or via start_all_safe.sh start)
+
+services:
+  # ==========================================================================
+  # SELF-HEALING WATCHDOG - Container health monitoring & auto-restart
+  # ==========================================================================
+  watchdog:
+    image: docker:cli
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq procps coreutils util-linux >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
+    environment:
+      CHECK_INTERVAL: "${WATCHDOG_INTERVAL:-60}"
+      MAX_RESTARTS: "${WATCHDOG_MAX_RESTARTS:-3}"
+      COOLDOWN_SECONDS: "900"
+      PLATFORM_PREFIX: "${PLATFORM_PREFIX:-shml}"
+      PROMETHEUS_URL: "http://global-prometheus:9090"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      GITLAB_API_TOKEN: "${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}"
+      EXCLUDED_CONTAINERS: "${WATCHDOG_EXCLUDED:-}"
+      TRAINING_GPU: "0"
+      WATCHDOG_GPU: "1"
+      DISPLAY_GPU: "${DISPLAY_GPU:-1}"
+      MEMORY_LEAK_THRESHOLD: "100"
+      HOST_MEMORY_HIGH_WATERMARK_PCT: "${HOST_MEMORY_HIGH_WATERMARK_PCT:-92}"
+      HOST_MEMORY_SOFT_WATERMARK_PCT: "${HOST_MEMORY_SOFT_WATERMARK_PCT:-85}"
+      HOST_SWAP_HIGH_WATERMARK_PCT: "${HOST_SWAP_HIGH_WATERMARK_PCT:-25}"
+      DISPLAY_GPU_UTIL_WATERMARK_PCT: "${DISPLAY_GPU_UTIL_WATERMARK_PCT:-60}"
+      DISPLAY_GPU_MEMORY_WATERMARK_MIB: "${DISPLAY_GPU_MEMORY_WATERMARK_MIB:-2048}"
+      LOW_PRIORITY_CONTAINERS: "${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,pii-blur-api,shml-fiftyone,shml-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
+      AGENT_SERVICE_URL: "http://agent-service:8000"
+      GITLAB_INTERNAL_HEALTH_URL: "http://gitlab:8929/gitlab/users/sign_in"
+      OOM_RESTART_BUDGET: "5"
+      PUSHGATEWAY_URL: "http://${PLATFORM_PREFIX:-shml}-pushgateway:9091"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/watchdog/watchdog.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================================================
+  # WATCHDOG ADMIN - Operations Control Center UI
+  # ==========================================================================
+  watchdog-admin:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-watchdog-admin
+    restart: unless-stopped
+    entrypoint: ["python3", "/scripts/self-healing/watchdog_admin.py"]
+    environment:
+      ADMIN_PORT: "8099"
+      BASE_PATH: "/watchdog"
+      WATCHDOG_STATE_DIR: "/var/lib/watchdog"
+      WATCHDOG_LOG_DIR: "/var/log/watchdog"
+      GRAFANA_URL: "/grafana/"
+      GRAFANA_EXPLORE_LOGS_URL: "/grafana/explore?orgId=1&left=%7B%22datasource%22:%22loki%22%7D"
+      GRAFANA_DASHBOARD_URL: "/grafana/d/watchdog-overview"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ../../scripts:/scripts:ro
+      - watchdog-data:/var/lib/watchdog
+      - watchdog-logs:/var/log/watchdog:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8099/watchdog/health\")' 2>/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.watchdog-admin.rule=PathPrefix(`/watchdog`)"
+      - "traefik.http.routers.watchdog-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.watchdog-admin.priority=100"
+      - "traefik.http.routers.watchdog-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+      - "traefik.http.services.watchdog-admin.loadbalancer.server.port=8099"
+
+volumes:
+  watchdog-data:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-data
+  watchdog-logs:
+    name: ${PLATFORM_PREFIX:-shml}-watchdog-logs
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

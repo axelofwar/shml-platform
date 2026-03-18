@@ -6,6 +6,18 @@ Organized utility scripts for the SHML Platform.
 
 ```
 scripts/
+├── deploy/         # ★ Deploy orchestration libraries (sourced by start_all_safe.sh)
+│   ├── lib.sh          Core env, colors, logging, timeouts, Tailscale helpers
+│   ├── networks.sh     Network constants + ensure_networks()
+│   ├── docker.sh       dc_pull/up/stop/down/restart, retry backoff
+│   ├── health.sh       wait_for_health/http/middleware (strict/warn)
+│   ├── gpu.sh          MPS daemon, VRAM verification
+│   ├── backup.sh       Backup discovery, DB restore, pre-restart snapshots
+│   ├── stop_all.sh     Stop all services (real target, root wrapper delegates here)
+│   ├── stop_dev.sh     Stop dev stack
+│   ├── start_all_dev.sh  Start dev/optional stack
+│   ├── check_platform_status.sh  Quick health overview
+│   └── run_tests.sh    Run test suite
 ├── auth/           # Authentication & user management
 ├── backup/         # Backup & restore operations
 ├── gpu/            # GPU management & monitoring
@@ -20,6 +32,25 @@ scripts/
 
 > **Note:** The Platform SDK (FusionAuth admin) has been merged into `libs/client/shml/admin/`.
 > Use `from shml.admin import PlatformSDK` instead.
+
+## Deploy Libraries (`deploy/`)
+
+The `deploy/` subdirectory holds the **modular orchestration library** for `start_all_safe.sh`.
+Each file is independently sourceable with idempotency guards (`_SHML_*_LOADED`).
+
+```bash
+# Source any module individually (e.g. in a one-off script)
+source scripts/deploy/lib.sh
+source scripts/deploy/docker.sh
+dc_up deploy/compose/docker-compose.infra.yml infra 120
+
+# Or use the Taskfile entrypoint for all operations
+task restart:inference
+```
+
+Root-level scripts (`stop_all.sh`, `check_platform_status.sh`, etc.) are thin wrappers
+that `exec` into the real implementations in `scripts/deploy/`. This keeps the repo root clean
+while maintaining backwards compatibility for scripts referencing the old paths.
 
 ## Quick Reference
 

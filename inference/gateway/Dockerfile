@@ -1,13 +1,10 @@
 # Inference Gateway Dockerfile
-FROM python:3.11-slim
+# Inherits: base-python-cpu (SHML base layer)
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-python-cpu:${BASE_TAG}
 
-# Install dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m -u 1000 inference
+# base-python-cpu already provides: python:3.11-slim, curl, uv, non-root inference user (uid 1000)
 WORKDIR /app
 
 # Install Python dependencies
@@ -22,8 +19,7 @@ RUN mkdir -p /backups /app/logs && chown -R inference:inference /app /backups
 
 USER inference
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+# base-python-cpu already sets PYTHONUNBUFFERED and PYTHONDONTWRITEBYTECODE
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1

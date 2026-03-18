@@ -1,0 +1,418 @@
+# SHML Platform - Monitoring & Observability Layer
+# Services: Prometheus, Grafana, Pushgateway, Alertmanager, exporters
+# Networks:
+#   - shml-platform: All services + scrape targets on this network
+#
+# Prerequisites: docker-compose.core.yml (for Traefik routing)
+# Usage: managed by start_all_safe.sh start monitoring
+
+services:
+  # ==========================================================================
+  # SYSTEM EXPORTERS
+  # ==========================================================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-node-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.42'
+          memory: 109M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/textfile'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - ../../monitoring/prometheus:/textfile:ro
+    networks:
+      - platform
+    expose:
+      - "9100"
+    pid: host
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: ${PLATFORM_PREFIX:-shml}-cadvisor
+    restart: unless-stopped
+    command:
+      - --store_container_labels=true
+      - --docker=unix:///var/run/docker.sock
+      - --housekeeping_interval=30s
+      - --max_housekeeping_interval=60s
+      - --event_storage_event_limit=default=0
+      - --event_storage_age_limit=default=0
+    deploy:
+      resources:
+        limits:
+          cpus: '0.47'
+          memory: 200M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - platform
+    expose:
+      - "8080"
+    privileged: true
+    devices:
+      - /dev/kmsg
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # PROMETHEUS - Metrics Collection
+  # ==========================================================================
+  global-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: global-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ../../monitoring/global-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
+      - global-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.entrypoints=web,websecure"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+      - "traefik.http.routers.prometheus.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,prometheus-strip"
+      - "traefik.http.routers.prometheus.priority=100"
+
+  pushgateway:
+    image: prom/pushgateway:v1.6.2
+    container_name: ${PLATFORM_PREFIX:-shml}-pushgateway
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    expose:
+      - "9091"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pushgateway.rule=PathPrefix(`/pushgateway`)"
+      - "traefik.http.routers.pushgateway.entrypoints=web,websecure"
+      - "traefik.http.services.pushgateway.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.pushgateway-strip.stripprefix.prefixes=/pushgateway"
+      - "traefik.http.routers.pushgateway.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,pushgateway-strip"
+      - "traefik.http.routers.pushgateway.priority=100"
+
+  ml-slo-exporter:
+    build: ../../monitoring/ml-slo-exporter
+    container_name: ${PLATFORM_PREFIX:-shml}-ml-slo-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    env_file:
+      - ../../config/mlflow.env
+    environment:
+      RAY_API_URI: http://ray-compute-api:8000
+      SCRAPE_INTERVAL: "60"
+      EXPORTER_PORT: "9092"
+    expose:
+      - "9092"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ==========================================================================
+  # GRAFANA - Metrics Visualization
+  # ==========================================================================
+  unified-grafana:
+    image: grafana/grafana:10.2.2
+    container_name: unified-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_DOMAIN}/grafana"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "none"
+      GF_SECURITY_X_FRAME_OPTIONS: ""
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-Auth-Request-Email"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "email"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_SYNC_TTL: "60"
+      GF_AUTH_PROXY_WHITELIST: "172.16.0.0/12,192.168.0.0/16,127.0.0.1"
+      GF_AUTH_PROXY_HEADERS: "Name:X-Auth-Request-User Email:X-Auth-Request-Email"
+      GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN: "false"
+    volumes:
+      - ../../monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../../monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../../monitoring/grafana/dashboards/:/var/lib/grafana/dashboards/:ro
+      - unified-grafana-data:/var/lib/grafana
+    secrets:
+      - grafana_password
+    expose:
+      - "3000"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=web,websecure"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.http.routers.grafana.priority=100"
+      - "traefik.http.routers.grafana.middlewares=oauth2-errors,oauth2-auth"
+
+  # ==========================================================================
+  # ALERTMANAGER - Alert Routing
+  # ==========================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address='
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - ../../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../../monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    expose:
+      - "9093"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alertmanager.rule=PathPrefix(`/alertmanager`)"
+      - "traefik.http.routers.alertmanager.entrypoints=web,websecure"
+      - "traefik.http.services.alertmanager.loadbalancer.server.port=9093"
+      - "traefik.http.routers.alertmanager.middlewares=oauth2-auth@docker"
+
+  alertmanager-telegram:
+    image: metalmatze/alertmanager-bot:0.4.3
+    container_name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram
+    restart: unless-stopped
+    command:
+      - --alertmanager.url=http://alertmanager:9093
+      - --log.level=info
+      - --store=bolt
+      - --bolt.path=/data/bot.db
+      - --listen.addr=0.0.0.0:9087
+      - --template.paths=/templates/telegram.tmpl
+    environment:
+      TELEGRAM_ADMIN: "${TELEGRAM_CHAT_ID:-0}"
+      TELEGRAM_TOKEN: "${TELEGRAM_BOT_TOKEN:-placeholder}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    volumes:
+      - alertmanager-telegram-data:/data
+      - ../../monitoring/alertmanager/templates:/templates:ro
+    expose:
+      - "9087"
+    networks:
+      - platform
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9087 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ==========================================================================
+  # FEATURE SCHEDULER - Periodic feature materialization
+  # ==========================================================================
+  feature-scheduler:
+    image: curlimages/curl:8.5.0
+    container_name: ${PLATFORM_PREFIX:-shml}-feature-scheduler
+    restart: unless-stopped
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/scripts/monitoring/feature_scheduler.sh"]
+    environment:
+      RAY_HEAD_ADDRESS: "ray-head:8265"
+      MATERIALIZE_INTERVAL: "${MATERIALIZE_INTERVAL:-3600}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    volumes:
+      - ../../scripts:/scripts:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/feature-scheduler/scheduler.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================================================
+  # NIGHTLY TEST RUNNER
+  # ==========================================================================
+  nightly-test-runner:
+    image: python:3.12-slim
+    container_name: ${PLATFORM_PREFIX:-shml}-nightly-test-runner
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/workspace/scripts/monitoring/nightly_test_runner.sh"]
+    working_dir: /workspace
+    environment:
+      TEST_HOUR: "${TEST_HOUR:-3}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TEST_DIR: "/workspace/tests"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    volumes:
+      - .:/workspace:ro
+      - test-runner-data:/var/log/test-runner
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/log/test-runner/runner.log"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+secrets:
+  grafana_password:
+    file: ../../secrets/grafana_password.txt
+
+volumes:
+  global-prometheus-data:
+    name: ${PLATFORM_PREFIX:-shml}-global-prometheus-data
+  unified-grafana-data:
+    name: ${PLATFORM_PREFIX:-shml}-unified-grafana-data
+  alertmanager-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-data
+  alertmanager-telegram-data:
+    name: ${PLATFORM_PREFIX:-shml}-alertmanager-telegram-data
+  test-runner-data:
+    name: ${PLATFORM_PREFIX:-shml}-test-runner-data
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true

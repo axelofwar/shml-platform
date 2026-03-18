@@ -17,10 +17,11 @@
 
 services:
   embedding-service:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/embedding-service:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${PLATFORM_PREFIX:-shml}-embedding-service:latest
     container_name: ${PLATFORM_PREFIX:-shml}-embedding-service
     restart: unless-stopped
     environment:
@@ -38,11 +39,11 @@ services:
           cpus: "1.0"
           memory: 512M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s  # Model loading takes time
+      start_period: 60s # Model loading takes time
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.embedding.rule=PathPrefix(`/api/embed`)"

@@ -20,7 +20,43 @@
 # - pii-blur-api (RTX 2070, 3GB) - Face detection/blurring
 
 services:
+  gpu-control-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: gpu-control-proxy
+    restart: unless-stopped
+    privileged: true
+
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+      VERSION: 1
+      POST: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      LOG_LEVEL: warning
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      - shml-platform
+
+    expose:
+      - "2375"
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:2375/version" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   gpu-manager:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/gpu-manager:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,8 +65,9 @@ services:
 
     environment:
       - YIELD_WAIT_SECONDS=5
-      # SECURITY: Docker access via restricted proxy (read-only container listing)
-      - DOCKER_HOST=tcp://docker-proxy:2375
+      - PLATFORM_PREFIX=${PLATFORM_PREFIX:-shml}
+      # SECURITY: Docker access via a dedicated proxy limited to container lifecycle ops.
+      - DOCKER_HOST=tcp://gpu-control-proxy:2375
 
     # SECURITY: Docker socket removed - was critical host-escape vector
     # volumes:
@@ -38,7 +75,7 @@ services:
 
     # Run with docker group for socket access
     # Get docker GID with: getent group docker | cut -d: -f3
-    user: "1000:984"  # UID:docker-GID (adjust GID if different)
+    user: "1000:984" # UID:docker-GID (adjust GID if different)
 
     # SECURITY: No direct port exposure - access through Traefik only
     # ports:
@@ -46,6 +83,10 @@ services:
 
     networks:
       - shml-platform
+
+    depends_on:
+      gpu-control-proxy:
+        condition: service_healthy
 
     labels:
       - "traefik.enable=true"
@@ -58,7 +99,7 @@ services:
       - "traefik.http.routers.gpu-manager.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,gpu-manager-strip"
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)" ]
       interval: 30s
       timeout: 10s
       retries: 3

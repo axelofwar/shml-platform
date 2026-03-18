@@ -1,0 +1,533 @@
+# SHML Platform - Developer Tools & Services Layer
+# Services: Code Server (IDE), Homer (dashboard), GitLab CE, Nessie (Iceberg),
+#           FiftyOne (dataset curation), SBA Portal, postgres-backup, webhook-deployer
+# Networks:
+#   - shml-platform:  Traefik routing
+#   - shml-core-net:  Services needing postgres/redis (gitlab, nessie, postgres-backup)
+#
+# Prerequisites: docker-compose.core.yml + docker-compose.auth.yml
+# Usage: managed by start_all_safe.sh start devtools
+
+services:
+  # ==========================================================================
+  # HOMER - Static Landing Page
+  # ==========================================================================
+  homer:
+    image: b4bz/homer:latest
+    container_name: homer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    user: "1000:1000"
+    environment:
+      INIT_ASSETS: "0"
+    volumes:
+      - ../../monitoring/homer:/www/assets:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.homer.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.homer.entrypoints=web,websecure"
+      - "traefik.http.routers.homer.priority=1"
+      - "traefik.http.services.homer.loadbalancer.server.port=8080"
+      - "traefik.http.routers.homer.middlewares=oauth2-errors,oauth2-auth"
+
+  # ==========================================================================
+  # CODE-SERVER - VS Code in Browser (Admin only)
+  # ==========================================================================
+  code-server:
+    image: codercom/code-server:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-code-server
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    command:
+      - --auth=none
+      - --bind-addr=0.0.0.0:8080
+      - --app-name=SHML Platform IDE
+      - --extensions-dir=/home/coder/.local/share/code-server/extensions
+      - /home/coder/project
+    deploy:
+      resources:
+        limits:
+          cpus: '${CODE_SERVER_CPU_LIMIT:-4.0}'
+          memory: ${CODE_SERVER_MEM_LIMIT:-4G}
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    environment:
+      DISABLE_TELEMETRY: "true"
+      DISABLE_UPDATE_CHECK: "true"
+      EXTENSIONS_GALLERY: '{"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery","itemUrl":"https://marketplace.visualstudio.com/items","cacheUrl":"https://vscode.blob.core.windows.net/gallery/index","controlUrl":"","recommendationsUrl":""}'
+    volumes:
+      - ${PWD}:/home/coder/project:cached
+      - ${HOME}/.local/share/code-server-platform:/home/coder/.local/share/code-server
+      - ${HOME}/.config/code-server-platform:/home/coder/.config/code-server
+    networks:
+      - platform
+    working_dir: /home/coder/project
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.code-server.rule=PathPrefix(`/ide`)"
+      - "traefik.http.routers.code-server.priority=2147483647"
+      - "traefik.http.routers.code-server.entrypoints=web,websecure"
+      - "traefik.http.services.code-server.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.code-server-strip.stripprefix.prefixes=/ide"
+      - "traefik.http.routers.code-server.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,code-server-strip"
+
+  # ==========================================================================
+  # DATA CATALOG - Nessie (Iceberg Version Control)
+  # ==========================================================================
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.107.3
+    container_name: ${PLATFORM_PREFIX:-shml}-nessie
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    environment:
+      NESSIE_VERSION_STORE_TYPE: JDBC2
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: nessie
+      QUARKUS_DATASOURCE_PASSWORD: ${SHARED_DB_PASSWORD}
+      JAVA_OPTS: "-Xmx1g -Xms512m"
+    expose:
+      - "19120"
+      - "9000"
+    networks:
+      - platform
+      - core
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nessie.rule=PathPrefix(`/nessie`)"
+      - "traefik.http.routers.nessie.entrypoints=web,websecure"
+      - "traefik.http.services.nessie.loadbalancer.server.port=19120"
+      - "traefik.http.middlewares.nessie-strip.stripprefix.prefixes=/nessie"
+      - "traefik.http.routers.nessie.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,nessie-strip"
+      - "traefik.http.routers.nessie.priority=100"
+
+  # ==========================================================================
+  # CV DATASET CURATION - FiftyOne
+  # ==========================================================================
+  fiftyone-mongodb:
+    image: mongo:7-jammy
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    volumes:
+      - fiftyone-mongodb-data:/data/db
+    expose:
+      - "27017"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  fiftyone:
+    image: voxel51/fiftyone:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-fiftyone
+    restart: unless-stopped
+    command: ["python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    environment:
+      FIFTYONE_DATABASE_URI: mongodb://fiftyone-mongodb:27017/fiftyone
+      FIFTYONE_DEFAULT_DATASET_DIR: /fiftyone/datasets
+      FIFTYONE_SERVER_PATH_PREFIX: /fiftyone
+      FIFTYONE_PATH_PREFIX: /fiftyone
+    volumes:
+      - fiftyone-data:/fiftyone
+      - fiftyone-datasets:/fiftyone/datasets
+      - ../../config/fiftyone:/opt/fiftyone-entrypoint:ro
+      - ../../ray_compute/data/ray:/tmp/ray:ro
+    expose:
+      - "5151"
+    networks:
+      - platform
+    depends_on:
+      fiftyone-mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fiftyone.rule=PathPrefix(`/fiftyone`)"
+      - "traefik.http.routers.fiftyone.entrypoints=web,websecure"
+      - "traefik.http.services.fiftyone.loadbalancer.server.port=5151"
+      - "traefik.http.middlewares.fiftyone-strip.stripprefix.prefixes=/fiftyone"
+      - "traefik.http.routers.fiftyone.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,fiftyone-strip"
+      - "traefik.http.routers.fiftyone.priority=100"
+
+  # ==========================================================================
+  # SBA RESOURCE PORTAL - Gemini AI Document Q&A
+  # ==========================================================================
+  sba-resource-portal:
+    build:
+      context: ../../sba-resource-portal
+      dockerfile: Dockerfile
+      args:
+        GEMINI_API_KEY: ${BNCCYBERSPACE_GOOGLE_API_KEY:-}
+    image: ${PLATFORM_PREFIX:-shml}-sba-resource-portal:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-sba-resource-portal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - platform
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sba-portal.rule=PathPrefix(`/sba-portal`)"
+      - "traefik.http.routers.sba-portal.entrypoints=web,websecure"
+      - "traefik.http.routers.sba-portal.priority=200"
+      - "traefik.http.services.sba-portal.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.sba-strip.stripprefix.prefixes=/sba-portal"
+      - "traefik.http.routers.sba-portal.middlewares=oauth2-errors,oauth2-auth,role-auth-developer,sba-strip"
+
+  # ==========================================================================
+  # GITLAB CE - Self-Hosted Git + Container Registry
+  # ==========================================================================
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${GITLAB_CPU_LIMIT:-4.0}'
+          memory: ${GITLAB_MEM_LIMIT:-8G}
+        reservations:
+          cpus: '1.0'
+          memory: 3G
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://${PUBLIC_DOMAIN}/gitlab'
+        postgresql['enable'] = false
+        redis['enable'] = false
+        nginx['enable'] = false
+        puma['worker_processes'] = 2
+        gitlab_workhorse['listen_network'] = 'tcp'
+        gitlab_workhorse['listen_addr'] = '0.0.0.0:8929'
+        gitlab_rails['trusted_proxies'] = ['172.30.0.0/16']
+        gitlab_rails['gitlab_signup_enabled'] = false
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlab'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = '${SHARED_DB_PASSWORD}'
+        gitlab_rails['db_pool'] = 6
+        gitlab_rails['redis_host'] = 'redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_database'] = 8
+        registry_external_url 'https://${PUBLIC_DOMAIN}:5050'
+        registry['enable'] = true
+        registry['registry_http_addr'] = '0.0.0.0:5050'
+        gitlab_rails['monitoring_whitelist'] = ['172.30.0.0/16', '127.0.0.0/8']
+        sidekiq['metrics_enabled'] = true
+        gitlab_exporter['enable'] = true
+        gitlab_exporter['listen_address'] = '0.0.0.0'
+        gitlab_exporter['listen_port'] = 9168
+        sidekiq['max_concurrency'] = 3
+        puma['worker_timeout'] = 60
+        prometheus_monitoring['enable'] = false
+        gitlab_rails['omniauth_enabled'] = true
+        gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+        gitlab_rails['omniauth_block_auto_created_users'] = false
+        gitlab_rails['omniauth_providers'] = [
+          {
+            name: 'openid_connect',
+            label: 'FusionAuth',
+            args: {
+              name: 'openid_connect',
+              scope: ['openid', 'profile', 'email'],
+              response_type: 'code',
+              issuer: 'https://${PUBLIC_DOMAIN}',
+              client_auth_method: 'basic',
+              discovery: false,
+              uid_field: 'sub',
+              pkce: true,
+              client_options: {
+                identifier: '${GITLAB_OIDC_CLIENT_ID}',
+                secret: '${GITLAB_OIDC_CLIENT_SECRET}',
+                redirect_uri: 'https://${PUBLIC_DOMAIN}/gitlab/users/auth/openid_connect/callback',
+                authorization_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/authorize',
+                token_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/token',
+                userinfo_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/userinfo',
+                jwks_uri: 'https://${PUBLIC_DOMAIN}/auth/.well-known/jwks.json',
+                end_session_endpoint: 'https://${PUBLIC_DOMAIN}/auth/oauth2/logout'
+              }
+            }
+          }
+        ]
+        gitlab_rails['initial_root_password'] = File.read('/run/secrets/gitlab_root_password').strip
+      GITLAB_ROOT_PASSWORD_FILE: /run/secrets/gitlab_root_password
+    secrets:
+      - shared_db_password
+      - gitlab_root_password
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    # Joins core-net to reach postgres and redis directly
+    networks:
+      - platform
+      - core
+    expose:
+      - "8929"
+      - "9168"
+    ports:
+      - "127.0.0.1:5050:5050"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      # OIDC callbacks bypass OAuth2-Proxy
+      - "traefik.http.routers.gitlab-oidc.rule=PathPrefix(`/gitlab/users/auth/`)"
+      - "traefik.http.routers.gitlab-oidc.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab-oidc.priority=200"
+      - "traefik.http.routers.gitlab-oidc.service=gitlab"
+      # Main GitLab UI
+      - "traefik.http.routers.gitlab.rule=PathPrefix(`/gitlab`)"
+      - "traefik.http.routers.gitlab.entrypoints=web,websecure"
+      - "traefik.http.routers.gitlab.priority=100"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=8929"
+      - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -eu
+        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
+          if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
+            echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2
+            exit 1
+          fi
+          gitlab-runner register --non-interactive \
+            --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}" \
+            --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}" \
+            --executor "docker" \
+            --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}" \
+            --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}" \
+            --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}" \
+            --run-untagged="true" \
+            --locked="false"
+        fi
+        if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^  limit = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  name =/a\  limit = 1' /etc/gitlab-runner/config.toml
+        fi
+        if ! grep -q '^  request_concurrency = ' /etc/gitlab-runner/config.toml; then
+          sed -i '/^  limit =/a\  request_concurrency = 1' /etc/gitlab-runner/config.toml
+        fi
+        if grep -q '^concurrent = ' /etc/gitlab-runner/config.toml; then
+          sed -i 's/^concurrent = .*/concurrent = 1/' /etc/gitlab-runner/config.toml
+        else
+          sed -i '1i concurrent = 1' /etc/gitlab-runner/config.toml
+        fi
+        exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_RUNNER_TAGS:-docker,shml}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  # ==========================================================================
+  # POSTGRES BACKUP - Automated backups
+  # ==========================================================================
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:15-alpine
+    container_name: postgres-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-0.5}'
+          memory: ${BACKUP_MEM_LIMIT:-256M}
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api,gitlab
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
+      SCHEDULE: "${BACKUP_SCHEDULE:-0 */6 * * *}"
+      BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
+      BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
+      BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
+      HEALTHCHECK_PORT: 8080
+      WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
+    volumes:
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    # Needs core-net to reach postgres
+    networks:
+      - core
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================================================
+  # WEBHOOK DEPLOYER - GitHub Push-to-Deploy
+  # ==========================================================================
+  webhook-deployer:
+    image: almir/webhook:latest
+    container_name: webhook-deployer
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${WEBHOOK_CPU_LIMIT:-0.25}'
+          memory: ${WEBHOOK_MEM_LIMIT:-128M}
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
+    environment:
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      FUSIONAUTH_WEBHOOK_SECRET: "${FUSIONAUTH_WEBHOOK_SECRET:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      DEPLOY_EMAIL: "${DEPLOY_NOTIFICATION_EMAIL:-}"
+    volumes:
+      - ../../scripts/webhook:/etc/webhook:ro
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webhook.rule=PathPrefix(`/webhook`)"
+      - "traefik.http.routers.webhook.entrypoints=web,websecure"
+      - "traefik.http.services.webhook.loadbalancer.server.port=9000"
+      - "traefik.http.routers.webhook.priority=100"
+
+secrets:
+  shared_db_password:
+    file: ../../secrets/shared_db_password.txt
+  gitlab_root_password:
+    file: ../../secrets/gitlab_root_password.txt
+
+volumes:
+  fiftyone-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-data
+  fiftyone-datasets:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-datasets
+  fiftyone-mongodb-data:
+    name: ${PLATFORM_PREFIX:-shml}-fiftyone-mongodb-data
+  gitlab-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-config
+  gitlab-logs:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
+  gitlab-data:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-data
+  gitlab-runner-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-config
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true
+  core:
+    name: shml-core-net
+    external: true

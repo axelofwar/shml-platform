@@ -1,0 +1,156 @@
+# SHML Platform - Core Infrastructure Layer
+# Services: Traefik (edge router), PostgreSQL, Redis
+# Networks:
+#   - shml-platform:  Traefik routing network (all HTTP-routed services)
+#   - shml-core-net:  DB/cache isolation (postgres + redis only)
+#
+# Start order: this file FIRST — everything depends on it.
+# Usage: managed by start_all_safe.sh start infra
+
+services:
+  # ==========================================================================
+  # API GATEWAY & ROUTING
+  # ==========================================================================
+  traefik:
+    image: traefik:v2.11
+    container_name: ${PLATFORM_PREFIX:-shml}-traefik
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.49'
+          memory: 385M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${PLATFORM_PREFIX:-shml}-platform
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.middlewares=tailscale-https-proto@file
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --log.level=DEBUG
+      - --log.format=common
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --accesslog.format=common
+      - --accesslog.fields.headers.defaultmode=keep
+      - --metrics.prometheus=true
+      - --ping=true
+    ports:
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
+      - "${LAN_IP:-0.0.0.0}:80:80"
+      - "${LAN_IP:-0.0.0.0}:443:443"
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ../../logs/traefik:/var/log/traefik
+      - ../../secrets/${PUBLIC_DOMAIN}.crt:/etc/traefik/certs/public-domain.crt:ro
+      - ../../secrets/${PUBLIC_DOMAIN}.key:/etc/traefik/certs/public-domain.key:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=PathPrefix(`/traefik`)"
+      - "traefik.http.routers.traefik.entrypoints=web,websecure"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+      - "traefik.http.routers.traefik.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
+
+  # ==========================================================================
+  # SHARED DATA LAYER
+  # ==========================================================================
+  postgres:
+    build:
+      context: ../../postgres
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-postgres:15-pgvector
+    container_name: ${PLATFORM_PREFIX:-shml}-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 384M
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # NETWORK ISOLATION: postgres is on core-net ONLY.
+    # Services needing postgres must join shml-core-net (auth, monitoring, devtools).
+    # Inference services have no path to the database.
+    networks:
+      - core
+    expose:
+      - "5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${PLATFORM_PREFIX:-shml}-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.34'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    command: redis-server --maxmemory 400mb --maxmemory-policy allkeys-lru --appendonly yes --save 60 1000
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # NETWORK ISOLATION: redis is on core-net ONLY.
+    # Auth services (oauth2-proxy) join core-net for session storage.
+    networks:
+      - core
+    expose:
+      - "6379"
+
+secrets:
+  shared_db_password:
+    file: ../../secrets/shared_db_password.txt
+
+volumes:
+  postgres-data:
+    name: ${PLATFORM_PREFIX:-shml}-postgres-data
+  redis-data:
+    name: ${PLATFORM_PREFIX:-shml}-redis-data
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true
+  core:
+    name: shml-core-net
+    external: true

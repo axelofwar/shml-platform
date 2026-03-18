@@ -1,0 +1,35 @@
+# SHML Base Image: Python CPU Services
+# Inherits: python:3.11-slim
+# Used by: inference/gateway, inference/chat-api, inference/audio-copyright,
+#           inference/agent-service, and any CPU-only FastAPI service
+#
+# Registry: ${SHML_REGISTRY_IMAGE_PREFIX}/base-python-cpu:${SHML_IMAGE_TAG}
+
+FROM python:3.11-slim
+
+# Common env for all Python services
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install uv (fast package installer) + health-check deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && uv --version
+
+# Non-root runtime user (uid 1000 — consistent across all services)
+RUN useradd -m -u 1000 -s /bin/bash inference
+
+WORKDIR /app
+
+# Healthcheck template — services should override with their own port/path
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000

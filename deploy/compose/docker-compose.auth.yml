@@ -1,0 +1,266 @@
+# SHML Platform - Auth Layer
+# Services: FusionAuth (OIDC provider), OAuth2 Proxy (forward auth), role-auth (RBAC)
+# Networks:
+#   - shml-platform:  Traefik routing + forward auth calls
+#   - shml-core-net:  FusionAuth → postgres, OAuth2 Proxy → redis
+#
+# Prerequisites: docker-compose.core.yml must be started first.
+# CRITICAL: OAuth2-Proxy middleware MUST be registered in Traefik before
+#           starting any OAuth-protected service.
+# Usage: managed by start_all_safe.sh start auth
+
+services:
+  # ==========================================================================
+  # FUSIONAUTH - OAuth/SSO Identity Provider
+  # ==========================================================================
+  fusionauth:
+    image: fusionauth/fusionauth-app:1.52.0
+    container_name: fusionauth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/fusionauth
+      DATABASE_ROOT_USERNAME: postgres
+      DATABASE_ROOT_PASSWORD: ${SHARED_DB_PASSWORD}
+      DATABASE_USERNAME: fusionauth
+      DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
+      FUSIONAUTH_APP_MEMORY: 384M
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-production}
+      FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN}/auth
+      SEARCH_TYPE: database
+    volumes:
+      - fusionauth-config:/usr/local/fusionauth/config
+    # SECURITY: Bind FusionAuth admin to localhost only
+    ports:
+      - "127.0.0.1:9011:9011"
+    # Joins core-net to reach postgres; joins platform-net for Traefik routing.
+    networks:
+      - platform
+      - core
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9011/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      # Headers middleware for X-Forwarded-Proto
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.fusionauth-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      # Main /auth router
+      - "traefik.http.routers.fusionauth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.fusionauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth.priority=200"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.regex=^/auth(.*)"
+      - "traefik.http.middlewares.fusionauth-rewrite.replacepathregex.replacement=$$1"
+      - "traefik.http.routers.fusionauth.middlewares=fusionauth-headers,fusionauth-rewrite"
+      # Admin UI (protected)
+      - "traefik.http.routers.fusionauth-admin.rule=PathPrefix(`/admin`)"
+      - "traefik.http.routers.fusionauth-admin.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-admin.priority=150"
+      - "traefik.http.routers.fusionauth-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin,fusionauth-headers"
+      - "traefik.http.routers.fusionauth-admin.service=fusionauth"
+      # Static asset routers (CSS/JS/images/fonts)
+      - "traefik.http.routers.fusionauth-css.rule=PathPrefix(`/css`)"
+      - "traefik.http.routers.fusionauth-css.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-css.priority=150"
+      - "traefik.http.routers.fusionauth-css.service=fusionauth"
+      - "traefik.http.routers.fusionauth-js.rule=PathPrefix(`/js`)"
+      - "traefik.http.routers.fusionauth-js.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-js.priority=150"
+      - "traefik.http.routers.fusionauth-js.service=fusionauth"
+      - "traefik.http.routers.fusionauth-images.rule=PathPrefix(`/images`)"
+      - "traefik.http.routers.fusionauth-images.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-images.priority=150"
+      - "traefik.http.routers.fusionauth-images.service=fusionauth"
+      - "traefik.http.routers.fusionauth-fonts.rule=PathPrefix(`/fonts`)"
+      - "traefik.http.routers.fusionauth-fonts.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-fonts.priority=150"
+      - "traefik.http.routers.fusionauth-fonts.service=fusionauth"
+      # API / OAuth / Well-known endpoints
+      - "traefik.http.routers.fusionauth-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.fusionauth-api.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-api.priority=100"
+      - "traefik.http.routers.fusionauth-api.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-api.service=fusionauth"
+      - "traefik.http.routers.fusionauth-oauth.rule=PathPrefix(`/oauth2`)"
+      - "traefik.http.routers.fusionauth-oauth.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-oauth.priority=150"
+      - "traefik.http.routers.fusionauth-oauth.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-oauth.service=fusionauth"
+      - "traefik.http.routers.fusionauth-well-known.rule=PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.fusionauth-well-known.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-well-known.priority=150"
+      - "traefik.http.routers.fusionauth-well-known.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-well-known.service=fusionauth"
+      - "traefik.http.routers.fusionauth-ajax.rule=PathPrefix(`/ajax`)"
+      - "traefik.http.routers.fusionauth-ajax.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-ajax.priority=150"
+      - "traefik.http.routers.fusionauth-ajax.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-ajax.service=fusionauth"
+      - "traefik.http.routers.fusionauth-password.rule=PathPrefix(`/password`)"
+      - "traefik.http.routers.fusionauth-password.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-password.priority=150"
+      - "traefik.http.routers.fusionauth-password.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-password.service=fusionauth"
+      - "traefik.http.routers.fusionauth-registration.rule=PathPrefix(`/registration`)"
+      - "traefik.http.routers.fusionauth-registration.entrypoints=web,websecure"
+      - "traefik.http.routers.fusionauth-registration.priority=150"
+      - "traefik.http.routers.fusionauth-registration.middlewares=fusionauth-headers"
+      - "traefik.http.routers.fusionauth-registration.service=fusionauth"
+      - "traefik.http.services.fusionauth.loadbalancer.server.port=9011"
+
+  # ==========================================================================
+  # OAUTH2-PROXY - Forward Authentication Gatekeeper
+  # ==========================================================================
+  # NOTE: oauth2-proxy is a scratch/distroless image — no shell, no wget/curl.
+  # Health check is disabled; Traefik uses container running status instead.
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    container_name: oauth2-proxy
+    restart: unless-stopped
+    extra_hosts:
+      - "${PUBLIC_DOMAIN}:${LAN_IP:-host-gateway}"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    command:
+      - "--session-store-type=redis"
+      - "--redis-connection-url=redis://shml-redis:6379"
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${PUBLIC_DOMAIN}
+      OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION: "true"
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
+      OAUTH2_PROXY_CLIENT_ID: ${FUSIONAUTH_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${FUSIONAUTH_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_COOKIE_NAME: "_shml_oauth2"
+      OAUTH2_PROXY_COOKIE_PATH: "/"
+      OAUTH2_PROXY_COOKIE_EXPIRE: "8h"
+      OAUTH2_PROXY_COOKIE_REFRESH: "4h"
+      OAUTH2_PROXY_REFRESH_TOKEN: "true"
+      OAUTH2_PROXY_SESSION_STORE_TYPE: "redis"
+      OAUTH2_PROXY_REDIS_CONNECTION_URL: "redis://shml-redis:6379"
+      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
+      OAUTH2_PROXY_GRACE_PERIOD: "5m"
+      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt).*$"
+      OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN}/oauth2-proxy/callback
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "${PUBLIC_DOMAIN}"
+      OAUTH2_PROXY_PROXY_PREFIX: "/oauth2-proxy"
+      OAUTH2_PROXY_UPSTREAMS: "static://200"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      OAUTH2_PROXY_SCOPE: "openid email profile"
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "roles"
+      OAUTH2_PROXY_SKIP_OIDC_USERINFO: "true"
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "false"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+      OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER: "true"
+      OAUTH2_PROXY_LOGGING_LOCAL_TIME: "true"
+      OAUTH2_PROXY_STANDARD_LOGGING: "true"
+      OAUTH2_PROXY_REQUEST_LOGGING: "true"
+      OAUTH2_PROXY_AUTH_LOGGING: "true"
+      LOG_LEVEL: "debug"
+      OAUTH2_PROXY_SKIP_AUTH_ROUTES: "^/auth/.*,^/health.*,^/api/status.*"
+      OAUTH2_PROXY_CUSTOM_SIGN_IN_LOGO: "-"
+      OAUTH2_PROXY_BANNER: "-"
+      OAUTH2_PROXY_FOOTER: "SFML Platform - Contact your administrator if you need access"
+      OAUTH2_PROXY_CUSTOM_TEMPLATES_DIR: "/templates"
+    volumes:
+      - ../../oauth2-proxy/templates:/templates:ro
+    depends_on:
+      fusionauth:
+        condition: service_healthy
+    # Joins core-net to reach redis for session storage.
+    networks:
+      - platform
+      - core
+    healthcheck:
+      disable: true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.oauth2-proxy-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      - "traefik.http.routers.oauth2-proxy.rule=PathPrefix(`/oauth2-proxy`)"
+      - "traefik.http.routers.oauth2-proxy.entrypoints=web,websecure"
+      - "traefik.http.routers.oauth2-proxy.priority=300"
+      - "traefik.http.routers.oauth2-proxy.middlewares=oauth2-proxy-headers"
+      - "traefik.http.services.oauth2-proxy.loadbalancer.server.port=4180"
+      # Forward auth middleware — all protected services reference this
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.address=http://oauth2-proxy:4180/oauth2-proxy/auth"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authRequestHeaders=Cookie,Authorization,X-Forwarded-Proto,X-Forwarded-Host,X-Forwarded-Uri"
+      - "traefik.http.middlewares.oauth2-auth.forwardauth.authResponseHeaders=X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,Authorization"
+      # RBAC middlewares (defined here, used by all protected services)
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.address=http://role-auth:8080/auth/developer"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-developer.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.address=http://role-auth:8080/auth/elevated-developer"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-elevated.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.address=http://role-auth:8080/auth/admin"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.role-auth-admin.forwardauth.authResponseHeaders=X-Auth-Role-Check"
+      # Error redirect middleware
+      - "traefik.http.middlewares.oauth2-errors.errors.status=401"
+      - "traefik.http.middlewares.oauth2-errors.errors.service=oauth2-proxy"
+      - "traefik.http.middlewares.oauth2-errors.errors.query=/oauth2-proxy/sign_in?rd={url}"
+
+  # ==========================================================================
+  # ROLE-BASED AUTH CHECKER
+  # ==========================================================================
+  role-auth:
+    build:
+      context: ../../scripts/role-auth
+      dockerfile: Dockerfile
+    image: ${PLATFORM_PREFIX:-shml}-platform/role-auth:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-role-auth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 16M
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  fusionauth-config:
+    name: ${PLATFORM_PREFIX:-shml}-fusionauth-config
+
+networks:
+  platform:
+    name: ${PLATFORM_PREFIX:-shml}-platform
+    external: true
+  core:
+    name: shml-core-net
+    external: true

@@ -1,11 +1,11 @@
-FROM python:3.11-slim
+# Embedding Service Dockerfile
+# Inherits: base-python-cpu (SHML base layer)
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-python-cpu:${BASE_TAG}
 
+# base-python-cpu already provides: python:3.11-slim, curl, uv, non-root inference user (uid 1000)
 WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
 
 # Install CPU-only PyTorch first for smaller image
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -20,9 +20,8 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Copy application
 COPY app/ ./app/
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+RUN chown -R inference:inference /app
+USER inference
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

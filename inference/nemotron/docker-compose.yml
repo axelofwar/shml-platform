@@ -1,13 +1,15 @@
 services:
   nemotron-coding:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/nemotron-coding:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
-      context: ../../
-      dockerfile: inference/nemotron/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: nemotron-coding
     restart: unless-stopped
 
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0  # RTX 3090 Ti only
+      - NVIDIA_VISIBLE_DEVICES=0 # RTX 3090 Ti only
       - CUDA_VISIBLE_DEVICES=0
 
     volumes:
@@ -45,8 +47,8 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
-              capabilities: [gpu]
+              device_ids: [ '0' ]
+              capabilities: [ gpu ]
 
     labels:
       - "traefik.enable=true"
@@ -60,7 +62,7 @@ services:
       - shml-platform
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -88,7 +90,7 @@ services:
     #   - /var/run/docker.sock:/var/run/docker.sock  # REMOVED: host-escape vector
 
     # Run with docker group for socket access
-    user: "1000:984"  # UID:docker-GID (adjust GID if different)
+    user: "1000:984" # UID:docker-GID (adjust GID if different)
 
     # SECURITY: No direct port exposure - access through Traefik only
     # ports:
@@ -107,7 +109,7 @@ services:
       - "traefik.http.routers.nemotron-manager.middlewares=oauth2-errors,oauth2-auth,nemotron-manager-strip"
 
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,23 +1,11 @@
 # Qwen3-VL Dockerfile - Optimized for RTX 2070 (8GB VRAM)
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+# Inherits: base-python-gpu (SHML base layer → base-cuda-runtime → cuda:12.1.0-runtime)
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-python-gpu:${BASE_TAG}
 
-# Prevent interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python and dependencies
-RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set Python 3.11 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-
-# Create non-root user
-RUN useradd -m -u 1000 inference
+# base-python-gpu already provides: CUDA 12.1 runtime, Python 3.11, curl, uv,
+# non-root inference user (uid 1000), PYTHONUNBUFFERED, HF_HOME, TRANSFORMERS_OFFLINE
 WORKDIR /app
 
 # Install Python dependencies
@@ -33,12 +21,8 @@ RUN chown -R inference:inference /app
 # Switch to non-root user
 USER inference
 
-# Environment
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV HF_HOME=/models
-ENV TRANSFORMERS_OFFLINE=1
-ENV HF_HUB_OFFLINE=1
+# base-python-gpu already sets: PYTHONUNBUFFERED, PYTHONDONTWRITEBYTECODE,
+# HF_HOME=/models, TRANSFORMERS_OFFLINE=1, HF_HUB_OFFLINE=1
 
 # Health check
 HEALTHCHECK --interval=60s --timeout=30s --start-period=300s --retries=3 \

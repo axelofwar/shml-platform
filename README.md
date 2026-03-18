@@ -36,6 +36,29 @@ pip install -e sdk/
 shml platform status
 ```
 
+### Externalized Runtime Storage
+
+Large runtime artifact trees live outside the repo root at `/home/axelofwar/Projects/shml-platform-storage` and are exposed back into the repo through symlinks. Keep using the original repo paths in scripts and services; do not redownload models, checkpoints, or backups because those paths still resolve normally.
+
+Current externalized paths:
+
+- `data` -> `/home/axelofwar/Projects/shml-platform-storage/data`
+- `backups` -> `/home/axelofwar/Projects/shml-platform-storage/backups`
+- `runs` -> `/home/axelofwar/Projects/shml-platform-storage/runs`
+- `logs` -> `/home/axelofwar/Projects/shml-platform-storage/logs`
+- `site` -> `/home/axelofwar/Projects/shml-platform-storage/site`
+- `.public-mirror` -> `/home/axelofwar/Projects/shml-platform-storage/.public-mirror`
+- `ray_compute/data` -> `/home/axelofwar/Projects/shml-platform-storage/ray_compute/data`
+- `mlflow-server/logs` -> `/home/axelofwar/Projects/shml-platform-storage/mlflow-server/logs`
+
+Quick verification:
+
+```bash
+readlink -f data
+readlink -f backups
+readlink -f ray_compute/data
+```
+
 ---
 
 ## SDK & CLI
@@ -189,6 +212,27 @@ Authentication: FusionAuth → OAuth2-Proxy → Traefik role-auth middleware.
 
 ## Service Management
 
+The platform uses a **modular deploy library** (`scripts/deploy/`) under a single orchestrator (`start_all_safe.sh`). The preferred developer interface is [`Taskfile.yml`](Taskfile.yml) (requires [Task](https://taskfile.dev)):
+
+```bash
+# Install Task (once)
+brew install go-task  # or: go install github.com/go-task/task/v3/cmd/task@latest
+
+# Common operations
+task                           # Show platform status (default)
+task start                     # Start all services
+task start:inference           # Start inference stack only
+task restart:ray               # Restart Ray compute stack
+task stop                      # Stop all services
+task status                    # Detailed health status
+task deploy                    # Pull from registry then start
+task logs -- <service>         # Follow service logs
+task gpu                       # GPU VRAM + utilization
+task systemd:install           # Install systemd unit files
+```
+
+Lower-level access via the orchestrator script directly:
+
 ```bash
 ./start_all_safe.sh                  # Start everything (with health checks)
 ./start_all_safe.sh start mlflow     # Start specific service group
@@ -196,6 +240,21 @@ Authentication: FusionAuth → OAuth2-Proxy → Traefik role-auth middleware.
 ./start_all_safe.sh status           # Detailed health status
 ./check_platform_status.sh           # Quick health overview
 ```
+
+### Deploy Library
+
+Orchestration logic is split into focused, independently-sourceable modules in `scripts/deploy/`:
+
+| Module | Purpose |
+|--------|---------|
+| `lib.sh` | Core env loading, colors, log helpers, timeouts, Tailscale |
+| `networks.sh` | Network constants (`shml-platform`, `shml-core-net`), `ensure_networks()` |
+| `docker.sh` | `dc_pull/up/stop/down/restart`, conflict cleanup, retry backoff |
+| `health.sh` | `wait_for_health/http/middleware` with strict/warn modes |
+| `gpu.sh` | MPS daemon management, VRAM verification |
+| `backup.sh` | Backup discovery, DB restore, pre-restart snapshots |
+
+Each module uses an idempotency guard (e.g. `_SHML_LIB_LOADED`) so it is safe to source from multiple entry-points without redefinition.
 
 ---
 

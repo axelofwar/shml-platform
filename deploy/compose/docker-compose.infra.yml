@@ -415,6 +415,10 @@ services:
       # Use FusionAuth's native 'roles' claim (not groups)
       # oauth2-proxy treats roles as groups internally
       OAUTH2_PROXY_OIDC_GROUPS_CLAIM: "roles"
+      # CRITICAL: Read roles from ID token (lambda-populated), not the userinfo endpoint.
+      # FusionAuth's userinfo endpoint returns only standard OIDC claims (no 'roles').
+      # Without this, X-Auth-Request-Groups will be empty even for registered users.
+      OAUTH2_PROXY_SKIP_OIDC_USERINFO: "true"
 
       # JWT BEARER TOKEN SUPPORT (v7.0+)
       # Enable API access via Authorization: Bearer <JWT> headers

@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Repo hardening** — Archived `ml-platform.service` (stale `/opt/` paths), `sfml-platform.service` (compat wrapper superseded by `shml-platform.service`), `scripts/tailscale-funnel.service` (orphan, canonical at `deploy/systemd/`)
   - **Security** — `ray_compute/backups/postgres/*.sql.gz` removed from git tracking; added `**/backups/*.sql.gz`, `ray_compute/backups/` to `.gitignore`; removed 4 `.DS_Store` files
   - **`.gitignore` hardening** — Added compressed SQL/dump patterns, `ray_compute/backups/`, `**/*.ckpt`, `**/*.safetensors.index.json`, `**/.idea/`, `**/__pycache__/`
+  - **Documentation** — Updated `README.md` (Service Management → Taskfile + deploy library table), `scripts/README.md` (deploy/ subdirectory), `copilot-instructions.md` (deploy library pattern), `.github/public-mirror-allowlist.txt` (Taskfile.yml, VERSION, .agent/AGENTS.md)
 
 - **Inference image registry + restart hardening** (2026-03-17)
   - `.gitlab-ci.yml` — added a `container_registry_build` job that publishes curated inference images to the GitLab Container Registry using commit-SHA tags and buildx registry cache

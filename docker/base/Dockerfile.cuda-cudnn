@@ -1,0 +1,31 @@
+# SHML Base Image: CUDA + cuDNN Runtime
+# Inherits: pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
+# Used by: inference/pii-blur (SegFormer, YOLOv11, BoT-SORT require cuDNN)
+#
+# Registry: ${SHML_REGISTRY_IMAGE_PREFIX}/base-cuda-cudnn:${SHML_IMAGE_TAG}
+
+FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    HF_HOME=/models/huggingface \
+    TORCH_HOME=/models/torch
+
+# Install uv + common CV system libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && uv --version
+
+WORKDIR /app
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000

@@ -1,29 +1,12 @@
 # Agentic Coding Model Service
 # Dual-GPU support: RTX 3090 Ti (primary) + RTX 2070 (fallback)
-# Using NVIDIA CUDA devel base for Triton JIT compilation support
+# Inherits: base-cuda-devel (SHML base layer → cuda:12.4.1-devel — required for Triton JIT)
+ARG BASE_REGISTRY=shml/local
+ARG BASE_TAG=latest
+FROM ${BASE_REGISTRY}/base-cuda-devel:${BASE_TAG}
 
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
-
-# Environment defaults
-ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/models
-ENV HOST=0.0.0.0
-ENV PORT=8000
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python and system dependencies
-# gcc/g++ and python3-dev needed for Triton JIT compilation on older GPUs (RTX 2070 etc)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
-    curl \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+# base-cuda-devel already provides: cuda:12.4.1-devel, Python 3.11 + dev headers,
+# gcc/g++, curl, PYTHONUNBUFFERED, HF_HOME=/models, HOST, PORT, non-root inference user
 
 # Create app directory
 WORKDIR /app
