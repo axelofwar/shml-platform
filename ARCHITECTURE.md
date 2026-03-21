@@ -1,8 +1,11 @@
 # Platform Architecture
 
-**Last Updated:** 2025-01-09
+**Last Updated:** 2026-03-21
 **Version:** 0.2.x
 **Audit Status:** Auth stack fully audited (W1 complete)
+
+> **Note:** This is the public version. Sensitive details (user accounts, internal IPs) are in
+> `docs/obsidian-vault/20-Decisions/ARCH-Auth-AccessControl.md` (gitignored, local only).
 
 ---
 
@@ -284,8 +287,8 @@ docker exec shml-postgres psql -U postgres -d fusionauth -t \
 
 | Email | OAuth2-Proxy Roles | Notes |
 |-------|-------------------|-------|
-| `admin@ml-platform.local` | (not registered in OAuth2-Proxy app) | FusionAuth admin only |
-| `axelofwar.web3@gmail.com` | admin, elevated-developer, developer, viewer | Owner account, all roles |
+| `<admin@internal.local>` | (not registered in OAuth2-Proxy app) | FusionAuth admin only |
+| `<owner-account>` | admin, elevated-developer, developer, viewer | Owner account, all roles |
 
 **No pure viewer users exist yet** — kickstart auto-assigns viewer to new Google/GitHub registrations.
 

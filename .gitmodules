@@ -1,3 +1,6 @@
+[submodule "libs/hermes-self-evolution"]
+        path = libs/hermes-self-evolution
+        url = https://github.com/NousResearch/hermes-agent-self-evolution.git
 [submodule "libs/training"]
 	path = libs/training
         url = http://shml-gitlab:8929/gitlab/shml/training.git
