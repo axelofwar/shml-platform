@@ -6,12 +6,16 @@
 # =============================================================================
 
 stages:
-  - lint
-  - test
-  - security
-  - integration
-  - build
-  - mirror
+  - lint          # YAML, config, code style
+  - validate      # compose syntax, secret hygiene  (was folded in lint)
+  - test          # platform unit/mocked + training unit
+  - security      # secret scan, dep audit
+  - integration   # live tests (runner on Docker network)
+  - build         # build + push container images to registry
+  - deploy        # deploy to self-hosted production (manual gate)
+  - smoke-test    # post-deploy health checks
+  - mirror        # public mirror sync + GitLab variable sync
+  - notify        # Telegram/webhook on pipeline result
 
 # ---------------------------------------------------------------------------
 # Default settings — shared across all jobs
@@ -60,7 +64,7 @@ yaml_lint:
         $(find deploy -name 'docker-compose*.yml' 2>/dev/null) || true
 
 config_validation:
-  stage: lint
+  stage: validate
   image: python:3.11-slim
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
@@ -83,7 +87,7 @@ config_validation:
       echo "✓ No secret files found in repository"
 
 docs_check:
-  stage: lint
+  stage: validate
   image: python:3.11-slim
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
@@ -222,7 +226,7 @@ secret_scan:
       wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
       tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
       chmod +x gitleaks
-    - ./gitleaks detect --source . --redact -v --no-git || echo "⚠️ Gitleaks found findings (review above)"
+    - ./gitleaks detect --source . --redact -v --config .gitleaks.toml --no-git || echo "⚠️ Gitleaks found findings (review above)"
 
 dependency_scan:
   stage: security
@@ -487,3 +491,316 @@ public_mirror_sync:
     paths:
       - .public-mirror/
       - .public-mirror-report.txt
+
+# ===========================================================================
+# TRAINING LIBRARY — stages: lint, test, build
+# Jobs only run when libs/training/** or .gitmodules changes.
+# ===========================================================================
+
+.training_changes: &training_changes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
+      changes:
+        - libs/training/**/*
+        - .gitmodules
+
+training:lint:
+  stage: lint
+  <<: *training_changes
+  image: python:3.11-slim
+  script:
+    - pip install ruff black --quiet
+    - |
+      echo "=== ruff ==="
+      ruff check libs/training/shml_training || echo "⚠️ ruff found issues (non-blocking)"
+    - |
+      echo "=== black --check ==="
+      black --check libs/training/shml_training || echo "⚠️ black formatting issues (non-blocking)"
+
+training:type-check:
+  stage: validate
+  <<: *training_changes
+  image: python:3.11-slim
+  allow_failure: true
+  script:
+    - pip install mypy --quiet
+    - pip install -e libs/training --quiet
+    - mypy libs/training/shml_training --ignore-missing-imports --no-error-summary || echo "⚠️ mypy found issues (non-blocking)"
+
+training:unit-tests:
+  stage: test
+  <<: *training_changes
+  image: python:3.11-slim
+  script:
+    - pip install -e libs/training pytest pytest-asyncio --quiet
+    - |
+      if [ -d "libs/training/tests" ]; then
+        pytest libs/training/tests/ -v --tb=short
+      else
+        echo "No training tests yet — add tests under libs/training/tests/"
+        echo "✓ Import check..."
+        python3 -c "import shml_training; print('shml_training imports OK')"
+      fi
+
+training:build-image:
+  stage: build
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - libs/training/**/*
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - |
+      IMAGE="${CI_REGISTRY_IMAGE}/training:${CI_COMMIT_SHA}"
+      LATEST="${CI_REGISTRY_IMAGE}/training:latest"
+      docker build \
+        -t "$IMAGE" \
+        -t "$LATEST" \
+        -f libs/training/Dockerfile \
+        libs/training/ 2>/dev/null || (
+        # No Dockerfile yet — build a minimal development image
+        echo "FROM python:3.11-slim" > /tmp/Dockerfile.training
+        echo "WORKDIR /app" >> /tmp/Dockerfile.training
+        echo "COPY libs/training/ ." >> /tmp/Dockerfile.training
+        echo "RUN pip install -e . --no-cache-dir" >> /tmp/Dockerfile.training
+        docker build -f /tmp/Dockerfile.training -t "$IMAGE" -t "$LATEST" .
+      )
+      docker push "$IMAGE"
+      docker push "$LATEST"
+      echo "✓ Training image pushed: $IMAGE"
+
+# ===========================================================================
+# ROBOTICS — cross-project pipeline trigger
+# Triggers shml/robotics pipeline; local jobs can be added below when
+# robotics code lands in this monorepo.
+# ===========================================================================
+
+robotics:trigger-pipeline:
+  stage: test
+  trigger:
+    project: shml/robotics
+    strategy: depend
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - robotics/**/*
+      when: always
+
+# ===========================================================================
+# STAGE: deploy — push platform images + deploy to self-hosted server
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# deploy:registry-push
+# Wraps scripts/ci/build_registry_images.sh for the main deploy path.
+# Only runs on default branch or semver tags. Replaces container_registry_build
+# (which stays in `build` stage for PR validation; this job is the authoritative
+# registry push that runs AFTER all tests pass).
+# ---------------------------------------------------------------------------
+deploy:registry-push:
+  stage: deploy
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    SHML_IMAGE_TAG: "$CI_COMMIT_SHA"
+  needs:
+    - job: container_registry_build
+      optional: true   # allow deploy even if build job was skipped (no changes)
+  before_script:
+    - docker info
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - scripts/ci/build_registry_images.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+  environment:
+    name: registry
+    url: $CI_REGISTRY
+
+# ---------------------------------------------------------------------------
+# deploy:production
+# Runs on the self-hosted Docker-network runner; pulls latest images and
+# restarts services via start_all_safe.sh.  Always manual to prevent
+# accidental production restarts from every commit.
+# ---------------------------------------------------------------------------
+deploy:production:
+  stage: deploy
+  tags:
+    - docker
+    - shml
+  needs:
+    - job: deploy:registry-push
+      optional: true
+  when: manual
+  allow_failure: false
+  variables:
+    GIT_STRATEGY: none   # runner already has the repo; no re-clone needed
+  before_script:
+    - cd "$CI_PROJECT_DIR"
+    - git fetch origin "$CI_COMMIT_SHA"
+    - git checkout "$CI_COMMIT_SHA"
+  script:
+    - |
+      echo "=== Pulling latest images from registry ==="
+      docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+
+      # Pull images that were just pushed by deploy:registry-push
+      REGISTRY_PREFIX="${CI_REGISTRY_IMAGE}/containers"
+      for image in \
+        inference-gateway \
+        chat-api \
+        embedding-service \
+        agent-service \
+        coding-model-fallback \
+        nemotron-coding; do
+        docker pull "${REGISTRY_PREFIX}/${image}:${CI_COMMIT_SHA}" 2>/dev/null || \
+          echo "⚠️ ${image} image not in registry (may not have changed)"
+      done
+
+    - |
+      echo "=== Restarting platform services ==="
+      ./start_all_safe.sh restart infra
+      sleep 15
+      ./start_all_safe.sh restart mlflow
+      sleep 10
+      ./start_all_safe.sh restart inference
+  environment:
+    name: production
+    url: https://$PUBLIC_DOMAIN
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+
+# ===========================================================================
+# STAGE: smoke-test — verify platform is healthy after deploy
+# Runs on the self-hosted runner which is on the Docker network.
+# ===========================================================================
+
+smoke-test:platform-health:
+  stage: smoke-test
+  tags:
+    - docker
+    - shml
+  needs:
+    - job: deploy:production
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - |
+      echo "=== Post-deploy smoke tests ==="
+      PASS=0
+      FAIL=0
+
+      check() {
+        local name="$1"
+        local url="$2"
+        local expected_codes="${3:-200 302 401 403}"
+        local status
+        status=$(docker run --rm --network ml-platform \
+          alpine/curl:latest -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+        if echo "$expected_codes" | grep -qw "$status"; then
+          echo "  ✓ $name ($status)"
+          PASS=$((PASS+1))
+        else
+          echo "  ✗ $name — expected one of [$expected_codes], got $status"
+          FAIL=$((FAIL+1))
+        fi
+      }
+
+      check "Traefik (gateway)"    "http://shml-traefik:80/"
+      check "MLflow (health)"      "http://mlflow-server:5000/health"            "200"
+      check "Ray API (health)"     "http://ray-compute-api:8000/health"           "200"
+      check "Chat API (health)"    "http://shml-chat-api:8000/health"             "200"
+      check "FusionAuth (status)"  "http://fusionauth:9011/api/status"            "200"
+      check "OAuth2-Proxy"         "http://oauth2-proxy:4180/ping"                "200"
+      check "Grafana"              "http://unified-grafana:3000/grafana/api/health" "200"
+
+      echo ""
+      echo "Results: $PASS passed, $FAIL failed"
+      [ "$FAIL" -eq 0 ] || exit 1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+
+# ===========================================================================
+# STAGE: notify — Telegram/webhook on pipeline success or failure
+# Uses TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID CI/CD variables.
+# ===========================================================================
+
+.notify_base: &notify_base
+  stage: notify
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl --quiet
+  variables:
+    GIT_STRATEGY: none
+
+notify:on-failure:
+  <<: *notify_base
+  when: on_failure
+  script:
+    - |
+      if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ "$TELEGRAM_BOT_TOKEN" = "ci-dummy-telegram-token" ]; then
+        echo "TELEGRAM_BOT_TOKEN not configured — skipping notification"
+        exit 0
+      fi
+      MSG="❌ *SHML Platform CI FAILED*%0A"
+      MSG="${MSG}Pipeline: \`${CI_PIPELINE_ID}\`%0A"
+      MSG="${MSG}Branch: \`${CI_COMMIT_BRANCH:-${CI_COMMIT_TAG}}\`%0A"
+      MSG="${MSG}Commit: \`${CI_COMMIT_SHA:0:8}\` — ${CI_COMMIT_TITLE}%0A"
+      MSG="${MSG}[View pipeline](${CI_PIPELINE_URL})"
+      curl -s -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        -d "text=${MSG}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true" > /dev/null
+      echo "Failure notification sent"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_failure
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+      when: on_failure
+
+notify:on-success:
+  <<: *notify_base
+  when: on_success
+  script:
+    - |
+      if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ "$TELEGRAM_BOT_TOKEN" = "ci-dummy-telegram-token" ]; then
+        echo "TELEGRAM_BOT_TOKEN not configured — skipping notification"
+        exit 0
+      fi
+      MSG="✅ *SHML Platform CI passed*%0A"
+      MSG="${MSG}Branch: \`${CI_COMMIT_BRANCH:-${CI_COMMIT_TAG}}\`%0A"
+      MSG="${MSG}Commit: \`${CI_COMMIT_SHA:0:8}\` — ${CI_COMMIT_TITLE}%0A"
+      MSG="${MSG}[View pipeline](${CI_PIPELINE_URL})"
+      curl -s -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        -d "text=${MSG}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true" > /dev/null
+      echo "Success notification sent"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+

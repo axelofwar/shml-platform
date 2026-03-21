@@ -38,28 +38,31 @@ jobs:
         run: |
           # Scan commits between base and head.
           # If base SHA is unavailable (force-push/rebased branch), fall back to
-          # merge-base with origin/main. As a last resort, scan working tree only
-          # to avoid failing on unrelated historical commits.
+          # merge-base with origin/main. As a last resort, scan working tree only.
+          # Always pass --config to honour .gitleaks.toml allowlists/fingerprints.
+          GITLEAKS_CONFIG="--config .gitleaks.toml"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             if git rev-parse "$BASE_SHA" >/dev/null 2>&1; then
               echo "Scanning range: $BASE_SHA..${{ github.sha }}"
-              ./gitleaks detect --source . --redact -v --log-opts="$BASE_SHA..${{ github.sha }}"
+              ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG \
+                --log-opts="$BASE_SHA..${{ github.sha }}"
             else
               echo "Base SHA not found (likely force-pushed), computing merge-base with origin/main..."
               git fetch --no-tags --depth=200 origin main
               MERGE_BASE="$(git merge-base HEAD origin/main || true)"
               if [ -n "$MERGE_BASE" ]; then
                 echo "Scanning merge-base range: $MERGE_BASE..${{ github.sha }}"
-                ./gitleaks detect --source . --redact -v --log-opts="$MERGE_BASE..${{ github.sha }}"
+                ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG \
+                  --log-opts="$MERGE_BASE..${{ github.sha }}"
               else
                 echo "Merge-base unavailable, scanning working tree only (--no-git)."
-                ./gitleaks detect --source . --redact -v --no-git
+                ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG --no-git
               fi
             fi
           else
             echo "Non-PR event: scanning working tree only (--no-git)."
-            ./gitleaks detect --source . --redact -v --no-git
+            ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG --no-git
           fi
 
       - name: TruffleHog Secret Scan
