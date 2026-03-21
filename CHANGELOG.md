@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **W1 Auth Flow Audit & Documentation** (2026-03-21)
+  - `ARCHITECTURE.md` (new): Full auth & access control architecture documentation
+    - 4 Mermaid sequence diagrams: unauthenticated, viewer (allowed), viewer (blocked), admin
+    - Service access matrix: 20 services × middleware chain × min. required role
+    - Middleware chain reference: all 5 forwardAuth middlewares documented
+    - UX gap analysis: 5 services with Homer/Traefik enforcement mismatch identified + fixes
+    - Infrastructure overview: service topology and network routing map
+
+- **W2 Data Pipeline Consolidation** (2026-03-21)
+  - `data-pipelines/` directory: central home for pipeline code
+  - `data-pipelines/definitions/face_detection.yml` (moved from `pipelines/`)
+  - `data-pipelines/loaders/streaming_loader.py` (moved from `libs/data/`)
+
+- **W3 Training Library Separation** (2026-03-21)
+  - Created `shml/training` GitLab project (ID=4) at `http://shml-gitlab:8929/gitlab/shml/training.git`
+  - Extracted `shml_training` Python package (34 files) from `libs/training/`
+  - `libs/training` is now a git submodule (`.gitmodules` registered)
+  - Taskfile `dev:training`: uses `git submodule update --init` instead of external clone
+
+### Fixed
+
+- **Auth: Homer dashboard UX gaps** (2026-03-21) — `monitoring/homer/config.yml`
+  - Added `tag: "developer"` to AI Chat, MLflow, Ray Dashboard
+  - Added `tag: "admin"` to Prometheus, Traefik Dashboard
+  - Viewer users previously saw 5 service links that always returned 403
+
+- **Auth: FusionAuth lambda app ID** (2026-03-21) — `fusionauth/lambdas/`
+  - All 3 lambdas (google, github, twitter): updated OAuth2-Proxy app ID from stale
+    `acda34f0-...` to live `50a4dc27-578a-47f1-a98e-1b9f47e2e81b` (OAuth2-Proxy-rotation-1)
+  - New social OAuth registrations now correctly receive `viewer` default role
+
 - **Phase 5: Platform Professionalization & Self-Healing** (2026-03-01)
   - **Self-Healing Watchdog v2** — GPU-aware container health monitor
     - `scripts/self-healing/watchdog.sh` (~900 lines): 7 critical + 12 standard + 5 memory-watched containers
