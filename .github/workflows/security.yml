@@ -61,8 +61,10 @@ jobs:
               fi
             fi
           else
-            echo "Non-PR event: scanning working tree only (--no-git)."
-            ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG --no-git
+            # For push/schedule: scan the full commit history (avoids
+            # false positives from --no-git which scans untracked runner files).
+            echo "Non-PR push event: scanning full git history."
+            ./gitleaks detect --source . --redact -v $GITLEAKS_CONFIG
           fi
 
       - name: TruffleHog Secret Scan
@@ -192,13 +194,16 @@ jobs:
               comments: disable
               trailing-spaces: disable
           file_or_dir: |
-            docker-compose*.yml
-            .github/workflows/*.yml
+            deploy/compose
+            mlflow-server
+            ray_compute
+            .github/workflows
 
       - name: Validate Docker Compose syntax
         run: |
-          # Use docker compose v2 (built into runner)
-          for f in docker-compose*.yml; do
+          # Check compose files in subdirectories (none exist at repo root)
+          for f in deploy/compose/docker-compose*.yml mlflow-server/docker-compose*.yml ray_compute/docker-compose*.yml; do
+            [ -f "$f" ] || continue
             echo "Checking syntax: $f"
             docker compose -f "$f" config --quiet 2>/dev/null || echo "Note: $f may have external dependencies"
           done
