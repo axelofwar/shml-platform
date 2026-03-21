@@ -25,6 +25,13 @@ paths = [
     # MkDocs generated site and public mirror staging area
     '''site/.*''',
     '''\.public-mirror/.*''',
+    # Deleted docs that existed only in early git history.
+    # UI_VERIFICATION_AND_FIXES.md had an example password (noted "after reset").
+    # API_REFERENCE.md had a curl example X-API-Key header.
+    # Both files were removed in the security cleanup commit; patterns were
+    # documentation examples, not real credentials.
+    '''UI_VERIFICATION_AND_FIXES\.md''',
+    '''API_REFERENCE\.md''',
 ]
 
 # Ignore specific patterns that are false positives
@@ -55,6 +62,12 @@ fingerprints = [
     # tracked file. Likely a false positive from an untracked file generated
     # during checkout on the runner (e.g. pip cache or submodule artifact).
     "README.md:sidekiq-secret:50",
+    # Commit b2477a07 — UI_VERIFICATION_AND_FIXES.md line 198:
+    # Example password in documentation (noted "after reset"). File later deleted.
+    "b2477a07135ffc012971220c10cdc9fc33d7ce9a:UI_VERIFICATION_AND_FIXES.md:generic-api-key:198",
+    # Commit 2e6d7a88 — API_REFERENCE.md line 714:
+    # Example X-API-Key header in curl documentation example. File later deleted.
+    "2e6d7a8842bf1c742d02e57caac886e3eb840752:API_REFERENCE.md:curl-auth-header:714",
 ]
 
 # Allowlist specific commits/findings (false positives in git history)
