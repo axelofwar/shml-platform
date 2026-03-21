@@ -9,8 +9,8 @@ Declarative training pipeline runner that:
 5. Supports curriculum learning (multi-stage progressive training)
 
 Usage:
-    python training_pipeline.py --config pipelines/face_detection.yml
-    python training_pipeline.py --config pipelines/face_detection.yml --dry-run
+    python training_pipeline.py --config data-pipelines/definitions/face_detection.yml
+    python training_pipeline.py --config data-pipelines/definitions/face_detection.yml --dry-run
     python training_pipeline.py --status  # Show all active pipelines
     python training_pipeline.py --resume <pipeline-id>
 
@@ -402,8 +402,10 @@ def main() -> None:
             sys.exit(1)
         state = json.loads(state_file.read_text())
         config_candidates = [
-            f"pipelines/{args.resume}.yml",
-            f"pipelines/{args.resume}.yaml",
+            f"data-pipelines/definitions/{args.resume}.yml",
+            f"data-pipelines/definitions/{args.resume}.yaml",
+            f"pipelines/{args.resume}.yml",  # legacy path
+            f"pipelines/{args.resume}.yaml",  # legacy path
         ]
         for c in config_candidates:
             if os.path.exists(c):

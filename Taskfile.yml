@@ -252,11 +252,12 @@ tasks:
         echo "✓ shml-sdk installed in editable mode from ../shml-sdk"
 
   "dev:training":
-    desc: Clone shml-training and install in editable mode
+    desc: Use shml/training submodule (libs/training) in editable mode
     cmds:
       - |
-        if [ ! -d "../shml-training" ]; then
-          git clone "${GITLAB_URL:-git@gitlab:shml}/shml-training.git" ../shml-training
+        # libs/training is a git submodule — ensure it's initialized
+        if [ ! -f "libs/training/setup.py" ]; then
+          git submodule update --init libs/training
         fi
-        pip install -e ../shml-training
-        echo "✓ shml-training installed in editable mode from ../shml-training"
+        pip install -e libs/training
+        echo "✓ shml-training installed in editable mode from libs/training (shml/training submodule)"

@@ -1,0 +1,3 @@
+[submodule "libs/training"]
+	path = libs/training
+        url = http://shml-gitlab:8929/gitlab/shml/training.git

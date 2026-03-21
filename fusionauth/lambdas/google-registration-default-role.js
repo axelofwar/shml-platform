@@ -27,8 +27,8 @@
  */
 
 function reconcile(user, registration, idToken) {
-  // OAuth2-Proxy application ID (from kickstart.json)
-  var oauthProxyAppId = 'acda34f0-7cf2-40eb-9cba-7cb0048857d3';
+  // OAuth2-Proxy application ID (OAuth2-Proxy-rotation-1 in FusionAuth DB)
+  var oauthProxyAppId = '50a4dc27-578a-47f1-a98e-1b9f47e2e81b';
 
   // Default role for new users
   var defaultRole = 'viewer';
