@@ -485,25 +485,28 @@ jobs:
           # Every ${VAR} in the compose stack needs a non-empty value; an empty
           # PUBLIC_DOMAIN causes extra_hosts to produce "bad host name ''" and
           # fails `docker compose config -q` validation.
-          cat > .env << 'EOF'
-          AUTHENTIK_SECRET_KEY=dummy-key-for-ci
-          AUTHENTIK_DB_PASSWORD=dummy-password
-          AUTHENTIK_BOOTSTRAP_PASSWORD=dummy-password
-          SHARED_DB_PASSWORD=dummy-password
-          GRAFANA_ADMIN_PASSWORD=dummy-password
-          PUBLIC_DOMAIN=ci.example.local
-          LAN_IP=127.0.0.1
-          OAUTH2_PROXY_COOKIE_SECRET=dummycookiesecretforcionly32bytes
-          FUSIONAUTH_PROXY_CLIENT_ID=ci-client-id
-          FUSIONAUTH_PROXY_CLIENT_SECRET=ci-client-secret
-          FUSIONAUTH_API_KEY=ci-fa-api-key
-          GITLAB_RUNNER_REGISTRATION_TOKEN=ci-runner-token
-          GITLAB_OIDC_CLIENT_ID=ci-oidc-id
-          GITLAB_OIDC_CLIENT_SECRET=ci-oidc-secret
-          INFISICAL_TOKEN=ci-infisical-token
-          TELEGRAM_BOT_TOKEN=ci-telegram-token
-          TELEGRAM_CHAT_ID=0
-          EOF
+          # Write .env without leading whitespace (heredoc indentation would
+          # produce "  KEY=value" lines that Docker Compose ignores, leaving
+          # PUBLIC_DOMAIN unset and causing "bad host name ''" in extra_hosts).
+          {
+            echo "AUTHENTIK_SECRET_KEY=dummy-key-for-ci"
+            echo "AUTHENTIK_DB_PASSWORD=dummy-password"
+            echo "AUTHENTIK_BOOTSTRAP_PASSWORD=dummy-password"
+            echo "SHARED_DB_PASSWORD=dummy-password"
+            echo "GRAFANA_ADMIN_PASSWORD=dummy-password"
+            echo "PUBLIC_DOMAIN=ci.example.local"
+            echo "LAN_IP=127.0.0.1"
+            echo "OAUTH2_PROXY_COOKIE_SECRET=dummycookiesecretforcionly32bytes"
+            echo "FUSIONAUTH_PROXY_CLIENT_ID=ci-client-id"
+            echo "FUSIONAUTH_PROXY_CLIENT_SECRET=ci-client-secret"
+            echo "FUSIONAUTH_API_KEY=ci-fa-api-key"
+            echo "GITLAB_RUNNER_REGISTRATION_TOKEN=ci-runner-token"
+            echo "GITLAB_OIDC_CLIENT_ID=ci-oidc-id"
+            echo "GITLAB_OIDC_CLIENT_SECRET=ci-oidc-secret"
+            echo "INFISICAL_TOKEN=ci-infisical-token"
+            echo "TELEGRAM_BOT_TOKEN=ci-telegram-token"
+            echo "TELEGRAM_CHAT_ID=0"
+          } > .env
 
       - name: Validate compose files
         run: |
