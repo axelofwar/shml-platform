@@ -224,9 +224,9 @@ python3 scripts/platform/gitlab_utils.py update-project \
   --description "..." --topics "mlops,ray" --owner-email "axelofwar.web3@gmail.com"
 ```
 
-### Testing connectivity from Python (no curl — blocked by Copilot policy)
+### Testing connectivity
 
-> `curl` is blocked by GitHub Copilot Agent's built-in `run_in_terminal` deny list (NOT a system restriction). Cline can run curl; Copilot cannot. Use `urllib.request` in all Copilot sessions.
+> `curl` is now enabled via `"curl": true` in `~/.config/Code/User/settings.json` (overrides VS Code's default `curl: false` in `chat.tools.terminal.autoApprove`). Both curl and Python urllib work.
 
 ```python
 import urllib.request, json, os
