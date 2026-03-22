@@ -52,10 +52,18 @@ def _project_id() -> str:
 
 
 def _token() -> str:
-    token = _env("GITLAB_API_TOKEN") or _env("GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN")
+    # Preference order:
+    #   1. GITLAB_API_TOKEN          — generic, set to root PAT (see .env comment for regen)
+    #   2. GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN — legacy, may be expired
+    #   3. GITLAB_CICD_ACCESS_TOKEN  — group bot, read-only, limited scope (last resort)
+    token = (
+        _env("GITLAB_API_TOKEN")
+        or _env("GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN")
+        or _env("GITLAB_CICD_ACCESS_TOKEN")
+    )
     if not token:
         raise RuntimeError(
-            "Set GITLAB_API_TOKEN or GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN"
+            "Set GITLAB_API_TOKEN in .env (regenerate via gitlab-rails runner — see .env comment)"
         )
     return token
 
