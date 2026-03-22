@@ -153,6 +153,89 @@ docker compose --env-file .env -f mlflow-server/deploy/compose/docker-compose.ym
 
 ---
 
+## Shell Aliases (cli/aliases.sh)
+
+The platform ships a set of shell aliases. They are automatically loaded in new terminals via `~/.bashrc`.
+
+### Setup (one-time, already done on this host)
+
+```bash
+# Appended to ~/.bashrc:
+export SHML_DIR="/home/axelofwar/Projects/shml-platform"
+[[ -f "$SHML_DIR/cli/aliases.sh" ]] && source "$SHML_DIR/cli/aliases.sh"
+```
+
+### Platform Control
+
+| Alias | Action |
+|-------|--------|
+| `pstart` | `start_all_safe.sh start` |
+| `pstop` | `start_all_safe.sh stop` |
+| `prestart` | `start_all_safe.sh restart` |
+| `pstatus` | `check_platform_status.sh` |
+| `srestart <group>` | Restart a service group |
+| `healthcheck` | Curl all service health endpoints |
+
+### GPU
+
+| Alias | Action |
+|-------|--------|
+| `gpustat` | `nvidia-smi` — one-shot GPU memory + utilization |
+| `gpuwatch` | `watch -n 1 nvidia-smi` |
+| `sg / sgs / sgy / sgr` | `shml gpu` subcommands |
+
+### Agent & Inference
+
+| Alias | Action |
+|-------|--------|
+| `agentlogs` | Follow agent-service logs |
+| `gw-logs` | Follow inference-gateway logs |
+| `llm-logs` | Follow qwen3-vl-api logs |
+| `img-logs` | Follow z-image-api logs |
+| `chat` | `shml chat` |
+
+### Skills & Learning
+
+| Alias | Action |
+|-------|--------|
+| `skills` | List Copilot skills (`.github/skills/`) |
+| `askills` | List agent-service skills |
+| `skill <name>` | Print a skill's SKILL.md |
+| `prompts` | List stored prompts (`.github/prompts/`) |
+| `prompt <file>` | Print a stored prompt |
+| `learnings` | View today's agent learnings JSONL |
+| `learnhist` | List all learning log files |
+
+### Platform Data & Sync
+
+| Alias | Action |
+|-------|--------|
+| `connmap` | Regenerate connection map (`scripts/generate_connection_map.py`) |
+| `obsidian-ingest` | Ingest research docs into Obsidian vault |
+| `obsidian-watch` | Watch + auto-ingest new files |
+| `vault` | `cd` into Obsidian vault directory |
+| `platform-scan` | Re-scan repo state, sync GitLab + KANBAN.md |
+| `kanban-sync` | Update KANBAN.md + T8 sub-board |
+
+### Watchdog
+
+| Alias | Action |
+|-------|--------|
+| `watchdog` | One-shot memory/resource check |
+| `watchdog-loop` | Run self-healing watchdog loop |
+| `watchdog-status` | View watchdog admin status |
+
+### GitLab
+
+| Alias | Action |
+|-------|--------|
+| `gl <cmd>` | `gitlab_utils.py` passthrough |
+| `gl-issues` | List open GitLab issues |
+| `gl-issue <title>` | Create a GitLab issue |
+| `gl-board` | Set up GitLab labels + milestones |
+
+---
+
 ## Common Operations
 
 ### Clear Redis Cache

@@ -113,4 +113,78 @@ healthcheck() {
     curl -s http://localhost:8265/api/version 2>/dev/null && echo " ✓ Ray" || echo " ✗ Ray"
 }
 
-echo "🚀 SHML aliases loaded! Type 'shml --help' for commands"
+# === Skills & Learning ===
+
+# List available skills (GitHub Copilot / agent-service)
+alias skills='ls $SHML_DIR/.github/skills/'
+alias askills='ls $SHML_DIR/inference/agent-service/skills/'
+
+# View a skill
+skill() {
+    local name="${1:?Usage: skill <name>}"
+    cat "$SHML_DIR/.github/skills/$name/SKILL.md" 2>/dev/null \
+        || cat "$SHML_DIR/inference/agent-service/skills/$name/SKILL.md" 2>/dev/null \
+        || echo "Skill '$name' not found"
+}
+
+# List + open stored prompts
+alias prompts='ls $SHML_DIR/.github/prompts/'
+prompt() {
+    local name="${1:?Usage: prompt <filename>}"
+    cat "$SHML_DIR/.github/prompts/$name" 2>/dev/null || echo "Prompt '$name' not found"
+}
+
+# View learnings log (today or specific date)
+alias learnings='cat $SHML_DIR/.agent/learnings/$(date +%Y-%m-%d).jsonl 2>/dev/null | python3 -c "import sys,json; [print(json.dumps(json.loads(l), indent=2)) for l in sys.stdin if l.strip()]" || echo "No learnings for today"'
+alias learnhist='ls $SHML_DIR/.agent/learnings/'
+
+# === Connection Map ===
+
+# Regenerate the platform connection map
+alias connmap='python3 $SHML_DIR/scripts/generate_connection_map.py'
+
+# === Obsidian Ingestion ===
+
+# Ingest research / docs into Obsidian vault
+alias obsidian-ingest='python3 $SHML_DIR/scripts/ingest_research_to_obsidian.py'
+
+# Watch for new files and auto-ingest
+alias obsidian-watch='python3 $SHML_DIR/scripts/obsidian_watcher.py'
+
+# Open Obsidian vault path
+alias vault='cd $SHML_DIR/docs/obsidian-vault'
+
+# === Watchdog ===
+
+# Run the memory/resource watchdog check once
+alias watchdog='python3 $SHML_DIR/scripts/memory_watchdog.py'
+
+# Run self-healing watchdog loop
+alias watchdog-loop='bash $SHML_DIR/scripts/self-healing/watchdog.sh'
+
+# View watchdog admin panel status
+alias watchdog-status='python3 $SHML_DIR/scripts/self-healing/watchdog_admin.py status'
+
+# === GitLab Operations ===
+
+alias gl='python3 $SHML_DIR/scripts/platform/gitlab_utils.py'
+alias gl-issues='python3 $SHML_DIR/scripts/platform/gitlab_utils.py list-issues'
+alias gl-issue='python3 $SHML_DIR/scripts/platform/gitlab_utils.py create-issue'
+alias gl-board='python3 $SHML_DIR/scripts/platform/gitlab_utils.py setup-board'
+
+# === Platform Scan & Board Sync ===
+
+# Re-scan repo state and sync to GitLab / KANBAN.md
+alias platform-scan='bash $SHML_DIR/scripts/platform/scan_repo_state.sh'
+
+# Update KANBAN.md + T8 sub-board only
+alias kanban-sync='bash $SHML_DIR/scripts/data/update_kanban.sh 2>/dev/null || python3 $SHML_DIR/scripts/platform/kanban_updater.py'
+
+# === Log Shortcuts ===
+
+alias gw-logs='docker logs inference-gateway -f --tail=100'
+alias llm-logs='docker logs qwen3-vl-api -f --tail=100'
+alias img-logs='docker logs z-image-api -f --tail=100'
+alias pglogs='docker logs shml-postgres -f --tail=100'
+
+echo "🚀 SHML aliases loaded! Type 'skills' to list skills, 'shml --help' for CLI"
