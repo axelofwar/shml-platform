@@ -23,8 +23,13 @@ secrets/
 .env.*
 !.env.example
 
-# Obsidian editor config (personal workspace settings)
+# Obsidian vault (personal workspace — gitignored)
+# Exception: agents/ subfolder is committed as it contains shared rules/skills/prompts
+# Architecture: agents/ → canonical source, IDE configs symlink from it
 docs/obsidian-vault/
+
+# Claude Code local settings (personal permission expansions — never commit)
+.claude/settings.local.json
 
 # MCP config (contains local filesystem paths)
 mcp/mcp-config.json
@@ -197,6 +202,10 @@ ray_dashboard/
 # Training data and runtime data (use volume mounts)
 data/
 data
+# Host-path symlinks — these point to /opt/shml/{models,data} on the host.
+# The symlink objects themselves ARE tracked (added explicitly), but their
+# targets (large binaries) are on the host, never committed.
+# To track the symlinks: git add -f models data_store
 
 # Wget artifacts
 wget-log*
