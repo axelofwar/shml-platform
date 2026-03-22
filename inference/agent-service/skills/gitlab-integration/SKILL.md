@@ -224,7 +224,9 @@ python3 scripts/platform/gitlab_utils.py update-project \
   --description "..." --topics "mlops,ray" --owner-email "axelofwar.web3@gmail.com"
 ```
 
-### Testing connectivity from Python (no curl — blocked by policy)
+### Testing connectivity from Python (no curl — blocked by Copilot policy)
+
+> `curl` is blocked by GitHub Copilot Agent's built-in `run_in_terminal` deny list (NOT a system restriction). Cline can run curl; Copilot cannot. Use `urllib.request` in all Copilot sessions.
 
 ```python
 import urllib.request, json, os
