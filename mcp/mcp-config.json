@@ -104,6 +104,32 @@
                 "resources": false,
                 "sampling": false
             }
+        },
+        "gitlab": {
+            "name": "GitLab CE",
+            "description": "GitLab project management — issues, MRs, pipelines, file ops, code search. Self-hosted CE at /gitlab/. Project ID: 2.",
+            "transport": {
+                "type": "stdio",
+                "command": "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-gitlab-mcp.sh"
+            },
+            "capabilities": {
+                "tools": true,
+                "resources": true,
+                "sampling": false
+            }
+        },
+        "prometheus": {
+            "name": "Prometheus Metrics",
+            "description": "Read-only PromQL queries against global-prometheus (172.30.0.23:9090). 11 tools: query, range_query, label ops, metric names, series, alerts, rules, targets.",
+            "transport": {
+                "type": "stdio",
+                "command": "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-prometheus-mcp.sh"
+            },
+            "capabilities": {
+                "tools": true,
+                "resources": false,
+                "sampling": false
+            }
         }
     },
     "globalConfig": {

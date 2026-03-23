@@ -1,12 +1,12 @@
 [Unit]
-Description=SHL Nano Kanban updater — sync pipeline state to Obsidian
+Description=SHL GitLab board sync — sync T8 pipeline state to GitLab Issues
 After=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Projects/shml-platform
 ExecStart=/usr/bin/env bash -lc '\
-    exec bash "$HOME/Projects/shml-platform/scripts/data/update_kanban.sh"'
+    exec bash "$HOME/Projects/shml-platform/scripts/data/update_gitlab_board.sh"'
 TimeoutStartSec=30
 StandardOutput=journal
 StandardError=journal

@@ -215,8 +215,6 @@ Task tracking uses **GitLab Issues** as the single source of truth.
 
 - **GitLab CE** (primary): Self-hosted at `/gitlab/` (Traefik). Issues, milestones, labels, boards. Use for all task management — training, infrastructure, platform improvements, agent coordination.
 - **GitHub** (public mirror): `axelofwar/shml-platform`. Read-only public mirror. GitHub CI runs on push for external visibility.
-- **Kanban** (legacy/quick-view): `docs/obsidian-vault/50-Projects/KANBAN.md` — Obsidian board for quick visual status.
-- **T8 detail board:** `docs/obsidian-vault/50-Projects/TRACK-8-NANOCHAT.md` (auto-synced every 10min)
 
 ### Programmatic Access
 
@@ -245,7 +243,7 @@ from scripts.platform.gitlab_utils import create_issue, upsert_issue, list_issue
 | **priority::** | `critical`, `high`, `medium`, `low` |
 | **status::** | `blocked`, `stale` |
 | **component::** | `watchdog`, `ci-cd`, `autoresearch`, `agent-service`, `chat-ui`, `fusionauth`, `infra` |
-| **source::** | `watchdog`, `scan`, `autoresearch`, `ci` |
+| **source::** | `watchdog`, `scan`, `autoresearch`, `ci`, `pipeline` |
 
 ### Automated Issue Creation
 
@@ -253,21 +251,22 @@ from scripts.platform.gitlab_utils import create_issue, upsert_issue, list_issue
 |--------|------|------|
 | **Watchdog** | OOM kill, memory leak, restart failure, throttle | Creates `source::watchdog` issue (idempotent) |
 | **scan_repo_state** | Agent down, GPU low memory, autoresearch progress | Creates/updates `source::scan` issue |
+| **T8 pipeline** | Stage start, stage completion, pipeline failure | Creates/updates `source::pipeline` issue |
 | **CI Pipeline** | Test failures, security scan findings | Creates `source::ci` issue |
 | **Autoresearch** | Training milestone, completion, failure | Creates `source::autoresearch` issue |
 
 ### Rules
 
 1. **Before starting any task** — create/find a GitLab Issue. Assign yourself and move to "Doing".
-2. **When a task is done** — close the GitLab Issue. Move to ✅ Done in KANBAN.md.
+2. **When a task is done** — close the GitLab Issue.
 3. **When blocked** — add the `status::blocked` label in GitLab.
 4. **Adding new tasks** — create a GitLab Issue first.
 5. **Agent-created issues** — always include a `source::*` label.
 
 ### Auto-Sync
 
-- Every 10min: `shl-nano-kanban.timer` → `update_kanban.sh` → rewrites TRACK-8-NANOCHAT.md based on state files
-- Every 30min: `shl-platform-scan.timer` → `scan_repo_state.sh` → detects task completion + syncs to GitLab
+- Every 10min: `shl-gitlab-sync.timer` → `update_gitlab_board.sh` → syncs T8 state files into GitLab Issues
+- Every 30min: `shl-platform-scan.timer` → `scan_repo_state.sh` → detects task completion + syncs to GitLab Issues
 - Nightly 02:00: `shl-nano-pipeline.timer` → full T8 training pipeline
 
 ### Skills
@@ -278,8 +277,8 @@ Use it for conversational issue management: "create a bug for the GPU thermal is
 ### To update the board manually (agent action)
 
 ```bash
-bash scripts/platform/scan_repo_state.sh   # re-scan + update KANBAN.md + sync GitLab
-bash scripts/data/update_kanban.sh         # resync T8 sub-board only
+bash scripts/platform/scan_repo_state.sh   # re-scan + sync GitLab Issues
+bash scripts/data/update_gitlab_board.sh   # sync T8 pipeline state to GitLab Issues
 python3 scripts/platform/gitlab_utils.py list-issues  # see all open issues
 ```
 

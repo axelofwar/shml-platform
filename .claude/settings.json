@@ -1,0 +1,46 @@
+{
+    "permissions": {
+        "allow": [
+            "Read(**)",
+            "Write(**)",
+            "Edit(**)",
+            "Glob(**)",
+            "Grep(**)",
+            "Bash(git status)",
+            "Bash(git diff *)",
+            "Bash(git log *)",
+            "Bash(git show *)",
+            "Bash(git add *)",
+            "Bash(git commit *)",
+            "Bash(git stash *)",
+            "Bash(docker ps)",
+            "Bash(docker logs *)",
+            "Bash(docker inspect *)",
+            "Bash(nvidia-smi *)",
+            "Bash(task *)",
+            "Bash(./check_platform_status.sh)",
+            "Bash(./start_all_safe.sh status)",
+            "Bash(npm run *)",
+            "Bash(pytest *)",
+            "Bash(python3 -m pytest *)",
+            "Bash(python3 scripts/platform/gitlab_utils.py *)",
+            "Bash(bash scripts/generate-ide-configs.sh *)",
+            "Bash(find * -name *)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(wc *)",
+            "Bash(grep *)",
+            "Bash(diff *)"
+        ],
+        "deny": [
+            "Bash(rm -rf *)",
+            "Bash(curl *)",
+            "Bash(wget *)",
+            "Bash(./stop_all.sh)",
+            "Read(.env*)",
+            "Read(secrets/*)",
+            "Read(**/secrets/*)",
+            "Read(REMOTE_ACCESS_COMPLETE.sh)"
+        ]
+    }
+}

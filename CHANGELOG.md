@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GitLab issue automation + memory watchdog alias alignment** (2026-03-22)
+  - `scripts/platform/gitlab_utils.py` — now auto-loads GitLab settings from repo `.env` / `ray_compute/.env` when they are not exported in the shell, so `gl-issues` and other CLI calls use the PAT correctly.
+  - `scripts/platform/scan_repo_state.sh` and `scripts/data/update_gitlab_board.sh` — removed the legacy hardcoded PAT fallback path and now detect either `GITLAB_API_TOKEN` or `GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN` without overriding `gitlab_utils.py` resolution.
+  - `scripts/memory_watchdog.py` — added `--once` mode and replaced deprecated `datetime.utcnow()` with a timezone-aware UTC timestamp.
+  - `cli/aliases.sh` — `watchdog` now runs a one-shot memory check, `watchdog-live` provides the continuous foreground watcher, `gitlab-sync` is the T8 sync alias, and the old `kanban-sync` alias was removed.
+  - `scripts/data/shl_nano_pipeline.sh` and `scripts/data/install_shl_nano_automation.sh` — switched automation from `update_kanban.sh` / `shl-nano-kanban.timer` to GitLab-first sync via `update_gitlab_board.sh` / `shl-gitlab-sync.timer`; pipeline stages now emit direct event-driven GitLab updates.
+  - `scripts/self-healing/watchdog.sh` — event-driven GitLab incident creation/closure now uses the same PAT auto-resolution path as other scripts.
+  - Removed legacy Kanban artifacts and duplicate sync entrypoints: `docs/obsidian-vault/50-Projects/TRACK-8-NANOCHAT.md`, `scripts/data/update_kanban.sh`, `scripts/platform/kanban_updater.py`, `scripts/platform/update_gitlab_board.sh`, and `scripts/monitoring/systemd/shl-nano-kanban.*`.
+  - `docs/admin/platform-operations.md`, `AGENTS.md`, and Obsidian workspace state were updated so GitLab Issues are the only active task-tracking path.
+
 - **Auth: Homer dashboard UX gaps** (2026-03-21) — `monitoring/homer/config.yml`
   - Added `tag: "developer"` to AI Chat, MLflow, Ray Dashboard
   - Added `tag: "admin"` to Prometheus, Traefik Dashboard

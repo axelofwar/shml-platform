@@ -1,15 +1,34 @@
-````instructions
-# GitHub Copilot Instructions — SHML Platform
+# CLAUDE.md — SHML Platform Project Context
 
 <!-- GENERATED FILE — edit sources in .agent/rules/, run scripts/generate-ide-configs.sh to update -->
-**Version:** 0.1.0 | **License:** MIT | **Generated:** 2026-03-22
+**Version:** 0.1.0 | **Generated:** 2026-03-22
 
-------
-title: "Service Management"
-domain: infrastructure
-applies-to: "**/*.yml,**/*.sh,**/docker-compose*,Taskfile.yml"
+This file is automatically loaded by Claude Code at session start.
+
 ---
 
+## Quick Command Reference
+
+```bash
+# Platform management
+task status              # Check all services
+task restart:ray         # Restart Ray stack
+task restart:mlflow      # Restart MLflow stack
+task restart:inference   # Restart inference stack
+task gpu                 # GPU VRAM status
+
+# Generate IDE configs (after editing .agent/rules/)
+scripts/generate-ide-configs.sh --target all
+```
+
+## Agent Context
+
+- **Rules:** `.agent/rules/` — 6 focused rule files (service-management, documentation, security, platform, api, code)
+- **Skills:** `.claude/skills/` — 13 skills with SKILL.md (same canonical files as agent-service)
+- **Commands:** `.claude/commands/` — slash commands (/project:review, /project:audit, etc.)
+- **Agents:** `.claude/agents/` — specialized subagents (code-reviewer, security-auditor, training-monitor)
+
+---
 # 🚨 CRITICAL: ALWAYS USE start_all_safe.sh FOR SERVICE MANAGEMENT
 
 ## ✅ MANDATORY: Use start_all_safe.sh for ALL service restarts
@@ -138,110 +157,9 @@ docker-compose down --remove-orphans
 - Proper dependency ordering (postgres → app → ui)
 - Orphaned containers are cleaned up
 - Health checks validate services before proceeding
----
-title: "Documentation Policy"
-domain: documentation
-applies-to: "**/*.md"
+
 ---
 
-# ⚠️ DOCUMENTATION POLICY — ENFORCE ALWAYS
-
-## Documentation Structure
-
-**THIS PROJECT MAINTAINS <20 TOTAL DOCUMENTATION FILES.**
-
-**ANY ATTEMPT TO CREATE NEW DOCUMENTATION FILES MUST BE REJECTED.**
-
-## File Mapping — Which File Gets Which Content
-
-| Content Type | File |
-|---|---|
-| Setup/Status/Quick Start | `README.md` |
-| Architecture/Design decisions | `ARCHITECTURE.md` |
-| API documentation | `API_REFERENCE.md` |
-| Integration/Usage/Best practices | `INTEGRATION_GUIDE.md` |
-| Problems/Errors/Debugging | `TROUBLESHOOTING.md` |
-| Patterns/Gotchas/Optimizations | `LESSONS_LEARNED.md` |
-| Remote access | `REMOTE_QUICK_REFERENCE.md` |
-| GPU setup | `NEW_GPU_SETUP.md` |
-| MLflow operations | `mlflow-server/README.md` |
-| Ray operations | `ray_compute/README.md` |
-
-## Enforcement Rules
-
-### Rule 1: NEVER Create New Documentation Files
-
-**If user requests documentation, you MUST:**
-
-1. Identify which existing file should contain the content (use table above)
-2. Respond with: "I'll add [topic] to [existing-file.md] in the [section] section instead of creating a new file."
-3. Update the existing file (add new section, proper Markdown hierarchy, code blocks, cross-references)
-4. Update `CHANGELOG.md`
-
-### Rule 2: Example Rejections
-
-```
-User: "Create a DEPLOYMENT_GUIDE.md"
-✅ Good: "I'll add deployment information to README.md under 'Deployment' section."
-
-User: "Document the backup process in a new file"
-✅ Good: "I'll add backup documentation to ARCHITECTURE.md under 'Data Persistence' section."
-
-User: "Create an OAuth troubleshooting guide"
-✅ Good: "I'll add OAuth troubleshooting to TROUBLESHOOTING.md under 'Authentication' section."
-```
-
-### Rule 3: If New File Is Truly Necessary
-
-1. Explain why ALL existing docs cannot accommodate the content
-2. Show proof that consolidation is impossible
-3. Demonstrate it won't exceed 20-file limit
-4. Get EXPLICIT user approval with exact filename
-5. Archive an existing file to stay under 20 files if at limit
-
-This should happen <1% of the time.
-
-### Rule 4: Always Update CHANGELOG.md
-
-For ANY documentation change:
-- Add entry to CHANGELOG.md under [Unreleased] section
-- Document what was added/changed
-- Note which file was modified
-
-## File Count Validation
-
-```bash
-find . -name "*.md" -not -path "*/archived/*" -not -path "*/.git/*" | wc -l
-# MUST be ≤20
-```
-
-## Documentation Quality Standards
-
-Every documentation update must:
-1. Use clear, concise language
-2. Include code examples where applicable
-3. Use proper Markdown formatting (H2/H3 hierarchy)
-4. Cross-reference related sections
-5. Include verification steps
-6. Document "why" not just "what"
-
-## Development Workflow
-
-### Before Making Changes
-1. Check if feature/issue already documented
-2. Identify which file(s) to update
-3. Verify current doc count: `find . -name "*.md" -not -path "*/archived/*" | wc -l`
-
-### After Making Changes
-1. Verify count still ≤20
-2. Check for secrets: `git diff | grep -E "password|secret|token|key"`
-3. Update CHANGELOG.md
-4. Commit with clear message: `git commit -m "docs: Add X to Y.md"`
----
-title: "Security Standards"
-domain: security
-applies-to: "**/*.py,**/*.sh,**/*.yml,**/*.env*"
----
 
 # 🔒 Security Standards
 
@@ -373,140 +291,9 @@ def safe_path(base_dir: str, user_input: str) -> Path:
         raise ValueError(f"Path traversal attempt: {user_input}")
     return target
 ```
----
-title: "Platform Context"
-domain: platform
-applies-to: "**"
+
 ---
 
-# 🏗️ Platform Context — SHML Platform
-
-## Service Topology
-
-### MLflow Stack (8 services)
-- `mlflow-server` — tracking server (`localhost:8080`)
-- `mlflow-api` — enhanced API (`localhost:8000`)
-- `postgres` — tracking DB
-- `redis` — cache
-- `nginx` — reverse proxy
-- `prometheus` — metrics
-- `grafana` — dashboards
-- `backup` — automated backups
-
-### Ray Compute Stack (10 services)
-- `ray-compute-api` — job submission (`localhost:8000`)
-- `ray-compute-ui` — Next.js dashboard (`localhost:3002`)
-- `authentik-server` — OAuth (`localhost:9000`)
-- `authentik-worker` — background tasks
-- `authentik-postgres` — auth DB
-- `authentik-redis` — cache
-- `ray-prometheus` — metrics
-- `ray-grafana` — dashboards
-- `ray-loki` — logs
-- `ray-promtail` — log shipping
-
-### Traefik Gateway (1 service)
-- `traefik` — reverse proxy, load balancer (`:80`, `:8090`)
-
-### Inference Stack (4 services)
-- `qwen3-vl-api` — LLM, RTX 2070, INT4 quantized (`/api/llm`)
-- `z-image-api` — Image Gen, RTX 3090, on-demand (`/api/image`)
-- `inference-gateway` — queue, rate limit, history (`/inference`)
-- `inference-postgres` — chat history DB
-
-**Total: 23 containers (19 core + 4 inference)**
-
-## GPU Allocation
-
-| GPU | VRAM | Service | Mode |
-|-----|------|---------|------|
-| RTX 3090 Ti (cuda:0) | 24GB | Z-Image / Training | On-demand / yields to training |
-| RTX 2070 (cuda:1) | 8GB | Qwen3-VL-8B-INT4 | Always loaded |
-
-## Network Architecture
-
-```
-ml-platform network (shared Docker bridge)
-├── traefik (gateway) - :80, :8090
-├── mlflow-server - :8080
-├── mlflow-api - :8000
-├── ray-compute-api - :8000
-├── ray-compute-ui - :3002
-├── authentik - :9000
-├── qwen3-vl-api - :8000 (via /api/llm)
-├── z-image-api - :8000 (via /api/image)
-├── inference-gateway - :8000 (via /inference)
-└── monitoring services
-```
-
-## Key Endpoints
-
-```
-# MLflow
-http://localhost:8080         # MLflow UI
-http://localhost:8000/api/v1  # MLflow API
-
-# Ray
-http://localhost:3002         # Ray UI
-http://localhost:8000/api/v1  # Ray Compute API
-
-# Inference
-/api/llm/v1/chat/completions  # OpenAI-compatible LLM
-/api/llm/health               # Qwen3-VL status
-/api/image/v1/generate        # Image generation
-/api/image/yield-to-training  # Free RTX 3090 for training
-/inference/health             # Gateway status
-/inference/conversations      # Chat history
-/inference/queue/status       # Request queue
-
-# Auth
-http://localhost:9000         # Authentik dashboard
-```
-
-## Privacy Guarantees
-
-- `TRANSFORMERS_OFFLINE=1` — No outbound model connections
-- Models cached locally after one-time download
-- Chat history in local PostgreSQL only
-- Tailscale VPN required for remote access
-- No telemetry, no prompt logging
-
-## Workspace Layout
-
-```
-scripts/deploy/     — modular bash deploy libraries
-deploy/systemd/     — canonical systemd unit files
-.agent/             — agent context (identity, rules)
-Taskfile.yml        — primary developer task runner
-inference/          — LLM + image gen services
-mlflow-server/      — MLflow tracking stack
-ray_compute/        — Ray compute stack
-monitoring/         — Prometheus, Grafana, Loki, Tempo
-fusionauth/         — FusionAuth identity provider
-```
-
-## Version Information
-
-| Component | Version |
-|-----------|---------|
-| Project | 0.1.0 |
-| MLflow | 2.17.2 |
-| Ray | 2.8.1 |
-| Traefik | 2.10 |
-| Authentik | 2024.8.6 |
-| Docker Compose schema | 3.8 |
-| License | MIT (axelofwar, 2025) |
-
-## Remote Access
-
-- Tailscale VPN required for remote access to all services
-- `REMOTE_QUICK_REFERENCE.md` — public reference (no credentials)
-- `REMOTE_ACCESS_COMPLETE.sh` — complete credentials (git-ignored, local only)
----
-title: "API Conventions & Critical Patterns"
-domain: api,infrastructure
-applies-to: "**/*.py,**/*.yml,**/docker-compose*,**/traefik*"
----
 
 # 🎯 API Conventions & Critical Patterns
 
@@ -653,11 +440,136 @@ POST /v1/chat/completions
 # Health checks:
 GET /health  → {"status": "healthy", "model": "...", "gpu_memory_used": "..."}
 ```
+
 ---
-title: "Code Style"
-domain: code-quality
-applies-to: "**/*.py,**/*.ts,**/*.tsx,**/*.sh"
+
+
+# 🏗️ Platform Context — SHML Platform
+
+## Service Topology
+
+### MLflow Stack (8 services)
+- `mlflow-server` — tracking server (`localhost:8080`)
+- `mlflow-api` — enhanced API (`localhost:8000`)
+- `postgres` — tracking DB
+- `redis` — cache
+- `nginx` — reverse proxy
+- `prometheus` — metrics
+- `grafana` — dashboards
+- `backup` — automated backups
+
+### Ray Compute Stack (10 services)
+- `ray-compute-api` — job submission (`localhost:8000`)
+- `ray-compute-ui` — Next.js dashboard (`localhost:3002`)
+- `authentik-server` — OAuth (`localhost:9000`)
+- `authentik-worker` — background tasks
+- `authentik-postgres` — auth DB
+- `authentik-redis` — cache
+- `ray-prometheus` — metrics
+- `ray-grafana` — dashboards
+- `ray-loki` — logs
+- `ray-promtail` — log shipping
+
+### Traefik Gateway (1 service)
+- `traefik` — reverse proxy, load balancer (`:80`, `:8090`)
+
+### Inference Stack (4 services)
+- `qwen3-vl-api` — LLM, RTX 2070, INT4 quantized (`/api/llm`)
+- `z-image-api` — Image Gen, RTX 3090, on-demand (`/api/image`)
+- `inference-gateway` — queue, rate limit, history (`/inference`)
+- `inference-postgres` — chat history DB
+
+**Total: 23 containers (19 core + 4 inference)**
+
+## GPU Allocation
+
+| GPU | VRAM | Service | Mode |
+|-----|------|---------|------|
+| RTX 3090 Ti (cuda:0) | 24GB | Z-Image / Training | On-demand / yields to training |
+| RTX 2070 (cuda:1) | 8GB | Qwen3-VL-8B-INT4 | Always loaded |
+
+## Network Architecture
+
+```
+ml-platform network (shared Docker bridge)
+├── traefik (gateway) - :80, :8090
+├── mlflow-server - :8080
+├── mlflow-api - :8000
+├── ray-compute-api - :8000
+├── ray-compute-ui - :3002
+├── authentik - :9000
+├── qwen3-vl-api - :8000 (via /api/llm)
+├── z-image-api - :8000 (via /api/image)
+├── inference-gateway - :8000 (via /inference)
+└── monitoring services
+```
+
+## Key Endpoints
+
+```
+# MLflow
+http://localhost:8080         # MLflow UI
+http://localhost:8000/api/v1  # MLflow API
+
+# Ray
+http://localhost:3002         # Ray UI
+http://localhost:8000/api/v1  # Ray Compute API
+
+# Inference
+/api/llm/v1/chat/completions  # OpenAI-compatible LLM
+/api/llm/health               # Qwen3-VL status
+/api/image/v1/generate        # Image generation
+/api/image/yield-to-training  # Free RTX 3090 for training
+/inference/health             # Gateway status
+/inference/conversations      # Chat history
+/inference/queue/status       # Request queue
+
+# Auth
+http://localhost:9000         # Authentik dashboard
+```
+
+## Privacy Guarantees
+
+- `TRANSFORMERS_OFFLINE=1` — No outbound model connections
+- Models cached locally after one-time download
+- Chat history in local PostgreSQL only
+- Tailscale VPN required for remote access
+- No telemetry, no prompt logging
+
+## Workspace Layout
+
+```
+scripts/deploy/     — modular bash deploy libraries
+deploy/systemd/     — canonical systemd unit files
+.agent/             — agent context (identity, rules)
+Taskfile.yml        — primary developer task runner
+inference/          — LLM + image gen services
+mlflow-server/      — MLflow tracking stack
+ray_compute/        — Ray compute stack
+monitoring/         — Prometheus, Grafana, Loki, Tempo
+fusionauth/         — FusionAuth identity provider
+```
+
+## Version Information
+
+| Component | Version |
+|-----------|---------|
+| Project | 0.1.0 |
+| MLflow | 2.17.2 |
+| Ray | 2.8.1 |
+| Traefik | 2.10 |
+| Authentik | 2024.8.6 |
+| Docker Compose schema | 3.8 |
+| License | MIT (axelofwar, 2025) |
+
+## Remote Access
+
+- Tailscale VPN required for remote access to all services
+- `REMOTE_QUICK_REFERENCE.md` — public reference (no credentials)
+- `REMOTE_ACCESS_COMPLETE.sh` — complete credentials (git-ignored, local only)
+
 ---
+
 
 # 📝 Code Style Guide
 
@@ -836,20 +748,4 @@ const JobCard: React.FC<{ job: JobStatus }> = ({ job }) => {
 
 ---
 
-## 🤖 Agent Skills
 
-Workspace skills are in `.github/skills/`. Each skill has a `SKILL.md` with `name`, `description`, and activation keywords.
-
-Available skills: code-sandbox coding-assistant fiftyone-datasets github-integration gitlab-integration gpu-monitoring openshell-skill platform-health platform-services ray-compute shell-execution skill-evolution web-search 
-
-Copilot loads skill descriptions automatically (~100 tokens each). Full skill body is loaded when the skill matches the current task (progressive disclosure).
-
-## 🧑‍💼 Subagents
-
-Workspace subagents are in `.github/agents/`. Use `#<agentname>` to invoke them.
-
-## 📋 Prompts
-
-Custom slash prompts are in `.github/prompts/`. Use them for common workflows.
-
-````

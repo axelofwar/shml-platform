@@ -156,8 +156,11 @@ alias vault='cd $SHML_DIR/docs/obsidian-vault'
 
 # === Watchdog ===
 
-# Run the memory/resource watchdog check once
-alias watchdog='python3 $SHML_DIR/scripts/memory_watchdog.py'
+# Run a one-shot memory/resource watchdog snapshot
+alias watchdog='python3 $SHML_DIR/scripts/memory_watchdog.py --once'
+
+# Run the foreground memory watchdog continuously
+alias watchdog-live='python3 $SHML_DIR/scripts/memory_watchdog.py'
 
 # Run self-healing watchdog loop
 alias watchdog-loop='bash $SHML_DIR/scripts/self-healing/watchdog.sh'
@@ -174,11 +177,11 @@ alias gl-board='python3 $SHML_DIR/scripts/platform/gitlab_utils.py setup-board'
 
 # === Platform Scan & Board Sync ===
 
-# Re-scan repo state and sync to GitLab / KANBAN.md
+# Re-scan repo state and sync to GitLab Issues
 alias platform-scan='bash $SHML_DIR/scripts/platform/scan_repo_state.sh'
 
-# Update KANBAN.md + T8 sub-board only
-alias kanban-sync='bash $SHML_DIR/scripts/data/update_kanban.sh 2>/dev/null || python3 $SHML_DIR/scripts/platform/kanban_updater.py'
+# Update T8 pipeline state in GitLab Issues
+alias gitlab-sync='bash $SHML_DIR/scripts/data/update_gitlab_board.sh'
 
 # === Log Shortcuts ===
 

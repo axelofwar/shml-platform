@@ -214,16 +214,27 @@ export SHML_DIR="/home/axelofwar/Projects/shml-platform"
 | `obsidian-ingest` | Ingest research docs into Obsidian vault |
 | `obsidian-watch` | Watch + auto-ingest new files |
 | `vault` | `cd` into Obsidian vault directory |
-| `platform-scan` | Re-scan repo state, sync GitLab + KANBAN.md |
-| `kanban-sync` | Update KANBAN.md + T8 sub-board |
+| `platform-scan` | Re-scan repo state and sync GitLab Issues |
+| `gitlab-sync` | Sync T8 pipeline checkpoints into GitLab Issues |
 
 ### Watchdog
 
 | Alias | Action |
 |-------|--------|
 | `watchdog` | One-shot memory/resource check |
+| `watchdog-live` | Continuous foreground memory watcher |
 | `watchdog-loop` | Run self-healing watchdog loop |
 | `watchdog-status` | View watchdog admin status |
+
+### Event-Driven GitLab Updates
+
+GitLab Issues are now updated at the event source, not only by polling reconciliation:
+
+| Source | Event-driven behavior |
+|-------|--------|
+| `scripts/self-healing/watchdog.sh` | Opens and resolves GitLab incidents immediately for OOM kills, restart failures, throttling, memory leaks, and GitLab health failures |
+| `scripts/data/shl_nano_pipeline.sh` | Marks T8 stage issues in-progress when a stage starts, resolves them on completion, and opens `T8 Pipeline Failure` immediately on stage failure |
+| `scripts/platform/scan_repo_state.sh` | Remains the reconciliation loop that corrects drift and closes stale incidents when system state has already recovered |
 
 ### GitLab
 

@@ -128,3 +128,12 @@ This is the SHML Platform - a unified ML platform for face detection training:
 - **Privacy**: 100% local - no external API calls
 
 When asked about platform status, architecture, or training progress, use the MCP tools to get real-time information rather than making assumptions.
+
+## Platform Rules Reference
+
+Complete rules are in `.agent/rules/`:
+- **Service management**: `.agent/rules/service-management.md` — always use `start_all_safe.sh` or `task`
+- **Security**: `.agent/rules/security.md` — secrets, pre-commit hooks, OWASP checklist
+- **API conventions**: `.agent/rules/api-conventions.md` — Traefik priority `2147483647`, OAuth2-Proxy headers, Ray memory formula
+- **Platform context**: `.agent/rules/platform-context.md` — service topology, GPU allocation, endpoints
+- **Code style**: `.agent/rules/code-style.md` — Python async, typing, logging conventions

@@ -28,7 +28,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -184,7 +184,7 @@ def snapshot(top_n: int = 10) -> MemorySnapshot:
     top_procs = sorted(procs, key=lambda x: x.rss_mb, reverse=True)[:top_n]
 
     return MemorySnapshot(
-        timestamp=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         total_ram_gb=vm.total / 1024**3,
         used_ram_gb=vm.used / 1024**3,
         available_ram_gb=vm.available / 1024**3,
@@ -285,6 +285,7 @@ def run_watchdog(
     ram_alert_pct: float = 88.0,
     swap_alert_gb: float = 2.0,
     verbose_every: int = 5,               # log verbose every N intervals
+    once: bool = False,
 ) -> None:
     logger.info(
         f"Memory watchdog started | interval={interval}s | "
@@ -320,6 +321,9 @@ def run_watchdog(
         except Exception as e:
             logger.error(f"Watchdog cycle error: {e}", exc_info=False)
 
+        if once:
+            return
+
         tick += 1
         time.sleep(interval)
 
@@ -339,7 +343,12 @@ def main() -> None:
                         help="Print top-procs every N intervals (default: 5)")
     parser.add_argument("--daemon", action="store_true",
                         help="Detach and run as daemon (writes to log file)")
+    parser.add_argument("--once", action="store_true",
+                        help="Run a single snapshot + alert pass, then exit")
     args = parser.parse_args()
+
+    if args.daemon and args.once:
+        parser.error("--daemon and --once are mutually exclusive")
 
     if args.daemon:
         # Double-fork to detach
@@ -363,6 +372,7 @@ def main() -> None:
         ram_alert_pct=args.ram_pct,
         swap_alert_gb=args.swap_gb,
         verbose_every=args.verbose_every,
+        once=args.once,
     )
 
 
