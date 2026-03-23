@@ -226,8 +226,7 @@ BUILTIN_VIEWS = [EVAL_FEATURES, TRAINING_LINEAGE, DATASET_QUALITY, HARD_EXAMPLES
 # ---------------------------------------------------------------------------
 
 
-def get_pg_config() -> dict:
-    """Build PostgreSQL config from environment."""
+def _load_pg_password() -> str:
     password = os.environ.get("POSTGRES_PASSWORD", "")
     if not password:
         for sp in [
@@ -242,10 +241,25 @@ def get_pg_config() -> dict:
         ]:
             try:
                 with open(sp) as f:
-                    password = f.read().strip()
-                    break
+                    return f.read().strip()
             except FileNotFoundError:
                 continue
+    return password
+
+
+def get_pg_dsn() -> str:
+    """Build asyncpg-compatible DSN from environment."""
+    password = _load_pg_password()
+    host = os.environ.get("POSTGRES_HOST", "postgres")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    dbname = os.environ.get("POSTGRES_FEATURES_DB", "inference")
+    user = os.environ.get("POSTGRES_USER", "inference")
+    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+
+
+def get_pg_config() -> dict:
+    """Build PostgreSQL config dict (kept for backward compatibility)."""
+    password = _load_pg_password()
     return {
         "host": os.environ.get("POSTGRES_HOST", "postgres"),
         "port": int(os.environ.get("POSTGRES_PORT", "5432")),
@@ -255,13 +269,13 @@ def get_pg_config() -> dict:
     }
 
 
-def register_builtin_views(registry: FeatureRegistry | None = None) -> FeatureRegistry:
-    """Register all built-in feature views. Creates registry if none provided."""
+async def register_builtin_views(registry: FeatureRegistry | None = None) -> FeatureRegistry:
+    """Register all built-in feature views. Creates and inits registry if none provided."""
     if registry is None:
-        registry = FeatureRegistry(get_pg_config())
-    registry.init_schema()
+        registry = FeatureRegistry(get_pg_dsn())
+        await registry.init()
     for view in BUILTIN_VIEWS:
-        registry.register(view)
+        await registry.register(view)
         logger.info(
             "Registered: %s (entity=%s, slo=%dm)",
             view.name,
@@ -272,17 +286,23 @@ def register_builtin_views(registry: FeatureRegistry | None = None) -> FeatureRe
 
 
 if __name__ == "__main__":
+    import asyncio
+
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
     )
-    reg = register_builtin_views()
-    views = reg.list_views()
-    print(
-        f"\n{'Name':<25} {'Entity':<18} {'Source Table':<28} {'Schedule':<10} {'SLO':<8} {'Status'}"
-    )
-    print("-" * 110)
-    for v in views:
+
+    async def _main() -> None:
+        reg = await register_builtin_views()
+        views = await reg.list_views()
         print(
-            f"{v.name:<25} {v.entity_name:<18} {v.source_table:<28} {v.schedule:<10} {v.freshness_slo_minutes}m     {v.status}"
+            f"\n{'Name':<25} {'Entity':<18} {'Source Table':<28} {'Schedule':<10} {'SLO':<8} {'Status'}"
         )
-    reg.close()
+        print("-" * 110)
+        for v in views:
+            print(
+                f"{v.name:<25} {v.entity_name:<18} {v.source_table:<28} {v.schedule:<10} {v.freshness_slo_minutes}m     {v.status}"
+            )
+        await reg.close()
+
+    asyncio.run(_main())

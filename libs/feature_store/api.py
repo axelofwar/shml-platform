@@ -12,11 +12,10 @@ Mounts as a router on the Ray Compute API (server_v2.py).
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .registry import (
@@ -26,27 +25,30 @@ from .registry import (
     MaterializationRun,
     MaterializationStatus,
 )
-from .definitions import get_pg_config, register_builtin_views
+from .definitions import get_pg_dsn, register_builtin_views
+from .graphql import make_graphql_router
 
 logger = logging.getLogger("shml-features.api")
 
 router = APIRouter(tags=["features"])
 
+# Mount GraphQL sub-router at /features/graphql
+router.include_router(make_graphql_router(), prefix="/features/graphql")
+
 # ---------------------------------------------------------------------------
-# Singleton registry
+# Singleton registry — lazy async init
 # ---------------------------------------------------------------------------
 
 _registry: FeatureRegistry | None = None
 
 
-def get_registry() -> FeatureRegistry:
-    """Get or create the feature registry singleton."""
+async def get_registry() -> FeatureRegistry:
+    """Get or lazily initialise the feature registry singleton."""
     global _registry
     if _registry is None:
-        _registry = FeatureRegistry(get_pg_config())
-        _registry.init_schema()
-        # Register built-in views on first access
-        register_builtin_views(_registry)
+        _registry = FeatureRegistry(get_pg_dsn())
+        await _registry.init()
+        await register_builtin_views(_registry)
     return _registry
 
 
@@ -109,15 +111,15 @@ async def list_feature_views(
     ),
 ):
     """List all registered feature views with freshness status."""
-    registry = get_registry()
-    return registry.list_views(status=status)
+    registry = await get_registry()
+    return await registry.list_views(status=status)
 
 
 @router.get("/features/catalog/{name}")
 async def get_feature_view(name: str):
     """Get a single feature view definition."""
-    registry = get_registry()
-    defn = registry.get(name)
+    registry = await get_registry()
+    defn = await registry.get(name)
     if not defn:
         raise HTTPException(status_code=404, detail=f"Feature view '{name}' not found")
     return defn
@@ -126,16 +128,16 @@ async def get_feature_view(name: str):
 @router.post("/features/catalog", status_code=201)
 async def register_feature_view(defn: FeatureViewDefinition):
     """Register or update a feature view definition."""
-    registry = get_registry()
-    registry.register(defn)
+    registry = await get_registry()
+    await registry.register(defn)
     return {"status": "registered", "name": defn.name, "version": defn.version}
 
 
 @router.delete("/features/catalog/{name}")
 async def delete_feature_view(name: str):
     """Delete a feature view and its run history."""
-    registry = get_registry()
-    deleted = registry.delete(name)
+    registry = await get_registry()
+    deleted = await registry.delete(name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Feature view '{name}' not found")
     return {"status": "deleted", "name": name}
@@ -154,8 +156,10 @@ async def query_features(view_name: str, req: FeatureQueryRequest):
         POST /api/v1/features/eval_metrics/query
         {"entity_keys": {"model_version": "rfdetr-v3"}, "limit": 10}
     """
-    registry = get_registry()
-    defn = registry.get(view_name)
+    import json
+
+    registry = await get_registry()
+    defn = await registry.get(view_name)
     if not defn:
         raise HTTPException(
             status_code=404, detail=f"Feature view '{view_name}' not found"
@@ -164,16 +168,26 @@ async def query_features(view_name: str, req: FeatureQueryRequest):
     source_table = defn["source_table"]
     entity_keys = defn["entity_keys"]
     if isinstance(entity_keys, str):
-        import json
-
         entity_keys = json.loads(entity_keys)
 
-    # Build WHERE clause from entity keys
-    where_parts = []
+    # Validate requested columns against schema
+    columns = None
+    if req.columns:
+        schema_cols = defn.get("schema_columns", [])
+        if isinstance(schema_cols, str):
+            schema_cols = json.loads(schema_cols)
+        valid_cols = {c["name"] for c in schema_cols}
+        invalid = set(req.columns) - valid_cols
+        if invalid:
+            raise HTTPException(status_code=400, detail=f"Invalid columns: {invalid}")
+        columns = req.columns
+
+    # Build $N-style WHERE clause from entity keys
+    where_parts: list[str] = []
     params: list[Any] = []
-    for key in entity_keys:
+    for i, key in enumerate(entity_keys, start=1):
         if key in req.entity_keys:
-            where_parts.append(f"{key} = %s")
+            where_parts.append(f"{key} = ${i}")
             params.append(req.entity_keys[key])
 
     if not where_parts:
@@ -182,36 +196,11 @@ async def query_features(view_name: str, req: FeatureQueryRequest):
             detail=f"At least one entity key required. Valid keys: {entity_keys}",
         )
 
-    # Column selection
-    import psycopg2
-    import psycopg2.extras
+    rows = await registry.query_source_table(
+        source_table, where_parts, params, columns, req.limit
+    )
 
-    conn = registry._get_conn()
-
-    if req.columns:
-        # Validate columns against schema
-        valid_cols = {c["name"] for c in defn["schema_columns"]}
-        invalid = set(req.columns) - valid_cols
-        if invalid:
-            raise HTTPException(status_code=400, detail=f"Invalid columns: {invalid}")
-        select_cols = ", ".join(req.columns)
-    else:
-        select_cols = "*"
-
-    query = f"SELECT {select_cols} FROM {source_table} WHERE {' AND '.join(where_parts)} ORDER BY created_at DESC LIMIT %s"
-    params.append(req.limit)
-
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(query, params)
-        rows = [dict(r) for r in cur.fetchall()]
-
-    # Serialize datetime/non-JSON-native types
-    for row in rows:
-        for k, v in row.items():
-            if isinstance(v, datetime):
-                row[k] = v.isoformat()
-
-    # Compute freshness
+    # Compute freshness from first row
     freshness = None
     slo_met = None
     if rows:
@@ -241,30 +230,16 @@ async def get_latest_features(
     limit: int = Query(10, ge=1, le=100),
 ):
     """Get the most recent feature values (no key filter)."""
-    registry = get_registry()
-    defn = registry.get(view_name)
+    registry = await get_registry()
+    defn = await registry.get(view_name)
     if not defn:
         raise HTTPException(
             status_code=404, detail=f"Feature view '{view_name}' not found"
         )
 
-    import psycopg2
-    import psycopg2.extras
-
-    conn = registry._get_conn()
-
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            f"SELECT * FROM {defn['source_table']} ORDER BY created_at DESC LIMIT %s",
-            (limit,),
-        )
-        rows = [dict(r) for r in cur.fetchall()]
-
-    for row in rows:
-        for k, v in row.items():
-            if isinstance(v, datetime):
-                row[k] = v.isoformat()
-
+    rows = await registry.query_source_table(
+        defn["source_table"], [], [], None, limit
+    )
     return {"feature_view": view_name, "rows": rows, "count": len(rows)}
 
 
@@ -277,13 +252,9 @@ async def get_latest_features(
 async def trigger_materialization(
     view_name: str, req: MaterializeRequest | None = None
 ):
-    """Trigger a materialization run for a feature view.
-
-    In production, this would submit a Ray job. Currently records the run
-    for tracking and returns the run_id for status polling.
-    """
-    registry = get_registry()
-    defn = registry.get(view_name)
+    """Trigger a materialization run for a feature view."""
+    registry = await get_registry()
+    defn = await registry.get(view_name)
     if not defn:
         raise HTTPException(
             status_code=404, detail=f"Feature view '{view_name}' not found"
@@ -296,7 +267,7 @@ async def trigger_materialization(
         ray_job_id=req.ray_job_id if req else None,
         mlflow_run_id=req.mlflow_run_id if req else None,
     )
-    registry.record_run_start(run)
+    await registry.record_run_start(run)
 
     return {
         "status": "submitted",
@@ -314,65 +285,6 @@ async def update_materialization_run(
     error_message: str | None = Query(None),
 ):
     """Update the status of a materialization run (called by the compute job)."""
-    registry = get_registry()
-    registry.record_run_complete(run_id, status, rows_written, error_message)
+    registry = await get_registry()
+    await registry.record_run_complete(run_id, status, rows_written, error_message)
     return {"status": "updated", "run_id": run_id}
-
-
-@router.get("/features/{view_name}/runs")
-async def get_materialization_history(
-    view_name: str, limit: int = Query(20, ge=1, le=100)
-):
-    """Get materialization run history for a feature view."""
-    registry = get_registry()
-    runs = registry.get_run_history(view_name, limit=limit)
-    for r in runs:
-        for k, v in r.items():
-            if isinstance(v, datetime):
-                r[k] = v.isoformat()
-    return {"feature_view": view_name, "runs": runs, "count": len(runs)}
-
-
-# ---------------------------------------------------------------------------
-# Health / SLO endpoints
-# ---------------------------------------------------------------------------
-
-
-@router.get("/features/health", response_model=RegistryStatsResponse)
-async def feature_platform_health():
-    """Get overall feature platform health — SLO compliance summary."""
-    registry = get_registry()
-    views = registry.list_views(status="active")
-
-    meeting = 0
-    breaching = 0
-    no_data = 0
-    oldest = None
-
-    for v in views:
-        if v.slo_met is None:
-            no_data += 1
-        elif v.slo_met:
-            meeting += 1
-        else:
-            breaching += 1
-
-        if v.freshness_minutes is not None:
-            if oldest is None or v.freshness_minutes > oldest:
-                oldest = v.freshness_minutes
-
-    return RegistryStatsResponse(
-        total_views=len(views) + len(registry.list_views(status="deprecated")),
-        active_views=len(views),
-        views_meeting_slo=meeting,
-        views_breaching_slo=breaching,
-        views_no_data=no_data,
-        oldest_feature_minutes=oldest,
-    )
-
-
-@router.get("/features/freshness")
-async def get_all_freshness():
-    """Per-view freshness — consumed by the SLO exporter for Prometheus metrics."""
-    registry = get_registry()
-    return registry.get_freshness_per_view()

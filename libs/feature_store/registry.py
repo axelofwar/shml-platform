@@ -14,6 +14,8 @@ Each FeatureView defines:
 
 The registry is stored in PostgreSQL (feature_views + feature_view_runs tables)
 and queried by the SLO exporter for per-view freshness tracking.
+
+Async implementation: uses asyncpg connection pool.
 """
 
 from __future__ import annotations
@@ -25,8 +27,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
 
-import psycopg2
-import psycopg2.extras
+import asyncpg
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("shml-features.registry")
@@ -148,7 +149,7 @@ class MaterializationRun(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Registry (Postgres-backed)
+# Registry (asyncpg-backed, connection pool)
 # ---------------------------------------------------------------------------
 
 
@@ -158,24 +159,52 @@ class FeatureRegistry:
     Tables:
       - feature_views: declarative definitions
       - feature_view_runs: materialization run history
+
+    All public methods are async and use an asyncpg connection pool.
+    Call ``await registry.init()`` before first use.
     """
 
-    def __init__(self, pg_config: dict[str, Any]):
-        self._pg_config = pg_config
-        self._conn: Optional[psycopg2.extensions.connection] = None
+    def __init__(self, dsn: str, min_size: int = 2, max_size: int = 10):
+        self._dsn = dsn
+        self._min_size = min_size
+        self._max_size = max_size
+        self._pool: Optional[asyncpg.Pool] = None
 
-    def _get_conn(self) -> psycopg2.extensions.connection:
-        if self._conn is None or self._conn.closed:
-            self._conn = psycopg2.connect(**self._pg_config)
-        return self._conn
+    async def init(self) -> None:
+        """Create the connection pool and schema tables if needed."""
+        self._pool = await asyncpg.create_pool(
+            self._dsn,
+            min_size=self._min_size,
+            max_size=self._max_size,
+        )
+        await self.init_schema()
+
+    async def close(self) -> None:
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
+
+    async def __aenter__(self):
+        await self.init()
+        return self
+
+    async def __aexit__(self, *_):
+        await self.close()
+
+    def _pool_or_raise(self) -> asyncpg.Pool:
+        if self._pool is None:
+            raise RuntimeError(
+                "FeatureRegistry not initialised — call `await registry.init()` first"
+            )
+        return self._pool
 
     # ------ Schema init ------
 
-    def init_schema(self) -> None:
+    async def init_schema(self) -> None:
         """Create registry tables if they don't exist."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS feature_views (
                     name TEXT PRIMARY KEY,
@@ -195,15 +224,15 @@ class FeatureRegistry:
                     tags JSONB DEFAULT '{}',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ DEFAULT NOW()
-                );
-            """
+                )
+                """
             )
-
-            cur.execute(
+            await conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS feature_view_runs (
                     run_id TEXT PRIMARY KEY,
-                    feature_view_name TEXT NOT NULL REFERENCES feature_views(name),
+                    feature_view_name TEXT NOT NULL
+                        REFERENCES feature_views(name),
                     status TEXT NOT NULL DEFAULT 'pending',
                     started_at TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ,
@@ -212,34 +241,32 @@ class FeatureRegistry:
                     ray_job_id TEXT,
                     mlflow_run_id TEXT,
                     created_at TIMESTAMPTZ DEFAULT NOW()
-                );
-            """
+                )
+                """
             )
-
-            cur.execute(
+            await conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_fvr_view_name
-                ON feature_view_runs(feature_view_name, created_at DESC);
-            """
+                ON feature_view_runs(feature_view_name, created_at DESC)
+                """
             )
-
-            conn.commit()
-            logger.info("Feature registry schema initialized")
+        logger.info("Feature registry schema initialised")
 
     # ------ CRUD ------
 
-    def register(self, defn: FeatureViewDefinition) -> None:
+    async def register(self, defn: FeatureViewDefinition) -> None:
         """Register or update a feature view definition."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
                 """
                 INSERT INTO feature_views
                     (name, version, entity_name, entity_keys, schema_columns,
                      source_table, schedule, freshness_slo_minutes,
                      freshness_slo_percentile, error_budget_windows,
                      compute_engine, owner, description, status, tags)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                        $11, $12, $13, $14, $15)
                 ON CONFLICT (name) DO UPDATE SET
                     version = EXCLUDED.version,
                     entity_name = EXCLUDED.entity_name,
@@ -256,65 +283,64 @@ class FeatureRegistry:
                     status = EXCLUDED.status,
                     tags = EXCLUDED.tags,
                     updated_at = NOW()
-            """,
-                (
-                    defn.name,
-                    defn.version,
-                    defn.entity.name,
-                    json.dumps(defn.entity.join_keys),
-                    json.dumps([c.model_dump() for c in defn.schema_columns]),
-                    defn.source_table,
-                    defn.schedule,
-                    defn.freshness_slo.max_staleness_minutes,
-                    defn.freshness_slo.target_percentile,
-                    defn.freshness_slo.error_budget_windows_per_month,
-                    defn.compute_engine.value,
-                    defn.owner,
-                    defn.description,
-                    defn.status.value,
-                    json.dumps(defn.tags),
-                ),
+                """,
+                defn.name,
+                defn.version,
+                defn.entity.name,
+                json.dumps(defn.entity.join_keys),
+                json.dumps([c.model_dump() for c in defn.schema_columns]),
+                defn.source_table,
+                defn.schedule,
+                defn.freshness_slo.max_staleness_minutes,
+                defn.freshness_slo.target_percentile,
+                defn.freshness_slo.error_budget_windows_per_month,
+                defn.compute_engine.value,
+                defn.owner,
+                defn.description,
+                defn.status.value,
+                json.dumps(defn.tags),
             )
-            conn.commit()
-            logger.info("Registered feature view: %s (v%d)", defn.name, defn.version)
+        logger.info("Registered feature view: %s (v%d)", defn.name, defn.version)
 
-    def get(self, name: str) -> Optional[dict]:
+    async def get(self, name: str) -> Optional[dict]:
         """Get a feature view definition by name."""
-        conn = self._get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT * FROM feature_views WHERE name = %s", (name,))
-            row = cur.fetchone()
-            return dict(row) if row else None
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM feature_views WHERE name = $1", name
+            )
+        return dict(row) if row else None
 
-    def list_views(self, status: Optional[str] = None) -> list[FeatureViewSummary]:
+    async def list_views(self, status: Optional[str] = None) -> list[FeatureViewSummary]:
         """List all feature views with current freshness status."""
-        conn = self._get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Join with source tables to compute freshness
-            query = """
-                SELECT
-                    fv.name,
-                    fv.version,
-                    fv.entity_name,
-                    fv.entity_keys,
-                    fv.source_table,
-                    fv.schedule,
-                    fv.freshness_slo_minutes,
-                    fv.owner,
-                    fv.status,
-                    (SELECT MAX(completed_at) FROM feature_view_runs
-                     WHERE feature_view_name = fv.name AND status = 'succeeded')
-                        AS last_materialized_at
-                FROM feature_views fv
-            """
-            params: list = []
-            if status:
-                query += " WHERE fv.status = %s"
-                params.append(status)
+        pool = self._pool_or_raise()
+        query = """
+            SELECT
+                fv.name,
+                fv.version,
+                fv.entity_name,
+                fv.entity_keys,
+                fv.source_table,
+                fv.schedule,
+                fv.freshness_slo_minutes,
+                fv.owner,
+                fv.status,
+                (SELECT MAX(completed_at) FROM feature_view_runs
+                 WHERE feature_view_name = fv.name AND status = 'succeeded')
+                    AS last_materialized_at
+            FROM feature_views fv
+        """
+        if status:
+            query += " WHERE fv.status = $1 ORDER BY fv.name"
+        else:
             query += " ORDER BY fv.name"
 
-            cur.execute(query, params)
-            rows = cur.fetchall()
+        async with pool.acquire() as conn:
+            rows = (
+                await conn.fetch(query, status)
+                if status
+                else await conn.fetch(query)
+            )
 
         now = datetime.now(timezone.utc)
         summaries = []
@@ -328,19 +354,17 @@ class FeatureRegistry:
                 freshness = round((now - last_mat).total_seconds() / 60.0, 1)
                 slo_met = freshness <= row["freshness_slo_minutes"]
 
-            # Try to get row count from source table
-            total_rows = self._get_table_row_count(row["source_table"])
+            total_rows = await self._get_table_row_count(row["source_table"])
+            entity_keys = row["entity_keys"]
+            if isinstance(entity_keys, str):
+                entity_keys = json.loads(entity_keys)
 
             summaries.append(
                 FeatureViewSummary(
                     name=row["name"],
                     version=row["version"],
                     entity_name=row["entity_name"],
-                    entity_keys=(
-                        row["entity_keys"]
-                        if isinstance(row["entity_keys"], list)
-                        else json.loads(row["entity_keys"])
-                    ),
+                    entity_keys=entity_keys,
                     source_table=row["source_table"],
                     schedule=row["schedule"],
                     freshness_slo_minutes=row["freshness_slo_minutes"],
@@ -354,57 +378,55 @@ class FeatureRegistry:
             )
         return summaries
 
-    def _get_table_row_count(self, table_name: str) -> Optional[int]:
-        """Get approximate row count for a source table."""
-        conn = self._get_conn()
+    async def _get_table_row_count(self, table_name: str) -> Optional[int]:
+        """Get approximate row count for a source table (pg_class fast path)."""
+        pool = self._pool_or_raise()
         try:
-            with conn.cursor() as cur:
-                # Use reltuples for fast approximate count
-                cur.execute(
-                    "SELECT reltuples::BIGINT FROM pg_class WHERE relname = %s",
-                    (table_name,),
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT reltuples::BIGINT AS n FROM pg_class WHERE relname = $1",
+                    table_name,
                 )
-                row = cur.fetchone()
-                return int(row[0]) if row and row[0] >= 0 else None
+            return int(row["n"]) if row and row["n"] >= 0 else None
         except Exception:
             return None
 
-    def delete(self, name: str) -> bool:
+    async def delete(self, name: str) -> bool:
         """Delete a feature view and its run history."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM feature_view_runs WHERE feature_view_name = %s", (name,)
-            )
-            cur.execute("DELETE FROM feature_views WHERE name = %s", (name,))
-            deleted = cur.rowcount > 0
-            conn.commit()
-        return deleted
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "DELETE FROM feature_view_runs WHERE feature_view_name = $1",
+                    name,
+                )
+                result = await conn.execute(
+                    "DELETE FROM feature_views WHERE name = $1", name
+                )
+        return result.endswith("1")
 
     # ------ Materialization tracking ------
 
-    def record_run_start(self, run: MaterializationRun) -> None:
+    async def record_run_start(self, run: MaterializationRun) -> None:
         """Record the start of a materialization run."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
                 """
                 INSERT INTO feature_view_runs
-                    (run_id, feature_view_name, status, started_at, ray_job_id, mlflow_run_id)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-                (
-                    run.run_id,
-                    run.feature_view_name,
-                    run.status.value,
-                    run.started_at or datetime.now(timezone.utc),
-                    run.ray_job_id,
-                    run.mlflow_run_id,
-                ),
+                    (run_id, feature_view_name, status, started_at,
+                     ray_job_id, mlflow_run_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                run.run_id,
+                run.feature_view_name,
+                run.status.value,
+                run.started_at or datetime.now(timezone.utc),
+                run.ray_job_id,
+                run.mlflow_run_id,
             )
-            conn.commit()
 
-    def record_run_complete(
+    async def record_run_complete(
         self,
         run_id: str,
         status: MaterializationStatus,
@@ -412,56 +434,49 @@ class FeatureRegistry:
         error_message: Optional[str] = None,
     ) -> None:
         """Record the completion of a materialization run."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
                 """
                 UPDATE feature_view_runs
-                SET status = %s,
-                    completed_at = %s,
-                    rows_written = %s,
-                    error_message = %s
-                WHERE run_id = %s
-            """,
-                (
-                    status.value,
-                    datetime.now(timezone.utc),
-                    rows_written,
-                    error_message,
-                    run_id,
-                ),
+                SET status = $1,
+                    completed_at = $2,
+                    rows_written = $3,
+                    error_message = $4
+                WHERE run_id = $5
+                """,
+                status.value,
+                datetime.now(timezone.utc),
+                rows_written,
+                error_message,
+                run_id,
             )
-            conn.commit()
 
-    def get_run_history(
+    async def get_run_history(
         self,
         feature_view_name: str,
         limit: int = 20,
     ) -> list[dict]:
         """Get materialization run history for a feature view."""
-        conn = self._get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT * FROM feature_view_runs
-                WHERE feature_view_name = %s
+                WHERE feature_view_name = $1
                 ORDER BY created_at DESC
-                LIMIT %s
-            """,
-                (feature_view_name, limit),
+                LIMIT $2
+                """,
+                feature_view_name,
+                limit,
             )
-            return [dict(r) for r in cur.fetchall()]
+        return [dict(r) for r in rows]
 
-    def get_freshness_per_view(self) -> list[dict]:
-        """Get freshness metrics for all active views — used by SLO exporter.
-
-        Returns a list of dicts with keys:
-          name, freshness_minutes, slo_minutes, slo_met, last_materialized_at
-        """
-        conn = self._get_conn()
-        now = datetime.now(timezone.utc)
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
+    async def get_freshness_per_view(self) -> list[dict]:
+        """Freshness metrics for all active views — used by SLO exporter."""
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT
                     fv.name,
@@ -471,10 +486,10 @@ class FeatureRegistry:
                         AS last_materialized_at
                 FROM feature_views fv
                 WHERE fv.status = 'active'
-            """
+                """
             )
-            rows = cur.fetchall()
 
+        now = datetime.now(timezone.utc)
         results = []
         for row in rows:
             last_mat = row["last_materialized_at"]
@@ -496,15 +511,41 @@ class FeatureRegistry:
             )
         return results
 
-    # ------ Cleanup ------
+    async def query_source_table(
+        self,
+        source_table: str,
+        where_parts: list[str],
+        params: list[Any],
+        columns: Optional[list[str]] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Generic SELECT from a source feature table.
 
-    def close(self) -> None:
-        if self._conn and not self._conn.closed:
-            self._conn.close()
-            self._conn = None
+        Args:
+            source_table: Feature source table name (validated by callers).
+            where_parts:  List of ``column = $N`` clauses (already numbered).
+            params:       Positional parameter values matching $N placeholders.
+            columns:      Specific column names (None = SELECT *).
+            limit:        Max rows to return.
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
+        Returns:
+            List of row dicts with datetime values serialised to ISO strings.
+        """
+        pool = self._pool_or_raise()
+        select_cols = ", ".join(columns) if columns else "*"
+        next_n = len(params) + 1
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        query = (
+            f"SELECT {select_cols} FROM {source_table} "
+            f"{where_sql} ORDER BY created_at DESC LIMIT ${next_n}"
+        )
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params, limit)
+        result = []
+        for row in rows:
+            d = dict(row)
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            result.append(d)
+        return result
