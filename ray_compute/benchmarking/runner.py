@@ -9,6 +9,14 @@ def run_benchmark(config: dict) -> dict:
     return run(**config)
 
 
+class BenchmarkRunner:
+    """Thin wrapper around run_benchmark for non-remote invocations."""
+
+    def run(self, config: dict) -> dict:
+        from libs.evaluation.benchmarking.runner import run
+        return run(**config)
+
+
 if __name__ == "__main__":
     from libs.evaluation.benchmarking.runner import main
     main()

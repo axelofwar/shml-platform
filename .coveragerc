@@ -1,0 +1,41 @@
+[run]
+source =
+    libs
+    ray_compute
+    inference
+omit =
+    # GPU-heavy training loops — require real hardware
+    libs/training/shml_training/jobs/*
+    libs/training/shml_training/techniques/optim.py
+    libs/training/shml_training/trainer.py
+    # Docker startup shims
+    inference/*/entrypoint.py
+    inference/*/startup.py
+    # Migration scripts
+    */alembic/versions/*
+    */migrations/*
+    # No-op stubs
+    libs/feature_store/materialize_stub.py
+    # Site-packages and venvs
+    */.venv/*
+    */site-packages/*
+    # Test files themselves
+    tests/*
+    */tests/*
+    # Archived dead code
+    archived/*
+branch = true
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+exclude_lines =
+    # Standard pragma
+    pragma: no cover
+    # Abstract methods
+    raise NotImplementedError
+    # Type-checking guards
+    if TYPE_CHECKING:
+    # Never-reached in tests
+    if __name__ == .__main__.:

@@ -27,14 +27,17 @@ from .registry import (
     MaterializationStatus,
 )
 from .definitions import get_pg_dsn, register_builtin_views
-from .graphql import make_graphql_router
 
 logger = logging.getLogger("shml-features.api")
 
 router = APIRouter(tags=["features"])
 
-# Mount GraphQL sub-router at /features/graphql
-router.include_router(make_graphql_router(), prefix="/features/graphql")
+# Mount GraphQL sub-router at /features/graphql — optional dep; skip gracefully if strawberry absent
+try:
+    from .graphql import make_graphql_router
+    router.include_router(make_graphql_router(), prefix="/features/graphql")
+except ImportError:
+    logger.warning("strawberry-graphql not installed — GraphQL endpoint (/features/graphql) disabled")
 
 # ---------------------------------------------------------------------------
 # Singleton registry — lazy async init
