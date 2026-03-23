@@ -11,6 +11,7 @@ Mounts as a router on the Ray Compute API (server_v2.py).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -40,15 +41,27 @@ router.include_router(make_graphql_router(), prefix="/features/graphql")
 # ---------------------------------------------------------------------------
 
 _registry: FeatureRegistry | None = None
+_registry_lock: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _registry_lock
+    if _registry_lock is None:
+        _registry_lock = asyncio.Lock()
+    return _registry_lock
 
 
 async def get_registry() -> FeatureRegistry:
-    """Get or lazily initialise the feature registry singleton."""
+    """Get or lazily initialise the feature registry singleton (concurrency-safe)."""
     global _registry
-    if _registry is None:
-        _registry = FeatureRegistry(get_pg_dsn())
-        await _registry.init()
-        await register_builtin_views(_registry)
+    if _registry is not None:
+        return _registry
+    async with _get_lock():
+        if _registry is None:  # double-check after acquiring lock
+            reg = FeatureRegistry(get_pg_dsn())
+            await reg.init()
+            await register_builtin_views(reg)
+            _registry = reg
     return _registry
 
 
@@ -182,13 +195,13 @@ async def query_features(view_name: str, req: FeatureQueryRequest):
             raise HTTPException(status_code=400, detail=f"Invalid columns: {invalid}")
         columns = req.columns
 
-    # Build $N-style WHERE clause from entity keys
+    # Build $N-style WHERE clause — $N index is the position in params (1-based)
     where_parts: list[str] = []
     params: list[Any] = []
-    for i, key in enumerate(entity_keys, start=1):
+    for key in entity_keys:
         if key in req.entity_keys:
-            where_parts.append(f"{key} = ${i}")
             params.append(req.entity_keys[key])
+            where_parts.append(f"{key} = ${len(params)}")
 
     if not where_parts:
         raise HTTPException(

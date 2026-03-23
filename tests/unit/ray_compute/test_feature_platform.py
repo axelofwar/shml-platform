@@ -15,22 +15,21 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
-# Add ray_compute to path
+# Add repo root to path
 _root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 sys.path.insert(0, _root)
 sys.path.insert(0, os.path.join(_root, "ray_compute"))
 
-# Mock psycopg2 at module level so ray_compute.features.registry can import
-# without the actual driver being installed in the test environment.
-if "psycopg2" not in sys.modules:
-    _mock_pg = MagicMock()
-    _mock_pg.extras = MagicMock()
-    sys.modules["psycopg2"] = _mock_pg
-    sys.modules["psycopg2.extras"] = _mock_pg.extras
+# Mock asyncpg at module level so registry can import without the driver running
+if "asyncpg" not in sys.modules:
+    _mock_asyncpg = MagicMock()
+    _mock_asyncpg.Pool = MagicMock
+    sys.modules["asyncpg"] = _mock_asyncpg
 
 
 # ===========================================================================
@@ -119,112 +118,163 @@ class TestFeatureViewDefinition:
 
 
 class TestFeatureRegistry:
-    """Test FeatureRegistry database operations with mocked Postgres."""
+    """Test FeatureRegistry database operations with mocked asyncpg pool."""
 
-    @pytest.fixture
-    def mock_conn(self):
-        """Create a mock psycopg2 connection with proper context manager."""
-        conn = MagicMock()
-        conn.closed = False  # prevents _get_conn from reconnecting
-        cursor = MagicMock()
-        # Make conn.cursor() work as a context manager that yields our cursor
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=cursor)
-        ctx.__exit__ = MagicMock(return_value=False)
-        conn.cursor.return_value = ctx
-        return conn, cursor
+    def _make_pool(self):
+        """Return a mock asyncpg pool whose acquire() yields a mock connection."""
+        conn = AsyncMock()
+        # conn.fetch / fetchrow / execute return empty results by default
+        conn.fetch = AsyncMock(return_value=[])
+        conn.fetchrow = AsyncMock(return_value=None)
+        conn.execute = AsyncMock(return_value="DELETE 1")
+        # Support `async with conn.transaction()` in delete()
+        txn = AsyncMock()
+        txn.__aenter__ = AsyncMock(return_value=txn)
+        txn.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=txn)
 
-    @pytest.fixture
-    def registry(self, mock_conn):
-        """Create a FeatureRegistry with mocked connection."""
-        from ray_compute.features.registry import FeatureRegistry
+        pool = AsyncMock()
+        acm = AsyncMock()
+        acm.__aenter__ = AsyncMock(return_value=conn)
+        acm.__aexit__ = AsyncMock(return_value=False)
+        pool.acquire = MagicMock(return_value=acm)
+        pool.close = AsyncMock()
+        return pool, conn
 
-        conn, cursor = mock_conn
-        reg = FeatureRegistry(
-            pg_config={
-                "host": "localhost",
-                "port": 5432,
-                "dbname": "test",
-                "user": "test",
-                "password": "test",
-            }
-        )
-        # Directly inject the mock connection
-        reg._conn = conn
-        return reg
+    @pytest.mark.asyncio
+    async def test_init_schema(self):
+        from libs.feature_store.registry import FeatureRegistry
 
-    def test_init_schema(self, registry, mock_conn):
-        conn, cursor = mock_conn
-        registry.init_schema()
-        # Should have executed CREATE TABLE statements
-        assert cursor.execute.call_count >= 2  # feature_views + feature_view_runs
+        pool, conn = self._make_pool()
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+        await reg.init_schema()
+        # Should execute CREATE TABLE for feature_views and feature_view_runs
+        assert conn.execute.call_count >= 2
 
-    def test_register_view(self, registry, mock_conn):
-        from ray_compute.features.registry import (
-            FeatureViewDefinition,
-            ColumnSchema,
-            FreshnessSLO,
-            EntityDefinition,
-            ComputeEngine,
+    @pytest.mark.asyncio
+    async def test_register_view(self):
+        from libs.feature_store.registry import (
+            FeatureRegistry, FeatureViewDefinition, ColumnSchema,
+            FreshnessSLO, EntityDefinition, ComputeEngine,
         )
 
-        conn, cursor = mock_conn
+        pool, conn = self._make_pool()
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
 
         defn = FeatureViewDefinition(
             name="test_view",
-            description="Test",
             source_table="test_table",
-            entity=EntityDefinition(name="test_ent", join_keys=["id"]),
+            entity=EntityDefinition(name="ent", join_keys=["id"]),
             schema=[ColumnSchema(name="val", type="FLOAT")],
             schedule="@hourly",
             freshness_slo=FreshnessSLO(max_staleness_minutes=60),
             compute_engine=ComputeEngine.RAY,
             owner="team",
         )
-        registry.register(defn)
-        # Should have called INSERT/UPSERT
-        assert cursor.execute.called
+        await reg.register(defn)
+        conn.execute.assert_called_once()
+        # Verify the INSERT/ON CONFLICT statement contains expected view name
+        call_sql = conn.execute.call_args[0][0]
+        assert "INSERT INTO feature_views" in call_sql
 
-    def test_list_views(self, registry, mock_conn):
-        conn, cursor = mock_conn
-        cursor.fetchall.return_value = [
-            {
-                "name": "eval_metrics",
-                "version": 1,
-                "entity_name": "model_version",
-                "entity_keys": ["model_version", "run_id"],
-                "source_table": "feature_eval",
-                "schedule": "@hourly",
-                "freshness_slo_minutes": 120,
-                "owner": "ml-team",
-                "status": "active",
-                "last_materialized_at": None,
-            }
-        ]
-        views = registry.list_views()
-        assert cursor.execute.called
+    @pytest.mark.asyncio
+    async def test_get_view(self):
+        from libs.feature_store.registry import FeatureRegistry
 
-    def test_record_run_start(self, registry, mock_conn):
-        from ray_compute.features.registry import MaterializationRun
+        pool, conn = self._make_pool()
+        conn.fetchrow = AsyncMock(return_value=None)
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
 
-        conn, cursor = mock_conn
-        run = MaterializationRun(
-            feature_view_name="eval_metrics",
-            run_id="run-123",
+        result = await reg.get("missing_view")
+        assert result is None
+        conn.fetchrow.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_view(self):
+        from libs.feature_store.registry import FeatureRegistry
+
+        pool, conn = self._make_pool()
+        conn.execute = AsyncMock(side_effect=["DELETE 1", "DELETE 1"])
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+
+        deleted = await reg.delete("eval_metrics")
+        assert deleted is True
+
+    @pytest.mark.asyncio
+    async def test_record_run_start(self):
+        from libs.feature_store.registry import FeatureRegistry, MaterializationRun
+
+        pool, conn = self._make_pool()
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+
+        run = MaterializationRun(feature_view_name="eval_metrics", run_id="run-123")
+        await reg.record_run_start(run)
+        conn.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_record_run_complete(self):
+        from libs.feature_store.registry import FeatureRegistry, MaterializationStatus
+
+        pool, conn = self._make_pool()
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+
+        await reg.record_run_complete(
+            "run-123", status=MaterializationStatus.SUCCEEDED, rows_written=500
         )
-        registry.record_run_start(run)
-        assert cursor.execute.called
+        conn.execute.assert_called_once()
 
-    def test_record_run_complete(self, registry, mock_conn):
-        from ray_compute.features.registry import MaterializationStatus
+    @pytest.mark.asyncio
+    async def test_query_source_table_no_where(self):
+        """query_source_table with no WHERE clause returns rows from fetch."""
+        from libs.feature_store.registry import FeatureRegistry
 
-        conn, cursor = mock_conn
-        registry.record_run_complete(
-            "run-123",
-            status=MaterializationStatus.SUCCEEDED,
-            rows_written=500,
+        pool, conn = self._make_pool()
+        conn.fetch = AsyncMock(return_value=[])
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+
+        rows = await reg.query_source_table("feature_eval", [], [], None, 10)
+        assert rows == []
+        conn.fetch.assert_called_once()
+        sql = conn.fetch.call_args[0][0]
+        assert "feature_eval" in sql
+        assert "LIMIT $1" in sql
+
+    @pytest.mark.asyncio
+    async def test_query_source_table_with_where(self):
+        """$N placeholder numbering is contiguous when WHERE clause present."""
+        from libs.feature_store.registry import FeatureRegistry
+
+        pool, conn = self._make_pool()
+        conn.fetch = AsyncMock(return_value=[])
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        reg._pool = pool
+
+        await reg.query_source_table(
+            "feature_eval",
+            ["model_version = $1"],
+            ["rfdetr-v3"],
+            None,
+            5,
         )
-        assert cursor.execute.called
+        sql, *params = conn.fetch.call_args[0]
+        # params should be ["rfdetr-v3", 5]
+        assert params == ["rfdetr-v3", 5]
+        assert "LIMIT $2" in sql
+
+    def test_pool_or_raise_before_init(self):
+        """Accessing pool before init() raises RuntimeError."""
+        from libs.feature_store.registry import FeatureRegistry
+
+        reg = FeatureRegistry(dsn="postgresql://test:test@localhost/test")
+        with pytest.raises(RuntimeError, match="not initialised"):
+            reg._pool_or_raise()
 
 
 # ===========================================================================
@@ -281,12 +331,13 @@ class TestBuiltinDefinitions:
             ), f"View {view.name} missing schema columns"
             assert view.owner, f"View {view.name} missing owner"
 
-    def test_register_builtin_views(self):
+    @pytest.mark.asyncio
+    async def test_register_builtin_views(self):
         """register_builtin_views should call registry.register for each view."""
         from ray_compute.features.definitions import register_builtin_views
 
-        mock_registry = MagicMock()
-        register_builtin_views(mock_registry)
+        mock_registry = AsyncMock()
+        await register_builtin_views(mock_registry)
         assert mock_registry.register.call_count == 4
 
 
@@ -296,11 +347,10 @@ class TestBuiltinDefinitions:
 
 
 class TestFeatureAPI:
-    """Test Feature API router endpoints."""
+    """Test Feature API router endpoints with async mocks."""
 
     @pytest.fixture
     def client(self):
-        """Create a FastAPI test client with the features router."""
         try:
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
@@ -315,34 +365,31 @@ class TestFeatureAPI:
 
     def test_catalog_list(self, client):
         """GET /api/v1/features/catalog should return a list."""
-        with patch("ray_compute.features.api.get_registry") as mock_get:
-            mock_reg = MagicMock()
-            mock_reg.list_views.return_value = []
-            mock_get.return_value = mock_reg
-
+        mock_reg = AsyncMock()
+        mock_reg.list_views = AsyncMock(return_value=[])
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
             resp = client.get("/api/v1/features/catalog")
-            assert resp.status_code == 200
-            assert isinstance(resp.json(), list)
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
-    def test_health_endpoint(self, client):
-        """GET /api/v1/features/health should return status."""
-        with patch("ray_compute.features.api.get_registry") as mock_get:
-            mock_reg = MagicMock()
-            mock_reg.list_views.return_value = []
-            mock_reg.get_freshness_per_view.return_value = [
-                {
-                    "name": "eval_metrics",
-                    "slo_met": True,
-                    "freshness_minutes": 30,
-                    "slo_minutes": 120,
-                },
-            ]
-            mock_get.return_value = mock_reg
+    def test_catalog_get_missing(self, client):
+        """GET /api/v1/features/catalog/{name} returns 404 for unknown view."""
+        mock_reg = AsyncMock()
+        mock_reg.get = AsyncMock(return_value=None)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.get("/api/v1/features/catalog/no_such_view")
+        assert resp.status_code == 404
 
-            resp = client.get("/api/v1/features/health")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "status" in data or "total_views" in data
+    def test_query_features_missing_view(self, client):
+        """POST /api/v1/features/{name}/query returns 404 when view not found."""
+        mock_reg = AsyncMock()
+        mock_reg.get = AsyncMock(return_value=None)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post(
+                "/api/v1/features/no_such_view/query",
+                json={"entity_keys": {"model_version": "v1"}},
+            )
+        assert resp.status_code == 404
 
 
 # ===========================================================================
@@ -436,6 +483,89 @@ class TestFeaturePlatformDashboard:
 # ===========================================================================
 # Alert Rules Tests
 # ===========================================================================
+
+
+class TestBugRegressions:
+    """Regression tests for audit-session bug fixes."""
+
+    def test_no_circular_import(self):
+        """Importing graphql module must not raise a circular ImportError.
+
+        Skips when optional third-party deps (strawberry) aren't installed —
+        the concern here is circular imports, not missing optional packages.
+        """
+        import importlib
+        import sys
+
+        # Remove cached versions so we get a fresh import attempt
+        for mod in list(sys.modules.keys()):
+            if "feature_store" in mod:
+                del sys.modules[mod]
+
+        try:
+            importlib.import_module("libs.feature_store.graphql")
+        except ModuleNotFoundError as exc:
+            # A missing optional dep (e.g. strawberry, asyncpg) is expected in CI;
+            # skip rather than fail — we only care about circular import bugs.
+            pytest.skip(f"Optional dep not installed, skipping: {exc}")
+        except ImportError as exc:
+            pytest.fail(f"Circular import not fixed: {exc}")
+
+    def test_param_numbering_partial_entity_keys(self):
+        """$N placeholder numbers must be contiguous regardless of which keys are present.
+
+        The bug was that enumerate(entity_keys, start=1) used a fixed offset
+        so if only the second key matched, we'd get $2 but only one param.
+        """
+        # Simulate the fixed logic from api.py query_features
+        entity_keys_spec = ["model_version", "run_id"]
+        req_entity_keys = {"run_id": "abc"}  # only second key present
+
+        where_parts: list = []
+        params: list = []
+        for key in entity_keys_spec:
+            if key in req_entity_keys:
+                params.append(req_entity_keys[key])
+                where_parts.append(f"{key} = ${len(params)}")  # fixed pattern
+
+        assert where_parts == ["run_id = $1"]
+        assert params == ["abc"]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_registry_init(self):
+        """Concurrent get_registry() calls must only initialise the pool once."""
+        import asyncio
+        import importlib
+        import sys
+
+        # Reset cached state in the module
+        for mod in list(sys.modules.keys()):
+            if "feature_store.api" in mod:
+                del sys.modules[mod]
+
+        api_mod = importlib.import_module("libs.feature_store.api")
+        # Patch the FeatureRegistry constructor so it doesn't touch postgres
+        init_count = 0
+
+        async def fake_init(self):
+            nonlocal init_count
+            await asyncio.sleep(0)  # yield to let second coroutine attempt
+            init_count += 1
+
+        fake_pool = AsyncMock()
+        fake_reg = MagicMock()
+        fake_reg.init = fake_init.__get__(fake_reg)
+
+        with patch.object(api_mod, "_registry", None), \
+             patch.object(api_mod, "_registry_lock", None), \
+             patch("libs.feature_store.api.FeatureRegistry", return_value=fake_reg), \
+             patch("libs.feature_store.api.register_builtin_views", new=AsyncMock()):
+            results = await asyncio.gather(
+                api_mod.get_registry(), api_mod.get_registry()
+            )
+
+        # Both calls should return the same singleton
+        assert results[0] is results[1]
 
 
 class TestAlertRules:

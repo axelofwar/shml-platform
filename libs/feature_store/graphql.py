@@ -23,7 +23,6 @@ import strawberry
 from strawberry.fastapi import GraphQLRouter
 
 from .registry import FeatureRegistry, MaterializationStatus
-from .api import get_registry
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +68,7 @@ class Query:
         status: Optional[str] = None,
     ) -> List[FeatureViewType]:
         """List all registered feature views."""
+        from .api import get_registry
         registry: FeatureRegistry = await get_registry()
         summaries = await registry.list_views(status=status)
         return [
@@ -97,6 +97,7 @@ class Query:
     ) -> Optional[FeatureViewType]:
         """Get a single feature view by name."""
         import json
+        from .api import get_registry
 
         registry: FeatureRegistry = await get_registry()
         defn = await registry.get(name)
@@ -139,6 +140,7 @@ class Mutation:
         """Trigger a materialization run for a feature view."""
         from datetime import datetime, timezone
 
+        from .api import get_registry
         from .registry import MaterializationRun
 
         registry: FeatureRegistry = await get_registry()
