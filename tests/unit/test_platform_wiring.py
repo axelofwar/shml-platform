@@ -205,3 +205,48 @@ class TestCoverageConfig:
     def test_coveragerc_includes_libs(self):
         content = _read(REPO_ROOT / ".coveragerc")
         assert "libs" in content
+
+
+# ---------------------------------------------------------------------------
+# T9.7: Grafana dashboard provisioning (G4 guard)
+# ---------------------------------------------------------------------------
+
+
+class TestGrafanaDashboards:
+    """Grafana dashboard provisioning files must exist and be valid JSON."""
+
+    DASHBOARD_ROOT = REPO_ROOT / "monitoring" / "grafana" / "dashboards"
+
+    def test_mlflow_dashboard_exists(self):
+        """G4: mlflow/ dashboard folder must contain at least one dashboard."""
+        mlflow_dir = self.DASHBOARD_ROOT / "mlflow"
+        jsons = list(mlflow_dir.glob("*.json"))
+        assert len(jsons) >= 1, f"Expected ≥1 dashboard in {mlflow_dir}, found none"
+
+    def test_mlflow_dashboard_valid_json(self):
+        """Every JSON file in mlflow/ must be valid Grafana dashboard JSON."""
+        import json
+
+        mlflow_dir = self.DASHBOARD_ROOT / "mlflow"
+        for fpath in mlflow_dir.glob("*.json"):
+            with open(fpath) as f:
+                d = json.load(f)
+            assert "panels" in d, f"{fpath.name} missing 'panels' key"
+            assert "uid" in d, f"{fpath.name} missing 'uid' key"
+            assert "title" in d, f"{fpath.name} missing 'title' key"
+
+    def test_dashboards_yml_has_mlflow_provider(self):
+        """dashboards.yml must define an MLflow provider."""
+        dashboards_yml = REPO_ROOT / "monitoring" / "grafana" / "dashboards.yml"
+        if not dashboards_yml.exists():
+            pytest.skip("dashboards.yml not found")
+        content = _read(dashboards_yml)
+        assert "mlflow" in content.lower(), "dashboards.yml must have an MLflow provider entry"
+
+    def test_mlflow_datasource_in_grafana_config(self):
+        """datasources.yml must reference the mlflow-metrics datasource."""
+        datasources_yml = REPO_ROOT / "monitoring" / "grafana" / "datasources.yml"
+        if not datasources_yml.exists():
+            pytest.skip("datasources.yml not found")
+        content = _read(datasources_yml)
+        assert "mlflow-metrics" in content, "datasources.yml must define mlflow-metrics datasource"
