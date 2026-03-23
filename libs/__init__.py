@@ -6,13 +6,16 @@ Shared utilities for the SHML ML Platform:
 - shml_features: FeatureClient SDK bridging FiftyOne, Iceberg, and pgvector
 """
 
-from libs.shml_spark import (
-    create_spark_session,
-    create_branch,
-    merge_branch,
-    tag_release,
-)
-from libs.shml_features import FeatureClient
+try:
+    from libs.shml_spark import (
+        create_spark_session,
+        create_branch,
+        merge_branch,
+        tag_release,
+    )
+    from libs.shml_features import FeatureClient
+except ImportError:
+    pass
 
 __all__ = [
     "create_spark_session",
