@@ -109,6 +109,28 @@ SLO_VIOLATIONS_30D = Gauge(
     "Count of SLO violations in the last 30 days",
 )
 
+# ---------------------------------------------------------------------------
+# Drift monitoring gauges (Phase 6)
+# ---------------------------------------------------------------------------
+
+ML_EMBEDDING_CENTROID_DRIFT = Gauge(
+    "ml_embedding_centroid_drift",
+    "L2 distance between current and baseline embedding centroid (per model run)",
+    ["run_id"],
+)
+
+ML_FEATURE_PSI = Gauge(
+    "ml_feature_psi",
+    "Population Stability Index between current and baseline feature distribution",
+    ["feature_view"],
+)
+
+ML_LABEL_KL_DIVERGENCE = Gauge(
+    "ml_label_kl_divergence",
+    "KL divergence between current and baseline label distribution",
+    ["model_name"],
+)
+
 
 # ---------------------------------------------------------------------------
 # Helper: resilient HTTP GET
@@ -518,8 +540,116 @@ def collect_per_view_freshness() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Main collection loop
+# Drift Monitor
 # ---------------------------------------------------------------------------
+
+class DriftMonitor:
+    """Fetch embedding/feature/label drift artifacts from MLflow and export as Prometheus gauges.
+
+    Expects MLflow runs tagged with ``drift_stats`` artifacts (JSON) written by
+    ``libs/evaluation/face/fiftyone_eval_pipeline.export_embedding_stats()``.
+
+    Artifact schema:
+        {
+            "centroid": [float, ...],          # mean embedding vector
+            "covariance_diag": [float, ...],   # diagonal of covariance matrix
+            "feature_psi": {"<view>": float},  # PSI per feature view
+            "label_kl": {"<model>": float}     # KL per model
+        }
+
+    PSI thresholds:
+        < 0.1  — no significant shift
+        0.1–0.2 — moderate shift (monitor closely)
+        > 0.2  — significant shift (alert)
+    """
+
+    PSI_ALERT_THRESHOLD = 0.2
+
+    def __init__(self) -> None:
+        self._baseline_centroids: dict[str, list[float]] = {}
+
+    def _latest_drift_artifact(self) -> dict | None:
+        """Fetch the most recent drift_stats artifact from MLflow."""
+        url = f"{MLFLOW_TRACKING_URI}/api/2.0/mlflow/runs/search"
+        payload = {
+            "filter": "tags.`mlflow.runName` LIKE '%drift%' OR tags.artifact_type = 'drift_stats'",
+            "max_results": 10,
+            "order_by": ["start_time DESC"],
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=15)
+            resp.raise_for_status()
+            runs = resp.json().get("runs", [])
+        except Exception:
+            logger.debug("No drift stats runs found in MLflow")
+            return None
+
+        for run in runs:
+            run_id = run.get("info", {}).get("run_id")
+            if not run_id:
+                continue
+            artifact_url = (
+                f"{MLFLOW_TRACKING_URI}/api/2.0/mlflow/artifacts/list"
+                f"?run_id={run_id}&path="
+            )
+            artifacts = _get(artifact_url) or {}
+            for entry in artifacts.get("files", []):
+                if "drift_stats" in (entry.get("path") or ""):
+                    # Download the JSON artifact
+                    dl_url = (
+                        f"{MLFLOW_TRACKING_URI}/api/2.0/mlflow/artifacts/get"
+                        f"?run_id={run_id}&path={entry['path']}"
+                    )
+                    try:
+                        r = requests.get(dl_url, timeout=15)
+                        r.raise_for_status()
+                        return {"run_id": run_id, "stats": r.json()}
+                    except Exception:
+                        logger.debug("Failed to download drift artifact for run %s", run_id)
+        return None
+
+    def collect(self) -> None:
+        """Pull drift stats from MLflow and update gauges."""
+        result = self._latest_drift_artifact()
+        if result is None:
+            return
+
+        run_id: str = result["run_id"]
+        stats: dict = result["stats"]
+
+        # --- Embedding centroid drift ---
+        centroid = stats.get("centroid")
+        if centroid:
+            import math
+            if run_id not in self._baseline_centroids:
+                self._baseline_centroids[run_id] = centroid
+            baseline = self._baseline_centroids[run_id]
+            if len(baseline) == len(centroid):
+                l2 = math.sqrt(
+                    sum((a - b) ** 2 for a, b in zip(centroid, baseline))
+                )
+                ML_EMBEDDING_CENTROID_DRIFT.labels(run_id=run_id).set(round(l2, 6))
+
+        # --- Feature PSI per view ---
+        for view_name, psi_val in (stats.get("feature_psi") or {}).items():
+            ML_FEATURE_PSI.labels(feature_view=view_name).set(round(float(psi_val), 6))
+            if float(psi_val) > self.PSI_ALERT_THRESHOLD:
+                logger.warning(
+                    "Feature drift alert: PSI=%.3f > %.1f for view '%s'",
+                    psi_val,
+                    self.PSI_ALERT_THRESHOLD,
+                    view_name,
+                )
+
+        # --- Label KL divergence per model ---
+        for model_name, kl_val in (stats.get("label_kl") or {}).items():
+            ML_LABEL_KL_DIVERGENCE.labels(model_name=model_name).set(round(float(kl_val), 6))
+
+
+_drift_monitor = DriftMonitor()
+
+
+
 
 _last_values: dict[str, float] = {}
 
@@ -565,6 +695,9 @@ def collect_all() -> None:
 
     # Per-view feature freshness (EB-05: labeled Prometheus gauges)
     collect_per_view_freshness()
+
+    # Drift monitoring (Phase 6: embedding centroid, feature PSI, label KL)
+    _drift_monitor.collect()
 
     # Error budget
     error_budget, violations = collect_error_budget(success_rate)
