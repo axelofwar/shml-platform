@@ -184,6 +184,8 @@ class TestAPIKeyEndpoints:
         mock_db.add = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
+        # No existing duplicate key — avoid the 400 "already exists" branch
+        mock_db.query.return_value.filter.return_value.first.return_value = None
 
         from ray_compute.api.api_keys import router
         from ray_compute.api.auth import get_current_user

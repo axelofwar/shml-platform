@@ -9,6 +9,49 @@ import sys
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
+
+class _Col:
+    """Minimal SQLAlchemy column descriptor for stub model classes.
+
+    Supports filter operations that appear in production code:
+    - ``ApiKey.revoked_at.is_(None)``
+    - ``ApiKey.previous_key_valid_until > now``
+    - ``Job.status.in_(["PENDING", "RUNNING"])``
+    """
+
+    def is_(self, v):  # noqa: A003
+        return MagicMock()
+
+    def in_(self, values):
+        return MagicMock()
+
+    def desc(self):
+        return MagicMock()
+
+    def asc(self):
+        return MagicMock()
+
+    def __eq__(self, other):  # noqa: D105
+        return MagicMock()
+
+    def __ne__(self, other):
+        return MagicMock()
+
+    def __gt__(self, other):
+        return MagicMock()
+
+    def __lt__(self, other):
+        return MagicMock()
+
+    def __ge__(self, other):
+        return MagicMock()
+
+    def __le__(self, other):
+        return MagicMock()
+
+    def __hash__(self):
+        return id(self)
+
 # ---------------------------------------------------------------------------
 # Stub ray and child namespaces (idempotent — only if not already present)
 # ---------------------------------------------------------------------------
@@ -108,13 +151,17 @@ if "ray_compute.api.models" not in sys.modules:
 
     class UserQuota:  # noqa: N801
         __tablename__ = "user_quotas"
+        user_id = None
         max_concurrent_jobs: int = 5
         max_gpu_hours_per_day: int = 48
+        max_gpu_fraction: float = 0.5
+        max_job_timeout_hours: int = 48
 
     class Job:  # noqa: N801
         __tablename__ = "jobs"
         job_id = None
-        status: str = "PENDING"
+        user_id = None
+        status = _Col()  # _Col so .in_([...]) SQLAlchemy filter works
 
         def __init__(self, **kwargs):
             self.job_id = None
@@ -124,8 +171,29 @@ if "ray_compute.api.models" not in sys.modules:
 
     class ApiKey:  # noqa: N801
         __tablename__ = "api_keys"
+        id = None
+        user_id = None
+        name: str = ""
         key_hash: str = ""
         is_active: bool = True
+        created_at = _Col()  # _Col so .desc() ordering works
+        revoked_at = _Col()  # _Col so .is_(None) SQLAlchemy filter works
+        previous_key_hash = None
+        previous_key_valid_until = _Col()  # _Col so > datetime comparison works
+
+        def __init__(self, **kwargs):
+            self.id = None
+            self.name = ""
+            self.key_hash = ""
+            self.user_id = None
+            self.scopes = []
+            self.expires_at = None
+            self.last_used_at = None
+            self.revoked_at = None
+            self.description = None
+            self.created_by = None
+            for k, v in kwargs.items():
+                setattr(self, k, v)
 
     class AuditLog:  # noqa: N801
         __tablename__ = "audit_logs"
