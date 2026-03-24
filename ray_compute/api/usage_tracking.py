@@ -95,7 +95,7 @@ def calculate_job_usage(job: Job) -> Tuple[Decimal, Decimal]:
 
     # CPU hours = duration * CPU cores requested / 10 (normalize to base units)
     # This prevents CPU-only jobs from consuming too much quota
-    cpu_hours = duration_hours * Decimal(str(job.cpu_requested / 10.0))
+    cpu_hours = duration_hours * (Decimal(str(job.cpu_requested)) / Decimal("10"))
 
     return gpu_hours, cpu_hours
 

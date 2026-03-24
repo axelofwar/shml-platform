@@ -54,8 +54,8 @@ class GitTools:
         git_result = GitResult(
             success=result.returncode == 0,
             command=" ".join(cmd),
-            stdout=result.stdout.strip(),
-            stderr=result.stderr.strip(),
+            stdout=result.stdout.rstrip(),
+            stderr=result.stderr.rstrip(),
             returncode=result.returncode,
         )
 

@@ -25,6 +25,19 @@ for p in [_root, _gw_root]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# ---------------------------------------------------------------------------
+# Load gateway schemas directly via importlib to avoid sys.modules['app']
+# collision with inference/chat-api which is pre-cached alphabetically first.
+# ---------------------------------------------------------------------------
+import importlib.util as _ilu
+
+_gw_schemas_spec = _ilu.spec_from_file_location(
+    "_gateway_app_schemas",
+    os.path.join(_gw_root, "app", "schemas.py"),
+)
+_gw_schemas = _ilu.module_from_spec(_gw_schemas_spec)
+_gw_schemas_spec.loader.exec_module(_gw_schemas)
+
 
 # ---------------------------------------------------------------------------
 # Schema-only tests (no gateway app import needed)
@@ -49,7 +62,8 @@ class TestGatewaySchemas:
             ChatMessage(role="invalid_role", content="x")
 
     def test_gateway_health_schema(self):
-        from app.schemas import GatewayHealth, ServiceHealth
+        GatewayHealth = _gw_schemas.GatewayHealth
+        ServiceHealth = _gw_schemas.ServiceHealth
 
         svc = ServiceHealth(name="llm", status="healthy", latency_ms=12.0)
         health = GatewayHealth(
@@ -62,7 +76,7 @@ class TestGatewaySchemas:
         assert len(health.services) == 1
 
     def test_queue_status_schema(self):
-        from app.schemas import QueueStatus
+        QueueStatus = _gw_schemas.QueueStatus
 
         qs = QueueStatus(
             llm_queue_length=3,
@@ -74,7 +88,7 @@ class TestGatewaySchemas:
         assert qs.llm_queue_length == 3
 
     def test_rate_limit_status_schema(self):
-        from app.schemas import RateLimitStatus
+        RateLimitStatus = _gw_schemas.RateLimitStatus
         from datetime import datetime, timezone
 
         rl = RateLimitStatus(
@@ -100,7 +114,7 @@ class TestGatewaySchemas:
         assert cs.message_count == 3
 
     def test_backup_info_schema(self):
-        from app.schemas import BackupInfo
+        BackupInfo = _gw_schemas.BackupInfo
         from datetime import datetime
 
         bi = BackupInfo(
