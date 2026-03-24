@@ -42,77 +42,73 @@ if "ray_compute.api.database" not in sys.modules:
     _db_mod.engine = MagicMock()
     sys.modules["ray_compute.api.database"] = _db_mod
 
-if "ray_compute.api.audit" not in sys.modules:
-    _audit_mod = types.ModuleType("ray_compute.api.audit")
-    _audit_mod.log_audit_event = AsyncMock(return_value=None)
-    sys.modules["ray_compute.api.audit"] = _audit_mod
-else:
-    _audit_mod = sys.modules["ray_compute.api.audit"]
+_prev_audit_mod = sys.modules.get("ray_compute.api.audit")
+_audit_mod = types.ModuleType("ray_compute.api.audit")
+_audit_mod.log_audit_event = AsyncMock(return_value=None)
+sys.modules["ray_compute.api.audit"] = _audit_mod
 
-if "ray_compute.api.usage_tracking" not in sys.modules:
-    _ut_mod = types.ModuleType("ray_compute.api.usage_tracking")
-    _ut_mod.enforce_quota = MagicMock(return_value=None)
-    _ut_mod.get_user_quota_remaining = MagicMock(return_value={
-        "gpu_hours_used": 1.0,
-        "gpu_hours_limit": 48.0,
-        "gpu_hours_remaining": 47.0,
-        "cpu_hours_used": 2.0,
-        "cpu_hours_limit": 96.0,
-        "cpu_hours_remaining": 94.0,
-        "concurrent_jobs": 0,
-        "concurrent_jobs_limit": 5,
-        "percent_used": 2.1,
-    })
-    _ut_mod.get_tier_limits = MagicMock(return_value={
-        "name": "Free",
-        "max_gpu_hours_per_day": 4,
-        "max_cpu_hours_per_day": 8,
-        "max_concurrent_jobs": 2,
-        "max_gpu_fraction": 0.25,
-        "max_job_timeout_hours": 12,
-        "techniques_allowed": False,
-        "can_use_custom_docker": False,
-        "priority_weight": 1,
-    })
-    _ut_mod.update_job_usage = MagicMock(return_value=None)
-    _ut_mod.record_job_completion = MagicMock(return_value=None)
-    sys.modules["ray_compute.api.usage_tracking"] = _ut_mod
-else:
-    _ut_mod = sys.modules["ray_compute.api.usage_tracking"]
+_prev_ut_mod = sys.modules.get("ray_compute.api.usage_tracking")
+_ut_mod = types.ModuleType("ray_compute.api.usage_tracking")
+_ut_mod.enforce_quota = MagicMock(return_value=None)
+_ut_mod.get_user_quota_remaining = MagicMock(return_value={
+    "gpu_hours_used": 1.0,
+    "gpu_hours_limit": 48.0,
+    "gpu_hours_remaining": 47.0,
+    "cpu_hours_used": 2.0,
+    "cpu_hours_limit": 96.0,
+    "cpu_hours_remaining": 94.0,
+    "concurrent_jobs": 0,
+    "concurrent_jobs_limit": 5,
+    "percent_used": 2.1,
+})
+_ut_mod.get_tier_limits = MagicMock(return_value={
+    "name": "Free",
+    "max_gpu_hours_per_day": 4,
+    "max_cpu_hours_per_day": 8,
+    "max_concurrent_jobs": 2,
+    "max_gpu_fraction": 0.25,
+    "max_job_timeout_hours": 12,
+    "techniques_allowed": False,
+    "can_use_custom_docker": False,
+    "priority_weight": 1,
+})
+_ut_mod.update_job_usage = MagicMock(return_value=None)
+_ut_mod.record_job_completion = MagicMock(return_value=None)
+sys.modules["ray_compute.api.usage_tracking"] = _ut_mod
 
-if "ray_compute.api.scheduler" not in sys.modules:
-    _sched_mod = types.ModuleType("ray_compute.api.scheduler")
-    _mock_scheduler = MagicMock()
-    _mock_scheduler.return_value.get_queue_overview.return_value = {
-        "total": 2, "running": 1, "pending": 1,
-        "gpu": {"rtx3090": {"allocated": 0.5, "jobs": {"job-1": 0.5}}},
-    }
-    _mock_scheduler.return_value.get_job_status.return_value = {
-        "position": 1, "estimated_start": None,
-    }
-    _sched_mod.TrainingScheduler = _mock_scheduler
-    _sched_mod.get_queue_position = MagicMock(return_value=1)
-    _sched_mod.estimate_start_time = MagicMock(return_value=None)
-    _sched_mod.get_queue_stats = MagicMock(return_value={})
-    sys.modules["ray_compute.api.scheduler"] = _sched_mod
-else:
-    _sched_mod = sys.modules["ray_compute.api.scheduler"]
+_prev_sched_mod = sys.modules.get("ray_compute.api.scheduler")
+_sched_mod = types.ModuleType("ray_compute.api.scheduler")
+_mock_scheduler = MagicMock()
+_mock_scheduler.return_value.get_queue_overview.return_value = {
+    "total": 2, "running": 1, "pending": 1,
+    "gpu": {"rtx3090": {"allocated": 0.5, "jobs": {"job-1": 0.5}}},
+}
+_mock_scheduler.return_value.get_job_status.return_value = {
+    "position": 1, "estimated_start": None,
+}
+_sched_mod.TrainingScheduler = _mock_scheduler
+_sched_mod.get_queue_position = MagicMock(return_value=1)
+_sched_mod.estimate_start_time = MagicMock(return_value=None)
+_sched_mod.get_queue_stats = MagicMock(return_value={})
+sys.modules["ray_compute.api.scheduler"] = _sched_mod
 
 # ---------------------------------------------------------------------------
 # Import training module after stubs are in place
 # ---------------------------------------------------------------------------
 import ray_compute.api.training as _tr  # noqa: E402
 
-# Release our stubs from sys.modules so subsequent test files can load the
-# real modules (training.py has already bound their functions; stubs remain
-# accessible via module-level _ut_mod / _audit_mod / _sched_mod refs).
-for _stub_key in [
-    "ray_compute.api.audit",
-    "ray_compute.api.usage_tracking",
-    "ray_compute.api.scheduler",
+# Restore prior modules immediately after import so later test files are not
+# affected, while training.py keeps the symbols it already imported.
+for _stub_key, _previous_mod in [
+    ("ray_compute.api.audit", _prev_audit_mod),
+    ("ray_compute.api.usage_tracking", _prev_ut_mod),
+    ("ray_compute.api.scheduler", _prev_sched_mod),
 ]:
-    if sys.modules.get(_stub_key) in (_audit_mod, _ut_mod, _sched_mod):
-        del sys.modules[_stub_key]
+    if _previous_mod is None:
+        if sys.modules.get(_stub_key) in (_audit_mod, _ut_mod, _sched_mod):
+            del sys.modules[_stub_key]
+    else:
+        sys.modules[_stub_key] = _previous_mod
 
 # Grab dependency callables
 from ray_compute.api.database import get_db as _database_get_db  # noqa: E402
