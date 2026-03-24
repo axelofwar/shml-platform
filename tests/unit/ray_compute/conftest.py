@@ -116,6 +116,12 @@ if "ray_compute.api.models" not in sys.modules:
         job_id = None
         status: str = "PENDING"
 
+        def __init__(self, **kwargs):
+            self.job_id = None
+            self.status = "PENDING"
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
     class ApiKey:  # noqa: N801
         __tablename__ = "api_keys"
         key_hash: str = ""

@@ -109,6 +109,8 @@ async def restart_job(
             "message": f"Job restarted as {new_job_id}",
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restart job: {str(e)}")
 
