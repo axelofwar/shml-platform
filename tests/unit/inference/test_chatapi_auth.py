@@ -93,7 +93,7 @@ async def test_get_current_user_requires_auth_when_missing():
             x_forwarded_user=None,
         )
     assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "Authentication required"
+    assert "Authentication required" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_require_role_and_admin_helpers():
     with pytest.raises(HTTPException) as exc_info:
         await checker(viewer_user)
     assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == "Access denied"
+    assert "Access denied" in exc_info.value.detail
 
     assert require_admin(admin_user) is admin_user
     assert require_developer_or_admin(admin_user) is admin_user

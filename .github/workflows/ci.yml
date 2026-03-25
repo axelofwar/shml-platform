@@ -40,6 +40,11 @@ jobs:
             fi
           done
 
+          # Re-pin pydantic v2 last — some upstream requirements.txt files pin
+          # pydantic<2 (e.g. older MLflow/Ray), which downgrades pydantic after the
+          # line above and breaks pydantic-settings (requires pydantic._internal.*).
+          pip install "pydantic>=2.0" pydantic-settings --upgrade
+
       - name: Run unit tests
         run: |
           if [ -d "tests/unit" ]; then
