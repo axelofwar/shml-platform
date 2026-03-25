@@ -186,13 +186,18 @@ def get_user_quota_remaining(
         gpu_limit = quota.max_gpu_hours_per_day
         cpu_limit = quota.max_cpu_hours_per_day
     else:  # month
-        gpu_limit = Decimal(str(tier_limits.get("monthly_gpu_hours", 100)))
-        cpu_limit = Decimal(str(tier_limits.get("monthly_cpu_hours", 1000)))
+        monthly_gpu_hours = tier_limits.get("monthly_gpu_hours", 100)
+        monthly_cpu_hours = tier_limits.get("monthly_cpu_hours", 1000)
 
-        if tier_limits.get("monthly_gpu_hours") == "unlimited":
+        if monthly_gpu_hours == "unlimited":
             gpu_limit = Decimal("999999.0")
-        if tier_limits.get("monthly_cpu_hours") == "unlimited":
+        else:
+            gpu_limit = Decimal(str(monthly_gpu_hours))
+
+        if monthly_cpu_hours == "unlimited":
             cpu_limit = Decimal("999999.0")
+        else:
+            cpu_limit = Decimal(str(monthly_cpu_hours))
 
     gpu_remaining = max(Decimal("0.0"), gpu_limit - usage["gpu_hours"])
     cpu_remaining = max(Decimal("0.0"), cpu_limit - usage["cpu_hours"])

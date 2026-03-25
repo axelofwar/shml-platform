@@ -6,11 +6,13 @@ ShellTools command validation is tested without executing real commands.
 """
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
 from typing import List
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -405,6 +407,143 @@ class TestShellToolsRun:
         result = st.run("echo hello")
         assert result.success is True
         assert "hello" in result.stdout
+
+    def test_run_without_capture_output_omits_stdout_and_stderr(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        st = ShellTools(str(tmp_path))
+        with patch("tools.shell_tools.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(
+                args=["echo", "hello"],
+                returncode=0,
+                stdout="hello\n",
+                stderr="warning\n",
+            )
+
+            result = st.run("echo hello", capture_output=False, env={"TOKEN": "present"})
+
+        assert result.success is True
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert run_mock.call_args.kwargs["env"]["TOKEN"] == "present"
+        assert st.history[-1] == result
+
+    def test_run_handles_timeout(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        st = ShellTools(str(tmp_path), timeout=5)
+        with patch("tools.shell_tools.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="pytest", timeout=5)):
+            result = st.run("pytest")
+
+        assert result.success is False
+        assert result.returncode == -1
+        assert result.stderr == "Command timed out after 5s"
+
+    def test_run_handles_unexpected_exception(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        st = ShellTools(str(tmp_path))
+        with patch("tools.shell_tools.subprocess.run", side_effect=OSError("boom")):
+            result = st.run("pytest")
+
+        assert result.success is False
+        assert result.returncode == -1
+        assert result.stderr == "boom"
+
+
+class TestShellToolsAsync:
+    @pytest.mark.asyncio
+    async def test_run_async_executes_and_decodes_output(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (b"async out", b"async err")
+        proc.returncode = 0
+
+        st = ShellTools(str(tmp_path), timeout=10)
+        with patch("tools.shell_tools.asyncio.create_subprocess_shell", new=AsyncMock(return_value=proc)) as create_mock:
+            result = await st.run_async("pytest", env={"MODE": "test"})
+
+        assert result.success is True
+        assert result.stdout == "async out"
+        assert result.stderr == "async err"
+        assert create_mock.await_args.kwargs["env"]["MODE"] == "test"
+        assert st.history[-1] == result
+
+    @pytest.mark.asyncio
+    async def test_run_async_handles_timeout(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        proc = AsyncMock()
+        proc.communicate.return_value = (b"", b"")
+        proc.returncode = 0
+
+        st = ShellTools(str(tmp_path), timeout=7)
+        with patch("tools.shell_tools.asyncio.create_subprocess_shell", new=AsyncMock(return_value=proc)), \
+             patch("tools.shell_tools.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await st.run_async("pytest")
+
+        assert result.success is False
+        assert result.returncode == -1
+        assert result.stderr == "Command timed out after 7s"
+
+
+class TestShellToolsHelpers:
+    def test_run_tests_builds_framework_commands(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        st = ShellTools(str(tmp_path))
+        with patch.object(st, "run", return_value="ok") as run_mock:
+            assert st.run_tests("tests/unit", extra_args=["-q"]) == "ok"
+            assert st.run_tests(framework="npm", extra_args=["--watch"]) == "ok"
+            assert st.run_tests(framework="cargo", extra_args=["--lib"]) == "ok"
+
+        assert run_mock.call_args_list[0].args[0] == "pytest -v tests/unit -q"
+        assert run_mock.call_args_list[1].args[0] == "npm test -- --watch"
+        assert run_mock.call_args_list[2].args[0] == "cargo test --lib"
+
+    def test_run_tests_unknown_framework_returns_error(self, tmp_path):
+        from tools.shell_tools import ShellTools
+
+        st = ShellTools(str(tmp_path))
+        result = st.run_tests(framework="unknown")
+
+        assert result.success is False
+        assert result.returncode == -1
+        assert result.stderr == "Unknown test framework: unknown"
+
+    def test_lint_format_and_history_helpers(self, tmp_path):
+        from tools.shell_tools import CommandResult, ShellTools
+
+        st = ShellTools(str(tmp_path))
+        with patch.object(st, "run", side_effect=["linted", "formatted"]):
+            assert st.lint(files=["a.py"], fix=True) == "linted"
+            assert st.format_code(check_only=True) == "formatted"
+
+        assert st.history == []
+        st.history.extend(
+            [
+                CommandResult("ruff check a.py", "ok", "", 0, 11, True),
+                CommandResult("black --check .", "", "needs format", 1, 22, False),
+            ]
+        )
+
+        assert st.get_history() == [
+            {
+                "command": "ruff check a.py",
+                "success": True,
+                "returncode": 0,
+                "duration_ms": 11,
+                "output_length": 2,
+            },
+            {
+                "command": "black --check .",
+                "success": False,
+                "returncode": 1,
+                "duration_ms": 22,
+                "output_length": 12,
+            },
+        ]
 
 
 # ===========================================================================

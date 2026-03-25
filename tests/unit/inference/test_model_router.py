@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import httpx
 
 _CHAT_API = Path(__file__).parent.parent.parent.parent / "inference" / "chat-api"
 if str(_CHAT_API) not in sys.path:
@@ -320,3 +321,130 @@ class TestModelRouterClose:
         r.client = mock_client
         await r.close()
         mock_client.aclose.assert_called_once()
+
+
+class TestModelRouterCoverage:
+    @pytest.mark.asyncio
+    async def test_connect_and_get_model_status_refresh_health(self):
+        r = ModelRouter()
+
+        healthy = MagicMock(status_code=200)
+        healthy.json.return_value = {"status": "healthy"}
+        unhealthy = MagicMock(status_code=503)
+        unhealthy.json.return_value = {"status": "unhealthy"}
+
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=[healthy, unhealthy, unhealthy, healthy])
+
+        with patch("app.model_router.httpx.AsyncClient", return_value=client):
+            await r.connect()
+            status = await r.get_model_status()
+
+        assert r.client is client
+        assert status["primary"].is_available is False
+        assert status["fallback"].is_available is True
+
+    @pytest.mark.asyncio
+    async def test_check_model_health_handles_exception(self):
+        r = ModelRouter()
+        r.client = AsyncMock()
+        r.client.get = AsyncMock(side_effect=RuntimeError("network down"))
+
+        await r._check_model_health()
+
+        assert r.models["primary"].is_available is False
+        assert r.models["fallback"].is_available is False
+
+    @pytest.mark.asyncio
+    async def test_generate_merges_existing_system_message_and_unknown_model_defaults(self):
+        r = ModelRouter()
+        r.models["primary"].is_available = True
+        r.models["fallback"].is_available = True
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "id": "resp-1",
+            "created": 123,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "done"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        r.client = mock_client
+
+        async def _noop_health_check():
+            pass
+
+        r._check_model_health = _noop_health_check
+        req = ChatCompletionRequest(
+            messages=[_msg("existing system", role="system"), _msg("hello")],
+            model="some-unknown-model",
+        )
+
+        response, model_used, _latency = await r.generate(req, user_instructions="be precise")
+
+        body = mock_client.post.call_args.kwargs["json"]
+        assert model_used == "fallback"
+        assert response.model == r.models["fallback"].id
+        assert body["messages"][0]["role"] == "system"
+        assert "be precise" in body["messages"][0]["content"]
+        assert "existing system" in body["messages"][0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_generate_http_status_error_raises_runtime_error(self):
+        r = ModelRouter()
+        r.models["fallback"].is_available = True
+        mock_response = MagicMock()
+        mock_response.text = "backend failed"
+        http_error = httpx.HTTPStatusError("boom", request=MagicMock(), response=mock_response)
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = http_error
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        r.client = mock_client
+
+        async def _noop_health_check():
+            pass
+
+        r._check_model_health = _noop_health_check
+
+        with pytest.raises(RuntimeError, match="Model error: backend failed"):
+            await r.generate(_req([_msg("hello")], model="auto"))
+
+    @pytest.mark.asyncio
+    async def test_generate_stream_yields_sse_lines(self):
+        r = ModelRouter()
+        r.models["fallback"].is_available = True
+
+        class FakeStream:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def aiter_lines(self):
+                for line in ["ignore", "data: one", "data: two"]:
+                    yield line
+
+        mock_client = MagicMock()
+        mock_client.stream.return_value = FakeStream()
+        r.client = mock_client
+
+        async def _noop_health_check():
+            pass
+
+        r._check_model_health = _noop_health_check
+
+        chunks = []
+        async for chunk in r.generate_stream(_req([_msg("stream me")], model="fallback"), user_instructions="keep it short"):
+            chunks.append(chunk)
+
+        assert chunks == ["data: one\n\n", "data: two\n\n"]
+

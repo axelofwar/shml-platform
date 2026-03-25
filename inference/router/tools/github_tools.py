@@ -55,7 +55,7 @@ class GitHubTools:
 
     def _run_gh(self, *args: str) -> Dict[str, Any]:
         """Run gh command and return result"""
-        cmd = ["gh", "-R", str(self.repo_path)] + list(args)
+        cmd = ["gh"] + list(args)
 
         result = subprocess.run(
             cmd,

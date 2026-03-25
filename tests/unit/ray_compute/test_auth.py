@@ -805,3 +805,406 @@ class TestAuthError:
     def test_auth_error_is_exception(self):
         err = AuthError(401, "Unauthorized")
         assert isinstance(err, Exception)
+
+
+# ===========================================================================
+# FUSIONAUTH HTTP FUNCTIONS
+# ===========================================================================
+
+
+def _mock_httpx_response(status_code: int = 200, json_data: dict = None):
+    """Build a mock httpx response."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data or {}
+    return resp
+
+
+def _make_httpx_client(response):
+    """Build a mock async httpx.AsyncClient context manager."""
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    client.get = AsyncMock(return_value=response)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm, client
+
+
+class TestVerifyFusionauthToken:
+    """Tests for verify_fusionauth_token() — FusionAuth introspection endpoint."""
+
+    def test_active_token_returns_payload(self):
+        token_data = {"active": True, "sub": "user-123", "email": "u@example.com"}
+        resp = _mock_httpx_response(200, token_data)
+        cm, _ = _make_httpx_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.verify_fusionauth_token("mytoken")
+            )
+        assert result["sub"] == "user-123"
+
+    def test_non_200_response_raises_auth_error(self):
+        resp = _mock_httpx_response(401, {})
+        cm, _ = _make_httpx_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            with pytest.raises(AuthError) as exc_info:
+                asyncio.run(
+                    _real_auth_module.verify_fusionauth_token("bad_token")
+                )
+        assert exc_info.value.status_code == 401
+
+    def test_inactive_token_raises_auth_error(self):
+        resp = _mock_httpx_response(200, {"active": False})
+        cm, _ = _make_httpx_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            with pytest.raises(AuthError) as exc_info:
+                asyncio.run(
+                    _real_auth_module.verify_fusionauth_token("inactive_token")
+                )
+        assert exc_info.value.status_code == 401
+
+    def test_request_error_raises_503(self):
+        import httpx as _httpx_real
+        cm = MagicMock()
+        client = MagicMock()
+        client.post = AsyncMock(side_effect=_httpx_real.RequestError("timeout"))
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            with pytest.raises(AuthError) as exc_info:
+                asyncio.run(
+                    _real_auth_module.verify_fusionauth_token("token")
+                )
+        assert exc_info.value.status_code == 503
+
+
+class TestGetUserinfoFromFusionauth:
+    """Tests for get_userinfo_from_fusionauth()."""
+
+    def test_success_returns_userinfo(self):
+        userinfo = {"email": "u@test.com", "preferred_username": "user1"}
+        resp = _mock_httpx_response(200, userinfo)
+        cm, _ = _make_httpx_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_userinfo_from_fusionauth("mytoken")
+            )
+        assert result["email"] == "u@test.com"
+
+    def test_non_200_returns_empty_dict(self):
+        resp = _mock_httpx_response(403, {})
+        cm, _ = _make_httpx_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_userinfo_from_fusionauth("token")
+            )
+        assert result == {}
+
+    def test_request_error_returns_empty_dict(self):
+        import httpx as _httpx_real
+        cm = MagicMock()
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=_httpx_real.RequestError("conn"))
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_userinfo_from_fusionauth("token")
+            )
+        assert result == {}
+
+
+class TestGetUserFromFusionauth:
+    """Tests for get_user_from_fusionauth() — FusionAuth token flow."""
+
+    def _setup_db_for_existing_user(self, existing_user):
+        """Return a mock DB that returns existing_user for all filter().first() calls."""
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = existing_user
+        return db
+
+    def test_existing_user_is_returned(self):
+        token_data = {
+            "active": True,
+            "sub": "oauth-1",
+            "email": "u@test.com",
+            "preferred_username": "user1",
+            "roles": [],
+            "groups": [],
+        }
+        resp = _mock_httpx_response(200, token_data)
+        cm, _ = _make_httpx_client(resp)
+
+        from ray_compute.api.models import User as _FUser
+        existing = _FUser(
+            username="user1",
+            email="u@test.com",
+            oauth_sub="oauth-1",
+            role="user",
+            is_active=True,
+        )
+        db = self._setup_db_for_existing_user(existing)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_user_from_fusionauth("token", db)
+            )
+        assert result.email == "u@test.com"
+
+    def test_new_user_created_with_admin_role(self):
+        token_data = {
+            "active": True,
+            "sub": "oauth-new",
+            "email": "admin@test.com",
+            "preferred_username": "admin1",
+            "roles": ["admin"],
+            "groups": [],
+        }
+        resp = _mock_httpx_response(200, token_data)
+        cm, _ = _make_httpx_client(resp)
+        db = self._setup_db_for_existing_user(None)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_user_from_fusionauth("token", db)
+            )
+        assert result.role == "admin"
+        db.add.assert_called()
+        db.commit.assert_called()
+
+    def test_missing_sub_raises_auth_error(self):
+        token_data = {"active": True, "sub": None, "email": "u@test.com", "roles": [], "groups": []}
+        resp = _mock_httpx_response(200, token_data)
+        cm, _ = _make_httpx_client(resp)
+        db = self._setup_db_for_existing_user(None)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            with pytest.raises(AuthError) as exc_info:
+                asyncio.run(
+                    _real_auth_module.get_user_from_fusionauth("token", db)
+                )
+        assert exc_info.value.status_code == 401
+
+    def test_no_email_fetches_userinfo(self):
+        """When introspection has no email, fetches from userinfo endpoint."""
+        token_data = {
+            "active": True,
+            "sub": "oauth-2",
+            "email": None,
+            "preferred_username": None,
+            "roles": [],
+            "groups": [],
+        }
+        userinfo_data = {"email": "from@userinfo.com", "preferred_username": "ui_user"}
+
+        introspect_resp = _mock_httpx_response(200, token_data)
+        userinfo_resp = _mock_httpx_response(200, userinfo_data)
+
+        # post() returns introspect, get() returns userinfo
+        cm = MagicMock()
+        client = MagicMock()
+        client.post = AsyncMock(return_value=introspect_resp)
+        client.get = AsyncMock(return_value=userinfo_resp)
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        db = self._setup_db_for_existing_user(None)
+
+        with patch("httpx.AsyncClient", return_value=cm):
+            result = asyncio.run(
+                _real_auth_module.get_user_from_fusionauth("token", db)
+            )
+        assert "from@userinfo.com" in result.email or "oauth-2@ray-compute.local" in result.email
+
+
+# ===========================================================================
+# EDGE CASES: get_user_from_proxy_headers missing paths
+# ===========================================================================
+
+
+class TestProxyHeaderEdgeCases:
+    """Cover remaining conditional branches in get_user_from_proxy_headers."""
+
+    def test_no_oauth_sub_falls_back_to_email(self):
+        """When X-Auth-Request-User absent, oauth_sub falls back to email."""
+        req = _make_request({"X-Auth-Request-Email": "e@test.com"})
+        existing = MagicMock(oauth_sub=None, is_active=True, is_suspended=False, role="user")
+        db = MagicMock()
+        # First filter (by oauth_sub) returns nothing; second (by email) returns existing
+        db.query.return_value.filter.return_value.first.side_effect = [None, existing]
+        result = asyncio.run(
+            get_user_from_proxy_headers(req, db)
+        )
+        assert result is not None
+
+    def test_user_found_by_email_updates_oauth_sub(self):
+        """When user found by email with no oauth_sub, oauth_sub is updated."""
+        req = _make_request({
+            "X-Auth-Request-User": "sub-123",
+            "X-Auth-Request-Email": "e@test.com",
+        })
+        existing = MagicMock(oauth_sub=None, is_active=True, is_suspended=False, role="user")
+        db = MagicMock()
+        # First filter (by oauth_sub) returns nothing; second (by email) returns existing
+        db.query.return_value.filter.return_value.first.side_effect = [None, existing]
+        result = asyncio.run(
+            get_user_from_proxy_headers(req, db)
+        )
+        # oauth_sub should be updated on the user object
+        assert existing.oauth_sub == "sub-123"
+
+    def test_new_user_with_elevated_developer_gets_user_role(self):
+        """elevated-developer group maps to 'user' role."""
+        req = _make_request({
+            "X-Auth-Request-User": "sub-dev",
+            "X-Auth-Request-Email": "dev@test.com",
+            "X-Auth-Request-Groups": "elevated-developer",
+        })
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        result = asyncio.run(
+            get_user_from_proxy_headers(req, db)
+        )
+        assert result.role == "user"
+
+    def test_existing_user_role_updated_to_admin_via_group(self):
+        """Existing user with 'admin' group gets role updated."""
+        req = _make_request({
+            "X-Auth-Request-User": "sub-u",
+            "X-Auth-Request-Email": "u@test.com",
+            "X-Auth-Request-Groups": "admin",
+        })
+        existing = MagicMock(
+            oauth_sub="sub-u", role="user", is_active=True, is_suspended=False
+        )
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = existing
+        result = asyncio.run(
+            get_user_from_proxy_headers(req, db)
+        )
+        assert existing.role == "admin"
+
+
+# ===========================================================================
+# get_current_user — bearer token inactive/suspended paths
+# ===========================================================================
+
+
+class TestGetCurrentUserFusionauthPaths:
+    """Cover get_current_user bearer token + inactive/suspended paths."""
+
+    def _make_req(self, headers=None):
+        """Mock request with no X-API-Key, no proxy headers."""
+        req = _make_request(headers or {})
+        # Ensure PROXY_AUTH_ENABLED check returns False for these tests
+        return req
+
+    def test_bearer_inactive_user_raises_403(self):
+        """Bearer token auth with inactive user raises 403."""
+        from fastapi import HTTPException
+
+        active_user = MagicMock(is_active=False, is_suspended=False, email="u@t.com")
+
+        req = _make_request({})
+        db = MagicMock()
+
+        with patch.object(_real_auth_module, "PROXY_AUTH_ENABLED", False):
+            with patch.object(
+                _real_auth_module, "get_user_from_fusionauth", AsyncMock(return_value=active_user)
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        _real_auth_module.get_current_user(
+                            request=req,
+                            token="some_token",
+                            db=db,
+                        )
+                    )
+        assert exc_info.value.status_code == 403
+
+    def test_bearer_suspended_user_raises_403(self):
+        """Bearer token auth with suspended user raises 403."""
+        from fastapi import HTTPException
+
+        suspended_user = MagicMock(
+            is_active=True, is_suspended=True,
+            suspension_reason="policy violation", email="u@t.com"
+        )
+
+        req = _make_request({})
+        db = MagicMock()
+
+        with patch.object(_real_auth_module, "PROXY_AUTH_ENABLED", False):
+            with patch.object(
+                _real_auth_module, "get_user_from_fusionauth", AsyncMock(return_value=suspended_user)
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        _real_auth_module.get_current_user(
+                            request=req,
+                            token="some_token",
+                            db=db,
+                        )
+                    )
+        assert exc_info.value.status_code == 403
+
+    def test_unexpected_exception_raises_500(self):
+        """Unexpected exception in get_current_user raises 500."""
+        from fastapi import HTTPException
+
+        req = _make_request({})
+        db = MagicMock()
+
+        with patch.object(_real_auth_module, "PROXY_AUTH_ENABLED", False):
+            with patch.object(
+                _real_auth_module, "get_user_from_api_key", MagicMock(side_effect=RuntimeError("boom"))
+            ):
+                # No X-API-Key header, but override get_user_from_fusionauth too
+                with patch.object(
+                    _real_auth_module, "get_user_from_fusionauth", AsyncMock(side_effect=RuntimeError("boom"))
+                ):
+                    with pytest.raises(HTTPException) as exc_info:
+                        asyncio.run(
+                            _real_auth_module.get_current_user(
+                                request=req,
+                                token="token_that_causes_error",
+                                db=db,
+                            )
+                        )
+        assert exc_info.value.status_code == 500
+
+    def test_service_account_create_race_returns_existing_user(self):
+        db = MagicMock()
+        api_key = "test-admin-key"
+
+        recovered_user = MagicMock(email="cicd-admin@ray-compute.local")
+        call_seq = [0]
+
+        def _query_side(_cls):
+            call_seq[0] += 1
+            mock_q = MagicMock()
+            if call_seq[0] in (1, 2, 3):
+                mock_q.filter.return_value.first.return_value = None
+            else:
+                mock_q.filter.return_value.first.return_value = recovered_user
+            return mock_q
+
+        db.query.side_effect = _query_side
+        db.flush.side_effect = RuntimeError("duplicate row")
+
+        original = _real_auth_module.CICD_ADMIN_KEY
+        _real_auth_module.CICD_ADMIN_KEY = api_key
+        try:
+            user = _real_auth_module.get_user_from_api_key(api_key, db)
+        finally:
+            _real_auth_module.CICD_ADMIN_KEY = original
+
+        assert user is recovered_user
+        db.rollback.assert_called_once()

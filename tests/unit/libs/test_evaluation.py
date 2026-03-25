@@ -194,3 +194,188 @@ class TestSimpleEval:
             assert callable(exact_match)
         except (ImportError, AttributeError):
             pytest.skip("exact_match function not present — skipping")
+
+
+# ---------------------------------------------------------------------------
+# Helpers for mlflow_artifacts tests
+# ---------------------------------------------------------------------------
+
+def _make_mlflow_stub():
+    """Return a MagicMock that satisfies mlflow_artifacts.py API calls."""
+    import tempfile, pathlib
+    stub = MagicMock(name="mlflow")
+
+    # Fake experiment
+    fake_exp = MagicMock()
+    fake_exp.experiment_id = "exp-1"
+    stub.get_experiment_by_name.return_value = fake_exp
+    stub.create_experiment.return_value = "exp-new"
+
+    # Fake run context manager
+    fake_run = MagicMock()
+    fake_run.info.run_id = "run-abc123"
+    fake_run.__enter__ = MagicMock(return_value=fake_run)
+    fake_run.__exit__ = MagicMock(return_value=False)
+    stub.start_run.return_value = fake_run
+
+    # Fake artifact download — write a real temp file so _sha256 / stat work
+    _tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    _tmp.write(b"golden-data")
+    _tmp.flush()
+    _tmp.close()
+    stub.artifacts.download_artifacts.return_value = _tmp.name
+
+    # Fake search_runs DataFrame
+    import types as _types
+    df_stub = MagicMock()
+    df_stub.empty = False
+    df_stub.iloc.__getitem__ = MagicMock(return_value={
+        "run_id": "run-abc123",
+        "tags.dataset.version": "v1",
+    })
+    stub.search_runs.return_value = df_stub
+
+    stub.log_artifact = MagicMock()
+    stub.log_artifacts = MagicMock()
+    stub.log_params = MagicMock()
+    stub.log_metrics = MagicMock()
+    stub.set_tag = MagicMock()
+    stub.set_tracking_uri = MagicMock()
+    return stub
+
+
+def _install_mlflow_stub(stub):
+    """Put stub in sys.modules and invalidate any cached mlflow_artifacts module."""
+    sys.modules["mlflow"] = stub
+    sys.modules["mlflow.artifacts"] = stub.artifacts
+    for key in list(sys.modules.keys()):
+        if "mlflow_artifact" in key:
+            del sys.modules[key]
+
+
+class TestMLflowArtifactManager:
+    """Tests for libs/evaluation/benchmarking/mlflow_artifacts.py."""
+
+    def setup_method(self):
+        self._stub = _make_mlflow_stub()
+        _install_mlflow_stub(self._stub)
+        # Import fresh
+        for key in list(sys.modules.keys()):
+            if "benchmarking.mlflow_artifacts" in key or key.endswith("mlflow_artifacts"):
+                del sys.modules[key]
+        from evaluation.benchmarking.mlflow_artifacts import MLflowArtifactManager  # type: ignore
+        self.Manager = MLflowArtifactManager
+
+    def _mgr(self):
+        return self.Manager()
+
+    def test_init_sets_tracking_uri(self):
+        mgr = self.Manager(tracking_uri="http://mlflow:5000")
+        self._stub.set_tracking_uri.assert_called_once_with("http://mlflow:5000")
+
+    def test_init_no_tracking_uri(self):
+        mgr = self._mgr()
+        self._stub.set_tracking_uri.assert_not_called()
+
+    def test_get_or_create_uses_existing_experiment(self):
+        mgr = self._mgr()
+        result = mgr._get_or_create_experiment_id("test-exp")
+        assert result == "exp-1"
+        self._stub.create_experiment.assert_not_called()
+
+    def test_get_or_create_creates_new_experiment(self):
+        self._stub.get_experiment_by_name.return_value = None
+        mgr = self._mgr()
+        result = mgr._get_or_create_experiment_id("new-exp")
+        assert result == "exp-new"
+        self._stub.create_experiment.assert_called_once_with(name="new-exp")
+
+    def test_sha256_returns_hex_digest(self):
+        import tempfile
+        mgr = self._mgr()
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"hello world")
+            fname = f.name
+        from pathlib import Path
+        result = mgr._sha256(Path(fname))
+        assert len(result) == 64  # sha256 hex digest length
+        assert isinstance(result, str)
+
+    def test_create_or_update_golden_dataset_single_file(self):
+        mgr = self._mgr()
+        ref = mgr.create_or_update_golden_dataset(
+            dataset_name="iris",
+            dataset_version="v1",
+            source_run_id="src-run-1",
+            source_artifact_path="data/iris.csv",
+        )
+        assert ref.name == "iris"
+        assert ref.version == "v1"
+        assert ref.source_run_id == "src-run-1"
+        assert isinstance(ref.sha256, str)
+        self._stub.log_artifact.assert_called_once()
+
+    def test_create_or_update_golden_dataset_with_metadata(self):
+        mgr = self._mgr()
+        ref = mgr.create_or_update_golden_dataset(
+            dataset_name="mnist",
+            dataset_version="v2",
+            source_run_id="src-run-2",
+            source_artifact_path="data/mnist",
+            metadata={"rows": "60000", "format": "parquet"},
+        )
+        assert ref.name == "mnist"
+        self._stub.start_run.assert_called()
+
+    def test_resolve_golden_dataset_with_version(self):
+        mgr = self._mgr()
+        uri = mgr.resolve_golden_dataset_artifact_uri("iris", dataset_version="v1")
+        assert uri.startswith("runs:/")
+        assert "iris" in uri
+        assert "v1" in uri
+
+    def test_resolve_golden_dataset_latest(self):
+        mgr = self._mgr()
+        uri = mgr.resolve_golden_dataset_artifact_uri("iris")
+        assert uri.startswith("runs:/")
+
+    def test_resolve_golden_dataset_experiment_not_found(self):
+        self._stub.get_experiment_by_name.return_value = None
+        mgr = self._mgr()
+        with pytest.raises(ValueError, match="Golden dataset experiment not found"):
+            mgr.resolve_golden_dataset_artifact_uri("iris")
+
+    def test_resolve_golden_dataset_no_runs(self):
+        empty_df = MagicMock()
+        empty_df.empty = True
+        self._stub.search_runs.return_value = empty_df
+        mgr = self._mgr()
+        with pytest.raises(ValueError, match="No golden dataset found"):
+            mgr.resolve_golden_dataset_artifact_uri("iris", dataset_version="v99")
+
+    def test_backup_golden_dataset_returns_run_id(self):
+        mgr = self._mgr()
+        run_id = mgr.backup_golden_dataset("iris", "v1")
+        assert run_id == "run-abc123"
+
+    def test_enforce_artifact_only_source_with_valid_runs_uri(self):
+        mgr = self._mgr()
+        mgr.enforce_mlflow_artifact_only_source(artifact_uri="runs:/abc/data.csv")
+        # No exception
+
+    def test_enforce_artifact_only_source_with_run_id_and_path(self):
+        mgr = self._mgr()
+        mgr.enforce_mlflow_artifact_only_source(
+            source_run_id="run-1", source_artifact_path="data/file.csv"
+        )
+        # No exception
+
+    def test_enforce_artifact_only_source_rejects_local_uri(self):
+        mgr = self._mgr()
+        with pytest.raises(ValueError, match="MLflow runs:/ URI scheme"):
+            mgr.enforce_mlflow_artifact_only_source(artifact_uri="/local/path/data.csv")
+
+    def test_enforce_artifact_only_source_rejects_empty(self):
+        mgr = self._mgr()
+        with pytest.raises(ValueError, match="Artifacts must come from MLflow"):
+            mgr.enforce_mlflow_artifact_only_source()

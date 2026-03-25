@@ -814,3 +814,228 @@ class TestCancelTrainingJob:
             mock_jc.stop_job.side_effect = Exception("Ray error")
             resp = client.delete("/training/jobs/job-ex")
         assert resp.status_code == 500
+
+
+# ===========================================================================
+# Additional coverage: uncovered branches and helper functions
+# ===========================================================================
+
+class TestCheckTierAccessUnknownRole:
+    """Cover line 233: unknown role with techniques raises 403."""
+
+    def test_unknown_role_with_techniques_raises_403(self):
+        user = _make_user(role="enterprise")  # not user/premium/admin
+        techniques = [_tr.TechniqueConfig(name="sapo")]
+        with pytest.raises(HTTPException) as exc_info:
+            _tr.check_tier_access(user, techniques)
+        assert exc_info.value.status_code == 403
+        assert "Insufficient permissions" in exc_info.value.detail
+
+
+class TestGenerateTrainingScriptCoverage:
+    """Cover remaining branches in generate_training_script."""
+
+    def test_disabled_technique_is_skipped(self):
+        """Line 289: technique with enabled=False hits 'continue'."""
+        req = _tr.TrainingJobRequest(
+            name="test-disabled",
+            model="yolov8n",
+            dataset="wider_face",
+            techniques=[_tr.TechniqueConfig(name="sapo", enabled=False)],
+        )
+        user = _make_user(role="admin")
+        script = _tr.generate_training_script(req, user, "job_dis", "run_dis")
+        # Script should have no-techniques comment since technique was disabled
+        assert "No techniques enabled" in script
+
+    def test_advantage_filter_technique_included(self):
+        """Lines 304-315: advantage_filter block."""
+        req = _tr.TrainingJobRequest(
+            name="test-adv",
+            model="yolov8n",
+            dataset="wider_face",
+            techniques=[_tr.TechniqueConfig(name="advantage_filter", enabled=True)],
+        )
+        user = _make_user(role="premium")
+        script = _tr.generate_training_script(req, user, "job_adv", "run_adv")
+        assert "AdvantageFilter" in script
+
+    def test_curriculum_learning_technique_included(self):
+        """Lines 317-327: curriculum_learning block."""
+        req = _tr.TrainingJobRequest(
+            name="test-curr",
+            model="yolov8n",
+            dataset="wider_face",
+            techniques=[_tr.TechniqueConfig(name="curriculum_learning", enabled=True)],
+        )
+        user = _make_user(role="premium")
+        script = _tr.generate_training_script(req, user, "job_cur", "run_cur")
+        assert "CurriculumLearning" in script
+
+    def test_mlflow_callback_disabled(self):
+        """Branch 335->350: enable_mlflow_callback=False."""
+        req = _tr.TrainingJobRequest(
+            name="test-no-mlflow",
+            model="yolov8n",
+            dataset="wider_face",
+            enable_mlflow_callback=False,
+            enable_prometheus_callback=False,
+        )
+        user = _make_user(role="admin")
+        script = _tr.generate_training_script(req, user, "job_nm", "run_nm")
+        assert "No callbacks enabled" in script
+
+    def test_custom_dataset_url_included(self):
+        """Line 375: custom dataset else branch."""
+        req = _tr.TrainingJobRequest(
+            name="test-custom",
+            model="yolov8n",
+            dataset="custom_http",
+            dataset_url="https://example.com/data.zip",
+        )
+        user = _make_user(role="admin")
+        script = _tr.generate_training_script(req, user, "job_cust", "run_cust")
+        assert "https://example.com/data.zip" in script
+
+
+def _make_db_with_quota_refresh():
+    """Build a mock DB with quota and a refresh that sets created_at."""
+    quota = MagicMock()
+    quota.max_gpu_fraction = 1.0
+    quota.max_job_timeout_hours = 168
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = quota
+
+    def _refresh(obj):
+        if not isinstance(getattr(obj, "created_at", None), datetime):
+            obj.created_at = datetime(2024, 1, 1, 12, 0, 0)
+
+    db.refresh = MagicMock(side_effect=_refresh)
+    return db
+
+
+class TestSubmitTrainingJob:
+    """Cover lines 488-609: the POST /training/jobs endpoint."""
+
+    def _body(self, **extra):
+        return {"name": "test-job", "model": "yolov8n", "dataset": "wider_face", **extra}
+
+    def test_basic_submit_returns_201(self):
+        user = _make_user(role="admin")
+        db = _make_db_with_quota_refresh()
+        app = _make_client(user, db)
+        client = TestClient(app)
+        with patch.object(_tr, "job_client") as mock_jc:
+            mock_jc.submit_job.return_value = "ray-abc123"
+            resp = client.post("/training/jobs", json=self._body())
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == "PENDING"
+        assert "job_id" in data
+        assert data["job_id"].startswith("training_")
+
+    def test_no_quota_returns_500(self):
+        user = _make_user(role="admin")
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        app = _make_client(user, db)
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch.object(_tr, "job_client"):
+            resp = client.post("/training/jobs", json=self._body())
+        assert resp.status_code == 500
+
+    def test_ray_submit_failure_returns_500(self):
+        user = _make_user(role="admin")
+        db = _make_db_with_quota_refresh()
+        app = _make_client(user, db)
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch.object(_tr, "job_client") as mock_jc:
+            mock_jc.submit_job.side_effect = Exception("Ray unavailable")
+            resp = client.post("/training/jobs", json=self._body())
+        assert resp.status_code == 500
+
+    def test_submit_with_mlflow_experiment(self):
+        user = _make_user(role="admin")
+        db = _make_db_with_quota_refresh()
+        app = _make_client(user, db)
+        client = TestClient(app)
+        with patch.object(_tr, "job_client") as mock_jc:
+            mock_jc.submit_job.return_value = "ray-mlflow-job"
+            resp = client.post(
+                "/training/jobs",
+                json=self._body(mlflow_experiment="my-exp"),
+            )
+        assert resp.status_code == 201
+        assert resp.json()["mlflow_experiment"] == "my-exp"
+
+    def test_submit_technique_access_denied_returns_403(self):
+        user = _make_user(role="user")
+        db = MagicMock()
+        app = _make_client(user, db)
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch.object(_tr, "job_client"):
+            resp = client.post(
+                "/training/jobs",
+                json=self._body(techniques=[{"name": "sapo", "enabled": True}]),
+            )
+        assert resp.status_code == 403
+
+
+class TestGetTrainingJobStatusCoverage:
+    """Cover additional branches in get_training_job_status."""
+
+    def test_status_includes_duration_when_started_and_ended(self):
+        """Line 652-663: computes duration_seconds when both start+end set."""
+        user = _make_user()
+        job = _make_job("job-done", status="SUCCEEDED")
+        job.started_at = datetime(2024, 1, 1, 10, 0, 0)
+        job.ended_at = datetime(2024, 1, 1, 11, 0, 0)
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = job
+        app = _make_client(user, db)
+        client = TestClient(app)
+        with patch.object(_tr, "job_client") as mock_jc:
+            mock_jc.get_job_status.return_value = "SUCCEEDED"
+            resp = client.get("/training/jobs/job-done")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["duration_seconds"] == pytest.approx(3600.0)
+
+    def test_status_duration_in_progress(self):
+        """Branch 653->657: only started_at set (job still running)."""
+        user = _make_user()
+        job = _make_job("job-running")
+        job.started_at = datetime(2024, 1, 1, 10, 0, 0)
+        job.ended_at = None
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = job
+        app = _make_client(user, db)
+        client = TestClient(app)
+        with patch.object(_tr, "job_client") as mock_jc:
+            mock_jc.get_job_status.return_value = "RUNNING"
+            resp = client.get("/training/jobs/job-running")
+        assert resp.status_code == 200
+        # duration should be positive since job started
+        data = resp.json()
+        assert data.get("duration_seconds") is not None
+
+
+class TestGetQueueOverviewCoverage:
+    """Cover branch 963->971: non-admin without GPU in overview."""
+
+    def test_non_admin_no_gpu_key_in_overview(self):
+        """Branch: overview has no 'gpu' key → skip GPU filter block."""
+        user = _make_user(role="user")
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = []
+        app = _make_client(user, db)
+        client = TestClient(app)
+        # Temporarily override the scheduler mock to return no GPU info
+        with patch.object(_tr, "TrainingScheduler") as mock_sched_cls:
+            mock_sched_cls.return_value.get_queue_overview.return_value = {
+                "total": 0, "running": 0, "pending": 0
+            }
+            resp = client.get("/training/queue")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "user_filter" in data

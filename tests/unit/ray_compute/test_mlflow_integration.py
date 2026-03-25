@@ -523,3 +523,151 @@ class TestRESTHelpers:
         mlflow_integration._rest_client = client
 
         assert mlflow_integration.is_mlflow_server_available() is False
+
+
+# ===========================================================================
+# Supplemental coverage for missed statements
+# ===========================================================================
+
+class TestMLflowAutoLoggerCoverage:
+    """Cover remaining missed lines in MLflowAutoLogger."""
+
+    def test_initialize_noop_when_already_initialized(self):
+        """Line 39: short-circuit when _initialized is True."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger._initialized = True  # pre-mark as initialized
+        logger.initialize()
+        # Should not call set_tracking_uri again
+        _mlflow_stub.set_tracking_uri.assert_not_called()
+
+    def test_start_run_returns_none_when_disabled(self):
+        """Line 75: start_run() when not enabled."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = False
+        result = logger.start_run("run-name")
+        assert result is None
+        _mlflow_stub.start_run.assert_not_called()
+
+    def test_log_params_executes_when_initialized(self):
+        """Lines 97-101: log_params with enabled + initialized."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = True
+        logger._initialized = True
+        logger.log_params({"lr": 0.001})
+        _mlflow_stub.log_params.assert_called_once_with({"lr": 0.001})
+
+    def test_log_params_exception_is_caught(self):
+        """Lines 100-101: exception in log_params is caught and logged."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = True
+        logger._initialized = True
+        _mlflow_stub.log_params.side_effect = RuntimeError("mlflow down")
+        # Should not raise
+        logger.log_params({"x": 1})
+
+    def test_log_metrics_returns_when_not_enabled(self):
+        """Line 106: early return when disabled."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = False
+        logger.log_metrics({"loss": 0.5})
+        _mlflow_stub.log_metrics.assert_not_called()
+
+    def test_log_metrics_exception_is_caught(self):
+        """Lines 111-112: exception in log_metrics is caught."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = True
+        logger._initialized = True
+        _mlflow_stub.log_metrics.side_effect = RuntimeError("mlflow down")
+        logger.log_metrics({"acc": 0.9})  # Should not raise
+
+    def test_log_artifact_returns_when_not_enabled(self):
+        """Line 117: early return when disabled."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = False
+        logger.log_artifact("file.txt")
+        _mlflow_stub.log_artifact.assert_not_called()
+
+    def test_log_artifact_exception_is_caught(self):
+        """Lines 122-123: exception in log_artifact is caught."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = True
+        logger._initialized = True
+        _mlflow_stub.log_artifact.side_effect = RuntimeError("mlflow down")
+        logger.log_artifact("file.txt")  # Should not raise
+
+    def test_end_run_returns_when_not_enabled(self):
+        """Line 128: early return when disabled."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = False
+        logger.end_run()
+        _mlflow_stub.end_run.assert_not_called()
+
+    def test_end_run_exception_is_caught(self):
+        """Lines 133-134: exception in end_run is caught."""
+        logger = mlflow_integration.MLflowAutoLogger()
+        logger.enabled = True
+        logger._initialized = True
+        _mlflow_stub.end_run.side_effect = RuntimeError("mlflow down")
+        logger.end_run("FINISHED")  # Should not raise
+
+
+class TestMLflowRESTClientCoverage:
+    """Cover remaining missed lines in MLflowRESTClient."""
+
+    def test_get_or_create_experiment_reraises_non_404_status(self):
+        """Line 300: non-404 HTTPStatusError is re-raised."""
+        client = mlflow_integration.MLflowRESTClient("http://mlflow")
+        request = httpx.Request("GET", "http://mlflow/test")
+        server_error = httpx.HTTPStatusError(
+            "server error",
+            request=request,
+            response=httpx.Response(500, request=request),
+        )
+        client._api_call = MagicMock(side_effect=server_error)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            client.get_or_create_experiment("demo")
+
+    def test_update_run_status_auto_sets_end_time_for_terminal_status(self):
+        """Lines 421-422: FINISHED/FAILED/KILLED without explicit end_time auto-sets it."""
+        client = mlflow_integration.MLflowRESTClient("http://mlflow")
+        client._api_call = MagicMock()
+
+        # SUCCEEDED maps to FINISHED in status_map, and FINISHED triggers auto-end_time
+        client.update_run_status("run-1", "SUCCEEDED", end_time=None)
+
+        payload = client._api_call.call_args.kwargs["json"]
+        assert payload["status"] == "FINISHED"
+        assert "end_time" in payload  # auto-populated
+
+    def test_update_run_status_auto_end_time_for_failed(self):
+        """Lines 421-422: FAILED status also auto-sets end_time."""
+        client = mlflow_integration.MLflowRESTClient("http://mlflow")
+        client._api_call = MagicMock()
+
+        client.update_run_status("run-2", "FAILED", end_time=None)
+
+        payload = client._api_call.call_args.kwargs["json"]
+        assert "end_time" in payload
+
+
+class TestCreateMLflowRunForJobError:
+    """Cover lines 501-503: exception handler in create_mlflow_run_for_job."""
+
+    @pytest.mark.asyncio
+    async def test_create_mlflow_run_for_job_raises_on_client_error(self):
+        """Lines 501-503: exception is re-raised after logging."""
+        import ray_compute.api.mlflow_integration as mi
+        client = MagicMock()
+        client.get_or_create_experiment.side_effect = RuntimeError("mlflow unreachable")
+        mi._rest_client = client
+
+        with pytest.raises(RuntimeError, match="mlflow unreachable"):
+            await mi.create_mlflow_run_for_job(
+                job_id="job-1",
+                experiment_name="test-exp",
+                job_name="test-run",
+                user="tester",
+                job_type="training",
+                job_params={},
+            )

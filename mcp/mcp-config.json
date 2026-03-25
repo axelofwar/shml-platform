@@ -130,6 +130,19 @@
                 "resources": false,
                 "sampling": false
             }
+        },
+        "alphaxiv": {
+            "name": "alphaXiv arXiv Research",
+            "description": "Search, read, and query arXiv papers via the alphaXiv MCP. Use for autoResearch, technique discovery, comparing ML methods, and pulling paper abstracts/citations. Complements brave-search for academic literature.",
+            "transport": {
+                "type": "http",
+                "url": "https://api.alphaxiv.org/mcp/v1"
+            },
+            "capabilities": {
+                "tools": true,
+                "resources": false,
+                "sampling": false
+            }
         }
     },
     "globalConfig": {

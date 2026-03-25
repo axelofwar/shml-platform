@@ -43,12 +43,13 @@ def ray_submit(
         JobSubmitResponse with job_id
     """
     client = Client(api_key=key)
+    active_client = client
 
     try:
         if impersonate:
-            client = client.impersonate(impersonate)
+            active_client = client.impersonate(impersonate)
 
-        return client.submit(
+        return active_client.submit(
             code=code,
             gpu=gpu,
             name=name,
@@ -56,6 +57,8 @@ def ray_submit(
             **kwargs,
         )
     finally:
+        if active_client is not client:
+            active_client.close()
         client.close()
 
 

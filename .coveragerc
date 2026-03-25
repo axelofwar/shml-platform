@@ -24,6 +24,37 @@ omit =
     */tests/*
     # Archived dead code
     archived/*
+    # ── GPU/hardware evaluation pipelines (require real models + datasets) ──
+    libs/evaluation/face/evaluate_face_detection.py
+    libs/evaluation/face/fiftyone_eval_pipeline.py
+    libs/evaluation/face/wider_face_eval.py
+    libs/evaluation/face/pr_curve_sweep.py
+    libs/evaluation/face/tiny_face_augmentation.py
+    libs/evaluation/face/validate_yolov8l_face.py
+    libs/evaluation/face/test_threshold_comparison.py
+    libs/evaluation/coding/eval_coding_model.py
+    libs/evaluation/adversarial/adversarial_validator.py
+    libs/evaluation/llm/model_evaluation_pipeline.py
+    libs/evaluation/llm/simple_eval.py
+    libs/evaluation/llm/humaneval.py
+    libs/evaluation/agents/ragas_eval.py
+    libs/evaluation/agents/task_eval.py
+    libs/evaluation/benchmarking/runner.py
+    # ── Data annotation pipelines (require external datasets + APIs) ──
+    libs/annotation/yfcc100m/*.py
+    libs/annotation/sam3_roboflow/*.py
+    # ── Ray job scripts (submitted to cluster, not unit-testable) ──
+    ray_compute/jobs/annotation/*.py
+    ray_compute/jobs/evaluation/*.py
+    ray_compute/jobs/features/*.py
+    ray_compute/jobs/inference/*.py
+    ray_compute/jobs/utils/gpu_yield.py
+    # ── Complex remote server/client (require live Ray cluster) ──
+    ray_compute/api/server_remote.py
+    ray_compute/api/client_remote.py
+    # ── CLI / TUI tools (require interactive terminal) ──
+    inference/router/cli.py
+    inference/router/tui.py
 branch = true
 
 [report]

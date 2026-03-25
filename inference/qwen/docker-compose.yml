@@ -1,0 +1,139 @@
+# Qwen3.5-35B-A3B — Local Coding Model (Candidate Replacement for Nemotron)
+# ============================================================================
+#
+# Architecture: 35B total params, ~3B active (MoE: 256 experts, 8 routed + 1 shared)
+# Hybrid attention: 30/40 layers Gated DeltaNet (fixed recurrent state) + 10/40 traditional attention
+# Native context: 262,144 tokens (no speed degradation vs 4K)
+# Quantization: Q4_K_M GGUF ~19.7GB → fits 24GB with ~2.1GB spare at full context
+#
+# Community-validated serving flags (from @sudoingx, 3090 benchmark):
+#   -ngl 99 --cache-type-k q8_0 --cache-type-v q8_0 -c 262144 -np 1 -fa
+#   → 112 tok/s on 3090 at full 262K context
+#
+# SETUP:
+#   1. Download GGUF: huggingface-cli download Qwen/Qwen3.5-35B-A3B-GGUF \
+#                       qwen3.5-35b-a3b-q4_k_m.gguf --local-dir ./data/models/qwen3.5
+#   2. Start: docker compose -f inference/qwen/docker-compose.yml up -d
+#   3. Test:  curl http://localhost:8020/v1/chat/completions \
+#             -d '{"model":"qwen","messages":[{"role":"user","content":"Hello"}]}'
+#
+# COMPARISON EVAL:
+#   python ray_compute/jobs/evaluation/eval_coding_model.py \
+#     --nemotron-url http://localhost:8010/v1 \
+#     --qwen-url http://localhost:8020/v1
+
+services:
+  qwen-coding:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: qwen-coding
+    restart: unless-stopped
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0  # RTX 3090 Ti only
+      - CUDA_VISIBLE_DEVICES=0
+
+    volumes:
+      - ../../data/models/qwen3.5:/models:ro
+
+    command:
+      - --model
+      - /models/Qwen3.5-35B-A3B-Q4_K_M.gguf
+      - --alias
+      - qwen-coding
+      - --threads
+      - "-1"
+      - --n-gpu-layers
+      - "99"
+      # ── KV cache: q8_0 for both K and V (community-validated for quality/VRAM tradeoff)
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      # ── 128K context (max fitting 24GB with Q4_K_M + q8_0 KV cache)
+      # 262K OOMs: KV=2720MB + model=19.7GB + compute=804MB > 24GB
+      # 128K: KV=1360MB, leaving ~3GB for compute. Still 2x Nemotron's 65K.
+      - --ctx-size
+      - "131072"
+      # ── Single parallel slot (maximizes VRAM for context)
+      - -np
+      - "1"
+      # ── Flash attention (required for efficient long-context)
+      - -fa
+      - "on"
+      # ── Thinking mode enabled (Qwen3.5 native <think>...</think>)
+      # Thinking budget: -1 = unrestricted, 0 = disabled
+      - --reasoning-budget
+      - "-1"
+      # ── Server config
+      - --port
+      - "8000"
+      - --host
+      - 0.0.0.0
+      - --jinja
+      # ── Sampling defaults (can be overridden per-request)
+      - --temp
+      - "0.6"
+      - --top-p
+      - "0.95"
+
+    # Dev access port (keep for direct eval / debugging)
+    ports:
+      - "8020:8000"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+
+    # Production routing via Traefik (auth-protected at /api/coding)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qwen.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.qwen.priority=2147483647"
+      - "traefik.http.routers.qwen.entrypoints=web,websecure"
+      - "traefik.http.services.qwen.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.qwen-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.qwen.middlewares=oauth2-errors,oauth2-auth,qwen-strip"
+
+    networks:
+      - shml-platform
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Qwen 35B takes ~90s to load
+
+  # ── Qwen Manager: GPU yield lifecycle ──────────────────────────────────────
+  # Pauses qwen-coding container during training jobs to free VRAM on RTX 3090 Ti
+  qwen-manager:
+    build:
+      context: ./manager
+      dockerfile: Dockerfile
+    container_name: qwen-manager
+    restart: unless-stopped
+    environment:
+      - QWEN_CONTAINER=qwen-coding
+      - GPU_INDEX=0
+    ports:
+      - "8021:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - shml-platform
+    labels:
+      - "traefik.enable=false"  # Manager is internal only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  shml-platform:
+    external: true

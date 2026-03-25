@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inference: Nemotron KV cache quantization** (2026-03)
+  - `inference/nemotron/docker-compose.yml`: added `--cache-type-k q8_0 --cache-type-v q8_0`
+  - Architecture verified from GGUF metadata: `nemotron_h_moe`, 52 blocks, **6 hybrid attention layers** (positions 5,12,19,26,33,42), 2 KV heads (aggressive GQA), head_dim=128
+  - VRAM savings at ctx=65536: f16=384 MiB → q8_0=192 MiB; headroom 633→825 MiB free on 24 GB GPU
+  - Based on arXiv:2504.19874 (TurboQuant): 3.5-bit KV is quality-neutral on attention outputs
+
+### Changed
+
+- **Training: YOLO batch size calibrated for RTX 3090 Ti** (2026-03)
+  - `inference/app/native_training/native_trainer.py`: `batch_size` default 16 → 64
+  - `_calculate_batch_size()`: linear halving replaced with area-ratio `max(int(base * (640/imgsz)²), 4)`
+  - Result: 640px→64, 960px→28, 1280px→16; all phases ~3–5 GB VRAM vs 24 GB available; **4× gradient signal at 640px**
+  - `LESSONS_LEARNED.md`: TurboQuant 3090 section updated with verified GGUF architecture numbers + VRAM table
+
+- **CI: All-stacks compose-config validation** (2025-05)
+  - `.github/workflows/ci.yml` `docker-build` job: dummy `.env` expanded from 17 → 48 env vars covering all compose stacks
+  - `Validate compose files` step now loops over all **16 stacks** with accumulated `FAILED=1` pattern; a single bad stack fails the job
+  - Stacks covered: infra, auth, logging, tracing, secrets, mlflow, ray, inference (5 variants), chat-ui-v2, dcgm-exporter
+
+- **Tests: Auth compose contract test suite** (2025-05)
+  - `tests/unit/test_auth_compose_contract.py` — 22 parse-level contract tests for `deploy/compose/docker-compose.auth.yml`
+  - Covers: file structure, FusionAuth port binding, OAuth2-proxy forward-auth address, role-auth RBAC middleware chain ordering, shared security invariants (admin chain completeness, public `/auth` path exclusions)
+  - Unit test count: 2104 → **2126 passed** (90.20% coverage, unchanged)
+
+- **Tests: FusionAuth admin-flow live integration test** (2025-05)
+  - `tests/integration/test_fusionauth_admin_flow.py` — `@pytest.mark.integration @pytest.mark.security`
+  - Classes: `TestFusionAuthAdminProtection`, `TestFusionAuthAPIProtection`, `TestFusionAuthStatusAPI`, `TestTraefikDashboardProtection`
+  - Graceful skip when platform is unreachable (safe for local dev runs)
+  - Wired into CI `fusionauth-live-tests` job: `pytest tests/integration/test_fusionauth_admin_flow.py -m "integration and security"`
+
+- **MCP: alphaXiv arXiv research server** (2025-05)
+  - `mcp/mcp-config.json`: added `alphaxiv` server at `https://api.alphaxiv.org/mcp/v1` (HTTP transport)
+  - Enables agent-service to search arXiv, pull abstracts, compare ML methods autonomously
+  - Complements `brave-search` for blog posts; use together for full research → experiment → deploy loops
+
+- **Docs: `LESSONS_LEARNED.md`** (2025-05) — *new designated file (per documentation policy)*
+  - Research findings: TurboQuant/QJL/PolarQuant KV cache compression (arXiv:2504.19874, ICLR 2026)
+  - Research findings: PufferLib/PuffeRL 1M+ steps/sec RL training (arXiv:2406.12905)
+  - Research findings: Cloudflare Workers for Platforms / Workers AI / AI Gateway
+  - Platform application plans: Qwen3-VL VRAM relief, Ray RL integration, edge inference fallback
+  - CI & test patterns: all-stacks validation, auth contract tests, live-service skip pattern
+  - GPU & inference patterns: Traefik priority, KV cache VRAM model, RTX 2070 context limits
+  - MCP & autoResearch patterns: alphaXiv effective prompts
+
 - **W1 Auth Flow Audit & Documentation** (2026-03-21)
   - `ARCHITECTURE.md` (new): Full auth & access control architecture documentation
     - 4 Mermaid sequence diagrams: unauthenticated, viewer (allowed), viewer (blocked), admin

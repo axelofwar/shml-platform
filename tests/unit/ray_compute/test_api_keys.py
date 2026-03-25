@@ -498,3 +498,151 @@ class TestAdminRevokeApiKey:
         key_id = str(uuid.uuid4())
         resp = client.delete(f"/api/v1/keys/admin/{key_id}")
         assert resp.status_code == 403
+
+
+# ===========================================================================
+# verify_api_key — previous key hash grace period path
+# ===========================================================================
+
+
+class TestVerifyApiKeyPreviousHash:
+    """Cover the rotation grace period path in verify_api_key (lines 194-196)."""
+
+    def test_previous_key_hash_found_returns_record(self):
+        """When current hash miss but previous hash matches, return the record."""
+        key, key_hash, key_prefix = _ak.generate_api_key()
+        prev_record = _make_api_key_record("rotated-key")
+        prev_record.previous_key_hash = key_hash
+        prev_record.previous_key_valid_until = datetime.utcnow() + timedelta(hours=1)
+        prev_record.revoked_at = None
+
+        db = MagicMock()
+        # First query (current key) returns None; second (previous key) returns prev_record
+        db.query.return_value.filter.return_value.first.side_effect = [None, prev_record]
+
+        result = _ak.verify_api_key(key, db)
+        assert result is prev_record
+        assert prev_record.last_used_at is not None
+
+
+# ===========================================================================
+# check_fusionauth_group_membership
+# ===========================================================================
+
+
+class TestCheckFusionauthGroupMembership:
+    """Cover check_fusionauth_group_membership (lines 213-242)."""
+
+    def test_no_api_key_env_returns_false(self):
+        import asyncio
+        with patch.dict("os.environ", {}, clear=False):
+            # Remove FUSIONAUTH_API_KEY if it exists
+            import os
+            os.environ.pop("FUSIONAUTH_API_KEY", None)
+            result = asyncio.run(_ak.check_fusionauth_group_membership("user-1", "test-group"))
+        assert result is False
+
+    def test_http_error_returns_false(self):
+        import asyncio
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        async_client = MagicMock()
+        async_client.get = AsyncMock(return_value=mock_response)
+        async_client.__aenter__ = AsyncMock(return_value=async_client)
+        async_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.dict("os.environ", {"FUSIONAUTH_API_KEY": "test-key"}):
+            with patch("httpx.AsyncClient", return_value=async_client):
+                result = asyncio.run(
+                    _ak.check_fusionauth_group_membership("user-1", "test-group")
+                )
+        assert result is False
+
+    def test_user_in_group_returns_true(self):
+        import asyncio
+
+        user_data = {
+            "user": {
+                "memberships": [
+                    {"groupId": "grp-1", "group": {"name": "test-group"}}
+                ]
+            }
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = user_data
+        async_client = MagicMock()
+        async_client.get = AsyncMock(return_value=mock_response)
+        async_client.__aenter__ = AsyncMock(return_value=async_client)
+        async_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.dict("os.environ", {"FUSIONAUTH_API_KEY": "test-key"}):
+            with patch("httpx.AsyncClient", return_value=async_client):
+                result = asyncio.run(
+                    _ak.check_fusionauth_group_membership("user-1", "test-group")
+                )
+        assert result is True
+
+    def test_exception_during_request_returns_false(self):
+        import asyncio
+        import httpx
+
+        async_client = MagicMock()
+        async_client.get = AsyncMock(side_effect=Exception("connection error"))
+        async_client.__aenter__ = AsyncMock(return_value=async_client)
+        async_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.dict("os.environ", {"FUSIONAUTH_API_KEY": "test-key"}):
+            with patch("httpx.AsyncClient", return_value=async_client):
+                result = asyncio.run(
+                    _ak.check_fusionauth_group_membership("user-1", "test-group")
+                )
+        assert result is False
+
+
+# ===========================================================================
+# start_impersonation endpoint (lines 502-618)
+# ===========================================================================
+
+
+class TestStartImpersonation:
+    """Cover start_impersonation POST /api/v1/keys/impersonate."""
+
+    def test_invalid_service_account_returns_400(self):
+        user = _make_user(role="admin")
+        db = _make_db()
+        client = _make_client(user, db)
+        resp = client.post("/api/v1/keys/impersonate", json={"service_account": "invalid_role"})
+        assert resp.status_code == 400
+
+    def test_non_admin_without_group_returns_403(self):
+        user = _make_user(role="user")
+        db = _make_db()
+        client = _make_client(user, db)
+
+        import asyncio
+        with patch.object(_ak, "check_fusionauth_group_membership", AsyncMock(return_value=False)):
+            resp = client.post("/api/v1/keys/impersonate", json={"service_account": "viewer"})
+        assert resp.status_code == 403
+
+    def test_admin_can_impersonate_successfully(self):
+        user = _make_user(role="admin")
+        viewer_user = _make_user(role="viewer")
+        viewer_user.email = "viewer@test.local"
+        db = _make_db()
+
+        auth_stub = sys.modules["ray_compute.api.auth"]
+        with patch.object(auth_stub, "get_user_from_api_key", return_value=viewer_user):
+            with patch.object(auth_stub, "create_access_token", return_value="impersonation-token"):
+                with patch.object(
+                    _ak, "check_fusionauth_group_membership", AsyncMock(return_value=True)
+                ):
+                    resp = client.post(
+                        "/api/v1/keys/impersonate",
+                        json={"service_account": "viewer"},
+                    ) if (client := _make_client(user, db)) else None
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["token"] == "impersonation-token"

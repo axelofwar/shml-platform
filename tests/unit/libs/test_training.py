@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -141,6 +142,173 @@ class TestTrainingConfig:
         cfg = MemoryOptimizationConfig.for_level(OptimizationLevel.MAXIMUM)
         assert cfg.tiled_mlp is True
         assert cfg.gradient_checkpointing is True
+
+    def test_memory_optimization_config_none(self):
+        from shml_training.core.config import MemoryOptimizationConfig, OptimizationLevel
+
+        cfg = MemoryOptimizationConfig.for_level(OptimizationLevel.NONE)
+        assert cfg.chunked_loss is False
+        assert cfg.gradient_checkpointing is False
+
+    def test_memory_optimization_config_aggressive(self):
+        from shml_training.core.config import MemoryOptimizationConfig, OptimizationLevel
+
+        cfg = MemoryOptimizationConfig.for_level(OptimizationLevel.AGGRESSIVE)
+        assert cfg.chunked_loss is True
+        assert cfg.gradient_checkpointing_offload_to_cpu is True
+        assert cfg.cpu_offload_optimizer is True
+
+    def test_from_dict_builds_nested_configs_and_mode(self):
+        from shml_training.core.config import TrainingConfig, TrainingMode
+
+        cfg = TrainingConfig.from_dict(
+            {
+                "mode": "ray",
+                "epochs": 12,
+                "memory": {"gradient_accumulation_steps": 3},
+                "checkpoint": {"checkpoint_dir": "/tmp/ckpts", "keep_last_n": 5},
+                "progress": {"enable_agui_events": False, "log_to_console": False},
+            }
+        )
+
+        assert cfg.mode == TrainingMode.RAY
+        assert cfg.memory.gradient_accumulation_steps == 3
+        assert cfg.checkpoint.checkpoint_dir == "/tmp/ckpts"
+        assert cfg.checkpoint.keep_last_n == 5
+        assert cfg.progress.enable_agui_events is False
+        assert cfg.progress.log_to_console is False
+
+    def test_to_yaml_and_from_yaml_round_trip(self, tmp_path: Path):
+        from shml_training.core.config import TrainingConfig, TrainingMode
+
+        cfg = TrainingConfig(mode=TrainingMode.FSDP, epochs=7, batch_size=2)
+        path = tmp_path / "training.yml"
+
+        cfg.to_yaml(str(path))
+        loaded = TrainingConfig.from_yaml(str(path))
+
+        assert loaded.mode == TrainingMode.FSDP
+        assert loaded.epochs == 7
+        assert loaded.batch_size == 2
+
+    def test_print_summary_includes_memory_budget(self, capsys):
+        from shml_training.core.config import MemoryBudget, TrainingConfig
+
+        cfg = TrainingConfig()
+        cfg._memory_budget = MemoryBudget(
+            model_memory_gb=1.0,
+            optimizer_memory_gb=2.0,
+            gradient_memory_gb=1.0,
+            activation_memory_gb=0.5,
+            total_required_gb=4.5,
+            available_gpu_gb=8.0,
+            available_cpu_gb=32.0,
+            can_fit_on_gpu=True,
+            requires_cpu_offload=False,
+            requires_gradient_checkpointing=False,
+        )
+
+        cfg.print_summary()
+        captured = capsys.readouterr()
+        assert "SHML Training Configuration" in captured.out
+        assert "Memory Budget:" in captured.out
+        assert "Required: 4.5 GB" in captured.out
+
+    def test_auto_configure_raises_optimization_level_for_cpu_offload(self):
+        from shml_training.core.config import OptimizationLevel, TrainingConfig, TrainingMode
+
+        memory_budget = MagicMock(
+            requires_cpu_offload=True,
+            can_fit_on_gpu=True,
+        )
+        profile = MagicMock(
+            is_multi_gpu=False,
+            recommended_precision="bf16",
+            gpus=[object()],
+            system=MagicMock(cpu_cores=10),
+        )
+        profile.get_memory_budget.return_value = memory_budget
+
+        with patch("shml_training.core.hardware.HardwareDetector.detect", return_value=profile):
+            cfg = TrainingConfig.auto_configure(
+                optimization_level=OptimizationLevel.NONE,
+                mode=TrainingMode.LOCAL,
+            )
+
+        assert cfg.memory.cpu_offload_optimizer is True
+        assert cfg.memory.gradient_checkpointing_offload_to_cpu is True
+        assert cfg.num_workers == 8
+
+    def test_auto_configure_uses_fsdp_for_multi_gpu(self):
+        from shml_training.core.config import OptimizationLevel, TrainingConfig, TrainingMode
+
+        memory_budget = MagicMock(
+            requires_cpu_offload=False,
+            can_fit_on_gpu=True,
+        )
+        profile = MagicMock(
+            is_multi_gpu=True,
+            recommended_precision="fp16",
+            gpus=[object(), object()],
+            system=MagicMock(cpu_cores=6),
+        )
+        profile.get_memory_budget.return_value = memory_budget
+
+        with patch("shml_training.core.hardware.HardwareDetector.detect", return_value=profile):
+            cfg = TrainingConfig.auto_configure(
+                optimization_level=OptimizationLevel.CONSERVATIVE,
+                mode=None,
+            )
+
+        assert cfg.mode == TrainingMode.FSDP
+        assert cfg.num_gpus == 2
+        assert cfg.precision == "fp16"
+        assert cfg.num_workers == 4
+
+    def test_auto_configure_reduces_batch_and_adds_accumulation(self):
+        from shml_training.core.config import OptimizationLevel, TrainingConfig, TrainingMode
+
+        memory_budget = MagicMock(
+            requires_cpu_offload=False,
+            can_fit_on_gpu=False,
+        )
+        profile = MagicMock(
+            is_multi_gpu=False,
+            recommended_precision="bf16",
+            gpus=[object()],
+            system=MagicMock(cpu_cores=4),
+        )
+        profile.get_memory_budget.return_value = memory_budget
+
+        with patch("shml_training.core.hardware.HardwareDetector.detect", return_value=profile):
+            cfg = TrainingConfig.auto_configure(
+                target_batch_size=8,
+                optimization_level=OptimizationLevel.NONE,
+                mode=TrainingMode.LOCAL,
+            )
+
+        assert cfg.batch_size == 2
+        assert cfg.memory.gradient_accumulation_steps == 4
+
+    def test_auto_configure_clamps_worker_count_at_zero(self):
+        from shml_training.core.config import TrainingConfig, TrainingMode
+
+        memory_budget = MagicMock(
+            requires_cpu_offload=False,
+            can_fit_on_gpu=True,
+        )
+        profile = MagicMock(
+            is_multi_gpu=False,
+            recommended_precision="fp32",
+            gpus=[],
+            system=MagicMock(cpu_cores=1),
+        )
+        profile.get_memory_budget.return_value = memory_budget
+
+        with patch("shml_training.core.hardware.HardwareDetector.detect", return_value=profile):
+            cfg = TrainingConfig.auto_configure(mode=TrainingMode.LOCAL)
+
+        assert cfg.num_workers == 0
 
 
 # ===========================================================================

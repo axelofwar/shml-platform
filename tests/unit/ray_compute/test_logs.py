@@ -42,18 +42,14 @@ if "ray_compute.api.database" not in sys.modules:
 # ---------------------------------------------------------------------------
 
 # Import get_db from the actual database module (used as dependency key by logs.py)
-from ray_compute.api.database import get_db as _database_get_db  # noqa: E402
-# Import get_current_user from auth stub (also used as dependency key by logs.py)
-from ray_compute.api.auth import get_current_user as _auth_get_current_user  # noqa: E402
-
-
 def _make_app_for_logs(user, db):
     """Create a minimal FastAPI app with logs router + auth/db overrides."""
-    from ray_compute.api.logs import router
+    import ray_compute.api.logs as _logs
+
     app = FastAPI()
-    app.include_router(router)
-    app.dependency_overrides[_auth_get_current_user] = lambda: user
-    app.dependency_overrides[_database_get_db] = lambda: db
+    app.include_router(_logs.router)
+    app.dependency_overrides[_logs.get_current_user] = lambda: user
+    app.dependency_overrides[_logs.get_db] = lambda: db
     return app
 
 def _make_test_user(role: str = "user") -> MagicMock:
@@ -128,6 +124,22 @@ class TestGetJobLogPath:
             result = get_job_log_path("nonexistent-job-id")
 
         assert result is None
+
+    def test_session_subdirectories_return_most_recent_match(self, tmp_path):
+        from ray_compute.api.logs import get_job_log_path
+
+        older = tmp_path / "older-job-abc.log"
+        newer = tmp_path / "newer-job-abc.log"
+        older.write_text("old")
+        newer.write_text("new")
+
+        with patch("ray_compute.api.logs.RAY_LOG_DIR", str(tmp_path)), patch(
+            "ray_compute.api.logs.glob.glob",
+            side_effect=[[], [str(older), str(newer)]],
+        ), patch("ray_compute.api.logs.os.path.getmtime", side_effect=[1, 2]):
+            result = get_job_log_path("abc")
+
+        assert result == newer
 
 
 # ===========================================================================
@@ -241,6 +253,26 @@ class TestGetJobLogsEndpoint:
         assert data["source"] == "none"
         assert data["lines"] == []
 
+    def test_logs_fallback_to_ray_api_success(self, tmp_path):
+        user = _make_test_user("admin")
+        job = _make_job("job-ray-api", user_id=user.user_id, ray_job_id="raysubmit_api")
+        db = _make_db(job)
+        client = TestClient(_make_app_for_logs(user, db), raise_server_exceptions=False)
+
+        mock_job_client = MagicMock()
+        mock_job_client.get_job_logs.return_value = "line1\nline2\nline3"
+
+        with patch("ray_compute.api.logs.RAY_LOG_DIR", str(tmp_path)), \
+             patch("ray_compute.api.logs.get_job_log_path", return_value=None), \
+             patch("ray.job_submission.JobSubmissionClient", return_value=mock_job_client):
+            resp = client.get("/logs/job-ray-api?tail=2")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["source"] == "ray_api"
+        assert data["lines"] == ["line2", "line3"]
+        assert data["truncated"] is True
+
     def test_logs_tail_parameter(self, tmp_path):
         user = _make_test_user("admin")
         job = _make_job("job-tail", user_id=user.user_id, ray_job_id="raysubmit_tail")
@@ -254,6 +286,39 @@ class TestGetJobLogsEndpoint:
         data = resp.json()
         assert len(data["lines"]) == 5
         assert data["truncated"] is True
+
+    def test_logs_ray_api_empty_returns_none_source(self, tmp_path):
+        user = _make_test_user("admin")
+        job = _make_job("job-empty-api", user_id=user.user_id, ray_job_id="raysubmit_empty")
+        db = _make_db(job)
+        client = TestClient(_make_app_for_logs(user, db), raise_server_exceptions=False)
+
+        mock_job_client = MagicMock()
+        mock_job_client.get_job_logs.return_value = ""
+
+        with patch("ray_compute.api.logs.RAY_LOG_DIR", str(tmp_path)), patch(
+            "ray_compute.api.logs.get_job_log_path", return_value=None
+        ), patch("ray.job_submission.JobSubmissionClient", return_value=mock_job_client):
+            resp = client.get("/logs/job-empty-api")
+
+        assert resp.status_code == 200
+        assert resp.json()["source"] == "none"
+
+    def test_logs_file_read_error_returns_500(self, tmp_path):
+        user = _make_test_user("admin")
+        job = _make_job("job-read-err", user_id=user.user_id, ray_job_id="raysubmit_read_err")
+        db = _make_db(job)
+        log_file = tmp_path / "job-driver-raysubmit_read_err.log"
+        log_file.write_text("data")
+        client = TestClient(_make_app_for_logs(user, db), raise_server_exceptions=False)
+
+        with patch("ray_compute.api.logs.RAY_LOG_DIR", str(tmp_path)), patch(
+            "builtins.open", side_effect=OSError("permission denied")
+        ):
+            resp = client.get("/logs/job-read-err")
+
+        assert resp.status_code == 500
+        assert "Error reading log file" in resp.json()["detail"]
 
     def test_logs_non_owner_gets_403(self):
         user = _make_test_user("user")
@@ -291,3 +356,170 @@ class TestListJobLogFilesEndpoint:
         data = resp.json()
         assert data["total"] == 0
         assert data["files"] == []
+
+    def test_deduplicates_same_file_from_multiple_patterns(self, tmp_path):
+        user = _make_test_user("admin")
+        job = _make_job("job-dupe", user_id=user.user_id, ray_job_id="dupeme")
+        db = _make_db(job)
+        log_file = tmp_path / "dupeme.log"
+        log_file.write_text("same")
+        client = TestClient(_make_app_for_logs(user, db), raise_server_exceptions=False)
+
+        with patch("ray_compute.api.logs.glob.glob", side_effect=[[str(log_file)], [str(log_file)]]):
+            resp = client.get("/logs/job-dupe/files")
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+
+
+class TestStreamJobLogs:
+    @pytest.mark.asyncio
+    async def test_stream_job_logs_waits_then_reports_missing_file(self):
+        from ray_compute.api.logs import stream_job_logs
+
+        user = _make_test_user("admin")
+        job = _make_job("job-stream", user_id=user.user_id, ray_job_id="raysubmit_stream")
+        db = _make_db(job)
+
+        with patch("ray_compute.api.logs.get_job_log_path", return_value=None), \
+             patch("ray_compute.api.logs.asyncio.sleep", new=AsyncMock()):
+            response = await stream_job_logs("job-stream", current_user=user, db=db)
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+
+        body = "".join(chunks)
+        assert "Waiting for log file to be created" in body
+        assert "Log file not found after 30 seconds" in body
+
+    @pytest.mark.asyncio
+    async def test_stream_job_logs_returns_after_wait_when_path_disappears(self, tmp_path):
+        from ray_compute.api.logs import stream_job_logs
+
+        user = _make_test_user("admin")
+        job = _make_job("job-stream-return", user_id=user.user_id, ray_job_id="raysubmit_stream_return")
+        db = _make_db(job)
+        log_file = tmp_path / "job-driver-raysubmit_stream_return.log"
+        log_file.write_text("hello")
+
+        with patch(
+            "ray_compute.api.logs.get_job_log_path",
+            side_effect=[None, log_file, None],
+        ), patch("ray_compute.api.logs.asyncio.sleep", new=AsyncMock()):
+            response = await stream_job_logs("job-stream-return", current_user=user, db=db)
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+
+        assert chunks == ["data: Waiting for log file to be created...\n\n"]
+
+    @pytest.mark.asyncio
+    async def test_stream_job_logs_reports_read_error(self, tmp_path):
+        from ray_compute.api.logs import stream_job_logs
+
+        user = _make_test_user("admin")
+        job = _make_job("job-stream-err", user_id=user.user_id, ray_job_id="raysubmit_stream_err")
+        db = _make_db(job)
+        log_file = tmp_path / "job-driver-raysubmit_stream_err.log"
+        log_file.write_text("hello")
+
+        with patch("ray_compute.api.logs.get_job_log_path", return_value=log_file), patch(
+            "builtins.open", side_effect=OSError("read failed")
+        ):
+            response = await stream_job_logs("job-stream-err", current_user=user, db=db)
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+
+        assert any("Error reading logs: read failed" in chunk for chunk in chunks)
+
+
+class TestWebsocketLogs:
+    @pytest.mark.asyncio
+    async def test_websocket_logs_missing_job_sends_error_and_closes(self):
+        from ray_compute.api.logs import websocket_logs
+
+        websocket = AsyncMock()
+        websocket.accept = AsyncMock()
+        websocket.send_json = AsyncMock()
+        websocket.close = AsyncMock()
+        db = _make_db(None)
+
+        await websocket_logs(websocket, "missing-job", db=db)
+
+        websocket.accept.assert_awaited_once()
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "error", "message": "Job missing-job not found"}
+        )
+        assert websocket.close.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_websocket_logs_wait_timeout_sends_error(self):
+        from ray_compute.api.logs import websocket_logs
+
+        websocket = AsyncMock()
+        websocket.accept = AsyncMock()
+        websocket.send_json = AsyncMock()
+        websocket.close = AsyncMock()
+        db = _make_db(_make_job("job-ws-timeout", ray_job_id="job-ws-timeout"))
+
+        with patch("ray_compute.api.logs.get_job_log_path", return_value=None), patch(
+            "ray_compute.api.logs.asyncio.sleep", new=AsyncMock()
+        ):
+            await websocket_logs(websocket, "job-ws-timeout", db=db)
+
+        sent = [call.args[0] for call in websocket.send_json.await_args_list]
+        assert {"type": "status", "message": "Waiting for log file..."} in sent
+        assert {"type": "error", "message": "Log file not found after 60 seconds"} in sent
+
+    @pytest.mark.asyncio
+    async def test_websocket_logs_handles_ping_and_live_line(self, tmp_path):
+        from fastapi import WebSocketDisconnect
+        from ray_compute.api.logs import websocket_logs
+
+        websocket = AsyncMock()
+        websocket.accept = AsyncMock()
+        websocket.send_json = AsyncMock()
+        websocket.close = AsyncMock()
+        websocket.receive_text = AsyncMock(side_effect=["ping", WebSocketDisconnect()])
+
+        log_file = tmp_path / "job-driver-job-live.log"
+        log_file.write_text("hist1\nhist2\n")
+        db = _make_db(_make_job("job-live", ray_job_id="job-live"))
+
+        class _LiveFile:
+            def __init__(self):
+                self._calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def readlines(self):
+                return ["hist1\n", "hist2\n"]
+
+            def seek(self, *_args):
+                return None
+
+            def readline(self):
+                self._calls += 1
+                return "live-line\n" if self._calls == 1 else ""
+
+        open_side_effect = [_LiveFile(), _LiveFile()]
+
+        async def _fake_wait_for(coro, timeout):
+            return await coro
+
+        with patch("ray_compute.api.logs.get_job_log_path", return_value=log_file), patch(
+            "builtins.open", side_effect=open_side_effect
+        ), patch("ray_compute.api.logs.asyncio.wait_for", side_effect=_fake_wait_for), patch(
+            "ray_compute.api.logs.asyncio.sleep", new=AsyncMock()
+        ):
+            await websocket_logs(websocket, "job-live", db=db)
+
+        sent = [call.args[0] for call in websocket.send_json.await_args_list]
+        assert {"type": "pong"} in sent
+        assert any(msg.get("historical") is True for msg in sent if isinstance(msg, dict) and msg.get("type") == "log")
+        assert any(msg.get("historical") is False for msg in sent if isinstance(msg, dict) and msg.get("type") == "log")

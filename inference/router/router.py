@@ -256,7 +256,7 @@ class ModelRouter:
             # Prefer frontier models
             candidates.sort(
                 key=lambda x: (
-                    0 if x[1].provider_type == ProviderType.CLOUD_FRONTIER else 1,
+                    1 if x[1].provider_type == ProviderType.CLOUD_FRONTIER else 0,
                     x[1].context_window,
                 ),
                 reverse=True,
@@ -288,6 +288,7 @@ class ModelRouter:
 
         errors = []
         tried_providers = set()
+        original_model = request.model
 
         for attempt in range(self.config.max_retries + 1):
             try:
@@ -314,6 +315,7 @@ class ModelRouter:
             except RateLimitError as e:
                 logger.warning(f"Rate limit on {e.provider}, trying next")
                 errors.append(str(e))
+                request.model = original_model
                 # Mark provider as temporarily unavailable
                 self.provider_status[e.provider] = ProviderStatus(
                     available=False, error="Rate limited"
@@ -322,6 +324,7 @@ class ModelRouter:
             except ProviderError as e:
                 logger.warning(f"Provider error: {e}")
                 errors.append(str(e))
+                request.model = original_model
 
                 if not e.recoverable:
                     raise

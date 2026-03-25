@@ -391,6 +391,153 @@ class TestFeatureAPI:
             )
         assert resp.status_code == 404
 
+    def test_catalog_get_found(self, client):
+        """GET /api/v1/features/catalog/{name} returns 200 when found."""
+        mock_reg = AsyncMock()
+        mock_reg.get = AsyncMock(return_value={"name": "my_view", "source_table": "t"})
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.get("/api/v1/features/catalog/my_view")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "my_view"
+
+    def test_register_feature_view(self, client):
+        """POST /api/v1/features/catalog registers a new feature view."""
+        mock_reg = AsyncMock()
+        mock_reg.register = AsyncMock(return_value=None)
+        body = {
+            "name": "test_view",
+            "version": 1,
+            "entity": {"name": "model_version", "join_keys": ["model_version"], "description": ""},
+            "schema": [{"name": "accuracy", "type": "FLOAT", "description": ""}],
+            "source_table": "test_features",
+            "freshness_slo": {"max_staleness_minutes": 60, "target_percentile": 99.0, "error_budget_windows_per_month": 720},
+            "owner": "test-team",
+        }
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post("/api/v1/features/catalog", json=body)
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "test_view"
+
+    def test_delete_feature_view_success(self, client):
+        """DELETE /api/v1/features/catalog/{name} returns 200 when deleted."""
+        mock_reg = AsyncMock()
+        mock_reg.delete = AsyncMock(return_value=True)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.delete("/api/v1/features/catalog/my_view")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deleted"
+
+    def test_delete_feature_view_not_found(self, client):
+        """DELETE /api/v1/features/catalog/{name} returns 404 when not found."""
+        mock_reg = AsyncMock()
+        mock_reg.delete = AsyncMock(return_value=False)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.delete("/api/v1/features/catalog/no_view")
+        assert resp.status_code == 404
+
+    def test_query_features_success(self, client):
+        """POST /api/v1/features/{name}/query returns rows for matching entity."""
+        mock_reg = AsyncMock()
+        defn = {
+            "source_table": "features_t",
+            "entity_keys": ["model_version"],
+            "freshness_slo_minutes": 60,
+            "schema_columns": [],
+        }
+        mock_reg.get = AsyncMock(return_value=defn)
+        mock_reg.query_source_table = AsyncMock(return_value=[])
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post(
+                "/api/v1/features/test_view/query",
+                json={"entity_keys": {"model_version": "v1"}},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["feature_view"] == "test_view"
+        assert data["row_count"] == 0
+
+    def test_query_features_with_freshness(self, client):
+        """POST /api/v1/features/{name}/query computes freshness when rows present."""
+        mock_reg = AsyncMock()
+        defn = {
+            "source_table": "features_t",
+            "entity_keys": ["model_version"],
+            "freshness_slo_minutes": 60,
+            "schema_columns": [],
+        }
+        ts = datetime.now(timezone.utc).isoformat()
+        mock_reg.get = AsyncMock(return_value=defn)
+        mock_reg.query_source_table = AsyncMock(
+            return_value=[{"model_version": "v1", "created_at": ts}]
+        )
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post(
+                "/api/v1/features/test_view/query",
+                json={"entity_keys": {"model_version": "v1"}},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["row_count"] == 1
+        assert data["freshness_minutes"] is not None
+
+    def test_query_features_invalid_columns(self, client):
+        """POST /api/v1/features/{name}/query returns 400 for invalid columns."""
+        mock_reg = AsyncMock()
+        defn = {
+            "source_table": "features_t",
+            "entity_keys": ["model_version"],
+            "freshness_slo_minutes": 60,
+            "schema_columns": [{"name": "accuracy", "type": "FLOAT", "description": ""}],
+        }
+        mock_reg.get = AsyncMock(return_value=defn)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post(
+                "/api/v1/features/test_view/query",
+                json={"entity_keys": {"model_version": "v1"}, "columns": ["nonexistent"]},
+            )
+        assert resp.status_code == 400
+
+    def test_query_features_no_matching_entity_keys(self, client):
+        """POST /api/v1/features/{name}/query returns 400 when no entity keys match."""
+        mock_reg = AsyncMock()
+        defn = {
+            "source_table": "features_t",
+            "entity_keys": ["dataset_id"],
+            "freshness_slo_minutes": 60,
+            "schema_columns": [],
+        }
+        mock_reg.get = AsyncMock(return_value=defn)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.post(
+                "/api/v1/features/test_view/query",
+                json={"entity_keys": {"model_version": "v1"}},
+            )
+        assert resp.status_code == 400
+
+    def test_get_latest_features(self, client):
+        """GET /api/v1/features/{name}/latest returns most recent rows."""
+        mock_reg = AsyncMock()
+        defn = {
+            "source_table": "features_t",
+            "entity_keys": ["model_version"],
+            "freshness_slo_minutes": 60,
+            "schema_columns": [],
+        }
+        mock_reg.get = AsyncMock(return_value=defn)
+        mock_reg.query_source_table = AsyncMock(return_value=[{"model_version": "v1"}])
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.get("/api/v1/features/test_view/latest")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_get_latest_features_view_not_found(self, client):
+        """GET /api/v1/features/{name}/latest returns 404 when view missing."""
+        mock_reg = AsyncMock()
+        mock_reg.get = AsyncMock(return_value=None)
+        with patch("libs.feature_store.api.get_registry", new=AsyncMock(return_value=mock_reg)):
+            resp = client.get("/api/v1/features/no_view/latest")
+        assert resp.status_code == 404
+
 
 # ===========================================================================
 # SLO Exporter Per-View Tests

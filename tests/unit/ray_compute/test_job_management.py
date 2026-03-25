@@ -473,3 +473,221 @@ class TestDownloadJob:
         with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tar:
             members = tar.getnames()
         assert any("workspace" in m for m in members)
+
+
+# ===========================================================================
+# start_job exception path (lines 144-145)
+# ===========================================================================
+
+class TestStartJobExceptionPath:
+    def test_start_job_ray_exception_returns_500(self):
+        """get_job_status raises non-HTTP exception → covers lines 144-145."""
+        job = _make_job("job-err1", metadata={"submission_params": {}})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        mock_jc.get_job_status.side_effect = Exception("ray unavailable")
+        from ray_compute.api.job_management import router
+        test_app = FastAPI()
+        test_app.include_router(router)
+        test_app.dependency_overrides[_auth_get_current_user] = lambda: user
+        test_app.dependency_overrides[_database_get_db] = lambda: db
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.post("/jobs/job-err1/start")
+        assert resp.status_code == 500
+        assert "Failed to start job" in resp.json()["detail"]
+
+
+# ===========================================================================
+# delete_job false-branch + log-glob coverage
+# (branches 183->188, 190->196; lines 200-203)
+# ===========================================================================
+
+class TestDeleteJobCleanupCoverage:
+    def _make_app(self, user, db):
+        from ray_compute.api.job_management import router
+        test_app = FastAPI()
+        test_app.include_router(router)
+        test_app.dependency_overrides[_auth_get_current_user] = lambda: user
+        test_app.dependency_overrides[_database_get_db] = lambda: db
+        return test_app
+
+    def test_delete_cleanup_workspace_not_on_disk(self):
+        """workspace_dir in metadata but not on disk → covers branch 183->188 (exists=False)."""
+        job = _make_job("job-ws-off", metadata={"workspace_dir": "/nonexistent/from/test"})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        mock_jc.get_job_status.return_value = _JobStatus.SUCCEEDED
+        test_app = self._make_app(user, db)
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.delete("/jobs/job-ws-off?cleanup=true")
+        assert resp.status_code == 200
+        assert resp.json()["cleanup"]["logs"] == "cleaned"
+
+    def test_delete_cleanup_checkpoint_not_on_disk(self):
+        """checkpoint_dir in metadata but not on disk → covers branch 190->196 (exists=False)."""
+        job = _make_job("job-ck-off", metadata={"checkpoint_dir": "/nonexistent/ck/path"})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        mock_jc.get_job_status.return_value = _JobStatus.SUCCEEDED
+        test_app = self._make_app(user, db)
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.delete("/jobs/job-ck-off?cleanup=true")
+        assert resp.status_code == 200
+        assert resp.json()["cleanup"]["logs"] == "cleaned"
+
+    def test_delete_cleanup_log_glob_hit_os_remove_error(self):
+        """glob.glob returns path; os.remove raises (file gone) → covers lines 200-203."""
+        job = _make_job("job-rm-err", metadata={})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        mock_jc.get_job_status.return_value = _JobStatus.SUCCEEDED
+        test_app = self._make_app(user, db)
+        with patch("glob.glob", return_value=["/tmp/fake_ray_log_job-rm-err.txt"]):
+            with patch.object(_jm, "job_client", mock_jc):
+                with TestClient(test_app, raise_server_exceptions=False) as c:
+                    resp = c.delete("/jobs/job-rm-err?cleanup=true")
+        assert resp.status_code == 200
+        assert resp.json()["cleanup"]["logs"] == "cleaned"
+
+
+# ===========================================================================
+# download_job additional branches
+# (260->265, 266-269, 273-290, 294-304, 341-349)
+# ===========================================================================
+
+class TestDownloadJobCoverage:
+    def _make_app(self, user, db):
+        from ray_compute.api.job_management import router
+        test_app = FastAPI()
+        test_app.include_router(router)
+        test_app.dependency_overrides[_auth_get_current_user] = lambda: user
+        test_app.dependency_overrides[_database_get_db] = lambda: db
+        return test_app
+
+    def test_download_workspace_dir_not_on_disk(self):
+        """workspace_dir in metadata but directory doesn't exist → covers branch 260->265."""
+        job = _make_job("job-ws-disk", metadata={"workspace_dir": "/nonexistent/workspace/dir"})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.get(
+                    "/jobs/job-ws-disk/download",
+                    params={"workspace": True, "logs": False, "checkpoints": False, "mlflow": False},
+                )
+        assert resp.status_code == 200  # README fallback
+
+    def test_download_with_checkpoints(self, tmp_path):
+        """checkpoints=True, checkpoint_dir exists → covers lines 266-269."""
+        ck_dir = tmp_path / "checkpoints"
+        ck_dir.mkdir()
+        (ck_dir / "model.pt").write_text("weights")
+        job = _make_job("job-ck-dl", metadata={"checkpoint_dir": str(ck_dir)})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.get(
+                    "/jobs/job-ck-dl/download",
+                    params={"workspace": False, "logs": False, "checkpoints": True, "mlflow": False},
+                )
+        assert resp.status_code == 200
+        import tarfile, io
+        with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tar:
+            members = tar.getnames()
+        assert any("checkpoint" in m for m in members)
+
+    def test_download_with_logs_no_files(self):
+        """logs=True but glob finds nothing → covers lines 273-282, 288 (empty log_dir branch)."""
+        job = _make_job("job-log-empty", metadata={})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch.object(_jm, "job_client", mock_jc):
+            with TestClient(test_app, raise_server_exceptions=False) as c:
+                resp = c.get(
+                    "/jobs/job-log-empty/download",
+                    params={"workspace": False, "logs": True, "checkpoints": False, "mlflow": False},
+                )
+        assert resp.status_code == 200  # README fallback (no log files found)
+
+    def test_download_with_logs_glob_hit(self, tmp_path):
+        """glob.glob returns real file → covers lines 283-290 (copy loop + tar add)."""
+        log_file = tmp_path / "worker_job-log-hit_output.stdout"
+        log_file.write_text("ray log line 1\nray log line 2")
+        job = _make_job("job-log-hit", metadata={})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch("glob.glob", return_value=[str(log_file)]):
+            with patch.object(_jm, "job_client", mock_jc):
+                with TestClient(test_app, raise_server_exceptions=False) as c:
+                    resp = c.get(
+                        "/jobs/job-log-hit/download",
+                        params={"workspace": False, "logs": True, "checkpoints": False, "mlflow": False},
+                    )
+        assert resp.status_code == 200
+        import tarfile, io
+        with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tar:
+            members = tar.getnames()
+        assert any("logs" in m for m in members)
+
+    def test_download_with_mlflow_artifacts(self, tmp_path):
+        """mlflow=True with existing run_dir → covers lines 294-304."""
+        import os
+        mlflow_run_id = "run-abc999"
+        exp_id = "1"
+        mlflow_root = tmp_path / "mlflow_root"
+        run_dir = mlflow_root / exp_id / mlflow_run_id / "artifacts"
+        run_dir.mkdir(parents=True)
+        (run_dir / "model.pkl").write_text("weights")
+
+        job = _make_job("job-mlf", metadata={})
+        job.mlflow_run_id = mlflow_run_id
+        job.mlflow_experiment_id = exp_id
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch.dict(os.environ, {"MLFLOW_ARTIFACT_ROOT": str(mlflow_root)}):
+            with patch.object(_jm, "job_client", mock_jc):
+                with TestClient(test_app, raise_server_exceptions=False) as c:
+                    resp = c.get(
+                        "/jobs/job-mlf/download",
+                        params={"workspace": False, "logs": False, "checkpoints": False, "mlflow": True},
+                    )
+        assert resp.status_code == 200
+        import tarfile, io
+        with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tar:
+            members = tar.getnames()
+        assert any("mlflow" in m for m in members)
+
+    def test_download_tarfile_error_returns_500(self):
+        """tarfile.open raises → covers lines 341-344 (inner cleanup) and 348-349 (outer 500)."""
+        job = _make_job("job-tar-err", metadata={"workspace_dir": "/some/path"})
+        user = _make_user()
+        db = _make_db(job=job)
+        mock_jc = MagicMock()
+        test_app = self._make_app(user, db)
+        with patch("tarfile.open", side_effect=OSError("disk full")):
+            with patch.object(_jm, "job_client", mock_jc):
+                with TestClient(test_app, raise_server_exceptions=False) as c:
+                    resp = c.get(
+                        "/jobs/job-tar-err/download",
+                        params={"workspace": True, "logs": False, "checkpoints": False, "mlflow": False},
+                    )
+        assert resp.status_code == 500
+        assert "Failed to create download" in resp.json()["detail"]
