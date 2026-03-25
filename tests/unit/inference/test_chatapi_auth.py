@@ -38,12 +38,15 @@ async def test_get_current_user_api_key_success():
 @pytest.mark.asyncio
 async def test_get_current_user_api_key_invalid_raises_401():
     with patch("app.auth.db.validate_api_key", AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException, match="Invalid or expired API key") as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await get_current_user(
                 request=DummyRequest(),
                 authorization=HTTPAuthorizationCredentials(scheme="Bearer", credentials="bad"),
             )
     assert exc_info.value.status_code == 401
+    # Starlette HTTPException doesn't pass detail to Exception.__init__, so
+    # pytest.raises(match=...) won't work — assert on .detail directly.
+    assert exc_info.value.detail == "Invalid or expired API key"
 
 
 @pytest.mark.asyncio
@@ -80,7 +83,7 @@ async def test_get_current_user_oauth_headers_map_roles():
 
 @pytest.mark.asyncio
 async def test_get_current_user_requires_auth_when_missing():
-    with pytest.raises(HTTPException, match="Authentication required") as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         await get_current_user(
             request=DummyRequest(),
             authorization=None,
@@ -90,6 +93,7 @@ async def test_get_current_user_requires_auth_when_missing():
             x_forwarded_user=None,
         )
     assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Authentication required"
 
 
 @pytest.mark.asyncio
@@ -102,15 +106,19 @@ async def test_require_role_and_admin_helpers():
     assert await checker(admin_user) is admin_user
     assert await checker(dev_user) is dev_user
 
-    with pytest.raises(HTTPException, match="Access denied") as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         await checker(viewer_user)
     assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Access denied"
 
     assert require_admin(admin_user) is admin_user
     assert require_developer_or_admin(admin_user) is admin_user
     assert require_developer_or_admin(dev_user) is dev_user
 
-    with pytest.raises(HTTPException, match="Admin access required"):
+    with pytest.raises(HTTPException) as exc_info:
         require_admin(dev_user)
-    with pytest.raises(HTTPException, match="Developer or admin access required"):
+    assert exc_info.value.detail == "Admin access required"
+
+    with pytest.raises(HTTPException) as exc_info:
         require_developer_or_admin(viewer_user)
+    assert exc_info.value.detail == "Developer or admin access required"
