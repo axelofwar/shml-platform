@@ -75,6 +75,7 @@ fingerprints = [
     # - ❌ client_secret=JsDs6m... (shown as what NOT to commit)
     # These are documentation examples. The base value was replaced with a plaintext
     # password in subsequent commits; these fingerprints suppress the historical scan.
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.github/instructions/security.instructions.md:generic-api-key:84",
     "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.github/instructions/security.instructions.md:generic-api-key:87",
     "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.agent/rules/security.md:generic-api-key:85",
     "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.agent/rules/security.md:generic-api-key:88",
@@ -86,4 +87,9 @@ fingerprints = [
 commits = [
     # UI_VERIFICATION_AND_FIXES.md: redacted password in docs (password was reset)
     '''2a77ee51708ae1414a972eb1cfee1f65fe6a00db''',
+    # f92dff46: security rules docs contained high-entropy base64 placeholder
+    # (❌ PASSWORD=gNz8AP...) in "bad examples" section. The base64 value was
+    # replaced with a human-readable placeholder in a subsequent commit.
+    # All 6 gitleaks findings in this commit are documentation false positives.
+    '''f92dff462a1d549ba6f276598fdacc72dff8a3b0''',
 ]
