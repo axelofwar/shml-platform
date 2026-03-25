@@ -1,101 +1,185 @@
 ---
 name: gitlab-integration
-description: Interact with the local GitLab CE instance — create and manage issues, query pipelines, search code, list commits. Use when the user asks about GitLab, project issues, CI/CD status, or wants to track tasks.
+description: Interact with the local GitLab CE instance — create, claim, complete, and triage issues; query pipelines; manage the sprint board. Use when asked about GitLab issues, tasks, backlog, sprint, agent queue, or CI/CD status.
 license: MIT
-compatibility: Requires GITLAB_API_TOKEN set in the agent-service environment. Talks to the internal GitLab CE container (shml-gitlab) via Docker network.
+compatibility: Requires GITLAB_API_TOKEN set in the agent-service environment (injected via docker-compose). Talks to the internal GitLab CE container (shml-gitlab) via Docker network.
 metadata:
   author: shml-platform
-  version: "1.0"
+  version: "2.0"
 ---
 
 # GitLab Integration Skill
 
 ## When to use this skill
-Use this skill when the user asks to:
-- Create a GitLab issue to track a bug, feature, or task
-- List open issues or search for specific issues
+Use this skill when the user (or autonomous loop) asks to:
+- List the **agent queue** — issues assigned to the agent, ready to be worked
+- **Claim** an issue (pick it up, post a plan, set `status::in-progress`)
+- **Complete** an issue (post a summary, close it, remove `assignee::agent`)
+- **Triage** a new issue (categorize it, set priority/type/component, push to backlog)
+- Create, comment on, or close issues
 - Check CI/CD pipeline status
-- Add comments to existing issues
-- Close or reopen issues
-- List recent commits or milestones
-- Check the project board state
 - Track autoresearch or training progress via issues
+
+---
+
+## Agent Workflow (Linear-Inspired)
+
+```
+[triage] → [backlog] → [in-progress] → [in-review] → [done]
+                                              ↓
+                                         [blocked]
+```
+
+Typical autonomous cycle:
+1. `list_agent_queue` — find issues tagged `assignee::agent` in `status::backlog`
+2. Pick the highest-priority issue that fits within context window budget
+3. `claim_issue` — set `status::in-progress`, post a plan comment
+4. Do the work (edit code, run tests, etc.)
+5. `complete_issue` — post summary, close issue, remove `assignee::agent` label
+
+---
+
+## Context Window Budget Guide
+
+Before claiming an issue, estimate its scope:
+- **≤5 files touched** → safe to claim autonomously
+- **5–20 files** → claim with caution; break into sub-issues if possible
+- **>20 files** → do NOT claim; break down first and create child issues
+- **Requires GPU training** → never claim; defer to `type::training` pipeline
+- **Requires secret rotation or server access** → never claim; tag `assignee::human`
+
+---
+
+## Label Reference
+
+| Group | Labels |
+|-------|--------|
+| **status::** | `triage`, `backlog`, `in-progress`, `in-review`, `done`, `blocked`, `cancelled` |
+| **priority::** | `critical`, `high`, `medium`, `low` |
+| **type::** | `bug`, `feature`, `chore`, `training`, `security`, `docs`, `refactor` |
+| **component::** | `agent-service`, `inference`, `chat-ui`, `mlflow`, `ray`, `infra`, `ci-cd`, `monitoring`, `fusionauth`, `training` |
+| **source::** | `watchdog`, `scan`, `autoresearch`, `ci`, `pipeline`, `agent` |
+| **assignee::** | `agent` (Qwen3.5 autonomously claimed), `human` (requires human) |
+
+---
 
 ## Operations
 
+### list_agent_queue
+List issues currently tagged `assignee::agent` (agent's claimed or queued work), sorted by priority.
+
+**Parameters:**
+- `limit` (optional, default 10): Max issues to return
+
+**Example:**
+```json
+{"operation": "list_agent_queue", "limit": 5}
+```
+
+---
+
+### claim_issue
+Claim an issue: set `status::in-progress` + `assignee::agent`, post a plan comment.
+
+**Parameters:**
+- `iid` (required): Issue IID
+- `plan` (optional): Markdown plan to post as a comment
+
+**Example:**
+```json
+{
+  "operation": "claim_issue",
+  "iid": 42,
+  "plan": "## Plan\n1. Reproduce the bug\n2. Fix in `app/gateway.py`\n3. Add test\n4. Update changelog"
+}
+```
+
+---
+
+### complete_issue
+Mark an issue as done: post a summary comment, set `status::done`, close the issue, remove `assignee::agent`.
+
+**Parameters:**
+- `iid` (required): Issue IID
+- `summary` (optional): Markdown summary of what was done
+
+**Example:**
+```json
+{
+  "operation": "complete_issue",
+  "iid": 42,
+  "summary": "Fixed timeout in `gateway.py:187`. Added regression test. CHANGELOG updated."
+}
+```
+
+---
+
+### triage_issue
+Categorize an untriaged issue: set type, priority, component labels, move to `status::backlog`.
+
+**Parameters:**
+- `iid` (required): Issue IID
+- `priority` (optional): "critical" | "high" | "medium" | "low"
+- `type_label` (optional): "bug" | "feature" | "chore" | "training" | "security" | "docs" | "refactor"
+- `component` (optional): component label value (e.g. "inference", "agent-service")
+- `comment` (optional): Triage rationale to post as a comment
+
+---
+
 ### create_issue
-Create a new issue in the SHML Platform project.
+Create a new issue.
 
 **Parameters:**
 - `title` (required): Issue title
-- `description` (optional): Issue body in Markdown
-- `labels` (optional): Comma-separated labels (e.g. "type::bug,priority::high")
+- `description` (optional): Body in Markdown
+- `labels` (optional): Comma-separated labels (e.g. `"type::bug,priority::high,component::infra"`)
 
-**Example:**
-```python
-result = await execute("create_issue", {
-    "title": "GPU 0 thermal throttling during autoresearch",
-    "description": "GPU 0 temperature exceeded 85°C during training round 5.",
-    "labels": "type::bug,priority::high,component::infra"
-})
-```
+---
 
 ### list_issues
-List open issues with optional filters.
+List issues with optional filters.
 
 **Parameters:**
 - `state` (optional): "opened" | "closed" | "all" (default: "opened")
-- `labels` (optional): Filter by labels
-- `search` (optional): Search string
+- `labels` (optional): Filter by label string
+- `search` (optional): Full-text search
 
-**Example:**
-```python
-result = await execute("list_issues", {
-    "labels": "source::watchdog",
-    "state": "opened"
-})
-```
+---
 
-### add_comment
-Add a comment to an existing issue.
+### get_issue
+Fetch a single issue by IID.
 
 **Parameters:**
-- `iid` (required): Issue number (IID)
-- `body` (required): Comment text in Markdown
+- `iid` (required): Issue IID
+
+---
+
+### add_comment
+Add a comment to an issue.
+
+**Parameters:**
+- `iid` (required): Issue IID
+- `body` (required): Comment markdown
+
+---
 
 ### close_issue
 Close an issue.
 
 **Parameters:**
-- `iid` (required): Issue number (IID)
+- `iid` (required): Issue IID
 
-### reopen_issue
-Reopen a closed issue.
-
-**Parameters:**
-- `iid` (required): Issue number (IID)
-
-### upsert_issue
-Find an existing open issue by title search and add a comment, or create a new one if not found. Useful for idempotent issue tracking.
-
-**Parameters:**
-- `search_title` (required): Title substring to search for
-- `title` (optional): Full title for new issue creation
-- `description` (optional): Body for new issue
-- `labels` (optional): Labels for new issue
-- `comment` (optional): Comment to add if existing issue found
-- `close` (optional): If true, close the matched issue
+---
 
 ### get_pipeline_status
-Get the latest CI/CD pipeline status.
+Get the latest CI/CD pipeline status for a branch.
 
 **Parameters:**
-- `ref` (optional): Branch name (default: "main")
+- `ref` (optional, default "main"): Branch name
 
 **Example:**
-```python
-result = await execute("get_pipeline_status", {"ref": "main"})
-# Returns: {"id": 2293, "status": "success", "jobs": [...]}
+```json
+{"operation": "get_pipeline_status", "ref": "main"}
 ```
 
 ### get_pipeline_jobs

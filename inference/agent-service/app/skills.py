@@ -555,6 +555,225 @@ Use Ray Dashboard at http://localhost:8265 for live metrics.""",
         return None
 
 
+class GitLabSkill(Skill):
+    """GitLab CE issue management skill — Linear-inspired workflow.
+
+    Provides autonomous issue lifecycle management via the local GitLab CE
+    instance (shml-gitlab). The agent can pick up, work on, and close issues
+    without human interaction.
+
+    Workflow:
+      list_agent_queue → claim_issue → [do work] → complete_issue
+    """
+
+    ACTIVATION_TRIGGERS = [
+        "gitlab",
+        "issue",
+        "issues",
+        "task",
+        "tasks",
+        "backlog",
+        "triage",
+        "bug",
+        "feature request",
+        "sprint",
+        "milestone",
+        "board",
+        "ticket",
+        "work item",
+        "claim",
+        "take on",
+        "complete issue",
+        "close issue",
+        "create issue",
+        "list issues",
+        "agent queue",
+    ]
+
+    @classmethod
+    def get_context(cls, user_task: str) -> str:
+        if not cls.is_activated(user_task):
+            return ""
+
+        return """# GitLab Issue Management Skill
+
+**Purpose:** Autonomous issue lifecycle management on the local GitLab CE instance.
+Labels follow a Linear-inspired hierarchy. The agent MUST use this skill to self-assign work.
+
+## Agent Workflow (Linear-inspired)
+
+1. **`list_agent_queue`** — see what is queued for the agent (status::backlog + assignee::agent)
+2. **`claim_issue`** — take ownership (status::in-progress, leaves a plan comment)
+3. [Do the actual work using other skills]
+4. **`complete_issue`** — post summary comment, set status::done, close the issue
+
+## Operations
+
+### list_agent_queue
+Issues tagged `assignee::agent` + `status::backlog`, ordered by priority.
+Params: `limit` (int, default:10)
+Returns: list of {iid, title, labels, url}
+
+### list_issues
+Params: `state` ("opened"|"closed"|"all"), `labels` (comma-sep string), `search` (str), `limit` (int)
+
+### get_issue
+Params: `iid` (int)
+Returns: full issue {iid, title, state, labels, description, url}
+
+### create_issue
+Params: `title` (str), `description` (markdown str), `labels` (comma-sep), `milestone_id` (int)
+Use templates — see Label Reference below.
+
+### claim_issue
+MUST call before starting any work on an issue.
+Params: `iid` (int), `plan` (str — your step-by-step plan)
+Side effects: status→in-progress, assignee::agent, comment posted.
+
+### complete_issue
+MUST call after finishing work.
+Params: `iid` (int), `summary` (str — what you did, files changed, outcome)
+Side effects: status→done, assignee::agent removed, issue closed.
+
+### triage_issue
+Categorise a new/untriaged issue into the backlog.
+Params: `iid` (int), `priority` ("critical"|"high"|"medium"|"low"),
+        `type_label` ("bug"|"feature"|"chore"|"training"|"security"),
+        `component` ("infra"|"ci-cd"|"agent-service"|"chat-ui"|"autoresearch"),
+        `comment` (str — optional triage note)
+
+### add_comment
+Params: `iid` (int), `body` (markdown str)
+
+### close_issue
+Params: `iid` (int)
+
+## Label Reference
+
+| Scope | Values |
+|-------|--------|
+| status:: | triage · backlog · in-progress · in-review · done · blocked · cancelled |
+| priority:: | critical · high · medium · low |
+| type:: | bug · feature · chore · training · security |
+| component:: | infra · ci-cd · agent-service · chat-ui · autoresearch · fusionauth |
+| source:: | watchdog · scan · autoresearch · ci · pipeline |
+| assignee:: | agent (Qwen3.5/Nemotron autonomous) |
+
+## Context Window Guidance
+Before claiming an issue, check if the task fits your context window.
+- Small (< 5 files, < 200 LOC change): safe to claim
+- Medium (5-20 files): claim with explicit scope limit in plan comment
+- Large (> 20 files, cross-service refactor): triage with `priority::medium` and note the scope; do not claim autonomously
+
+## Tool Call Format
+
+```
+Tool: GitLabSkill
+Operation: claim_issue
+Params: {"iid": 42, "plan": "1. Read the failing test\\n2. Fix the assertion\\n3. Run locally\\n4. Push"}
+```
+"""
+
+    @classmethod
+    async def execute(cls, operation: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        from .gitlab_client import (
+            list_issues as _list_issues,
+            get_issue as _get_issue,
+            create_issue as _create_issue,
+            claim_issue as _claim_issue,
+            complete_issue as _complete_issue,
+            triage_issue as _triage_issue,
+            add_comment as _add_comment,
+            close_issue as _close_issue,
+            list_agent_queue as _list_agent_queue,
+        )
+
+        try:
+            if operation == "list_agent_queue":
+                limit = int(params.get("limit", 10))
+                issues = await _list_agent_queue(limit=limit)
+                return {"issues": [i.to_summary() for i in issues], "count": len(issues)}
+
+            elif operation == "list_issues":
+                issues = await _list_issues(
+                    state=params.get("state", "opened"),
+                    labels=params.get("labels") or None,
+                    search=params.get("search") or None,
+                    per_page=int(params.get("limit", 20)),
+                )
+                return {"issues": [i.to_summary() for i in issues], "count": len(issues)}
+
+            elif operation == "get_issue":
+                iid = int(params["iid"])
+                issue = await _get_issue(iid)
+                return {
+                    "iid": issue.iid,
+                    "title": issue.title,
+                    "state": issue.state,
+                    "labels": issue.labels,
+                    "description": issue.description[:2000],
+                    "url": issue.web_url,
+                }
+
+            elif operation == "create_issue":
+                label_str = params.get("labels", "")
+                labels = [l.strip() for l in label_str.split(",") if l.strip()] if label_str else None
+                issue = await _create_issue(
+                    params["title"],
+                    description=params.get("description", ""),
+                    labels=labels,
+                    milestone_id=params.get("milestone_id"),
+                )
+                return issue.to_summary()
+
+            elif operation == "claim_issue":
+                iid = int(params["iid"])
+                plan = params.get("plan", "")
+                issue = await _claim_issue(iid, plan=plan)
+                return {"claimed": True, **issue.to_summary()}
+
+            elif operation == "complete_issue":
+                iid = int(params["iid"])
+                summary = params.get("summary", "")
+                issue = await _complete_issue(iid, summary=summary)
+                return {"completed": True, **issue.to_summary()}
+
+            elif operation == "triage_issue":
+                iid = int(params["iid"])
+                issue = await _triage_issue(
+                    iid,
+                    priority=params.get("priority") or None,
+                    type_label=params.get("type_label") or None,
+                    component=params.get("component") or None,
+                    comment=params.get("comment") or None,
+                )
+                return {"triaged": True, **issue.to_summary()}
+
+            elif operation == "add_comment":
+                iid = int(params["iid"])
+                await _add_comment(iid, params["body"])
+                return {"commented": True, "iid": iid}
+
+            elif operation == "close_issue":
+                iid = int(params["iid"])
+                issue = await _close_issue(iid)
+                return {"closed": True, **issue.to_summary()}
+
+            else:
+                return {"error": f"Unknown GitLabSkill operation: {operation}"}
+
+        except RuntimeError as exc:
+            token_missing = "GITLAB_API_TOKEN not set" in str(exc)
+            logger.error("GitLabSkill.%s failed: %s", operation, exc)
+            return {
+                "error": str(exc),
+                "hint": "Set GITLAB_API_TOKEN in agent-service docker-compose env" if token_missing else None,
+            }
+        except Exception as exc:
+            logger.error("GitLabSkill.%s unexpected error: %s", operation, exc)
+            return {"error": str(exc)}
+
+
 class GitHubSkill(Skill):
     """GitHub operations skill.
 
@@ -1238,6 +1457,7 @@ except Exception as _e:
 # elevated-developer+ when both are allowed. SandboxSkill remains as fallback.
 _base_skills: List[type[Skill]] = [
     ShellSkill,  # Shell commands for system info, GPU status, etc.
+    GitLabSkill,  # GitLab issue lifecycle — primary task management
     GitHubSkill,
     RayJobSkill,
     WebSearchSkill,

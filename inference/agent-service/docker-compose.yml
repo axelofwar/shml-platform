@@ -55,6 +55,13 @@ services:
       # Timeout for factory API calls (seconds)
       - NEMOCLAW_FACTORY_TIMEOUT=${NEMOCLAW_FACTORY_TIMEOUT:-30}
 
+      # ── GitLab issue management (GitLabSkill) ─────────────────────────────
+      # Token must have: api, read_user scope
+      - GITLAB_API_TOKEN=${GITLAB_API_TOKEN:-}
+      # Container hostname is shml-gitlab on the shml-platform Docker network
+      - GITLAB_BASE_URL=${GITLAB_BASE_URL:-http://shml-gitlab:8929/gitlab}
+      - GITLAB_PROJECT_ID=${GITLAB_PROJECT_ID:-2}
+
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
