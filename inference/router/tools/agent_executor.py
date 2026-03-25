@@ -307,7 +307,7 @@ Output ONLY valid JSON."""
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
             return json.loads(content)
-        except:
+        except (json.JSONDecodeError, ValueError, KeyError, AttributeError):
             return {
                 "error_type": "other",
                 "fix_strategy": "edit_file",

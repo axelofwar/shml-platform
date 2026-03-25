@@ -211,6 +211,34 @@ scrape_configs:
   #       replacement: 'redis'
 
   # ==========================================================================
+  # ML SLO Exporter — SLO burn-rate alerts & feature freshness metrics
+  # ==========================================================================
+  - job_name: "ml-slo-exporter"
+    static_configs:
+      - targets: ["ml-slo-exporter:9092"]
+    metrics_path: "/metrics"
+    relabel_configs:
+      - target_label: service
+        replacement: "ml-slo-exporter"
+      - target_label: stack
+        replacement: "monitoring"
+
+  # ==========================================================================
+  # Feature Store API — feature view freshness & materialization lag
+  # ==========================================================================
+  - job_name: "feature-store"
+    static_configs:
+      - targets: ["ray-compute-api:8000"]
+    metrics_path: "/features/metrics"
+    scrape_interval: 60s
+    scrape_timeout: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: "feature-store"
+      - target_label: stack
+        replacement: "data"
+
+  # ==========================================================================
   # GitLab CE Metrics
   # ==========================================================================
   - job_name: 'gitlab'

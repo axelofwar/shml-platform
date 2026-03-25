@@ -23,8 +23,13 @@ secrets/
 .env.*
 !.env.example
 
-# Obsidian editor config (personal workspace settings)
+# Obsidian vault (personal workspace — gitignored)
+# Exception: agents/ subfolder is committed as it contains shared rules/skills/prompts
+# Architecture: agents/ → canonical source, IDE configs symlink from it
 docs/obsidian-vault/
+
+# Claude Code local settings (personal permission expansions — never commit)
+.claude/settings.local.json
 
 # MCP config (contains local filesystem paths)
 mcp/mcp-config.json
@@ -197,6 +202,10 @@ ray_dashboard/
 # Training data and runtime data (use volume mounts)
 data/
 data
+# Host-path symlinks — these point to /opt/shml/{models,data} on the host.
+# The symlink objects themselves ARE tracked (added explicitly), but their
+# targets (large binaries) are on the host, never committed.
+# To track the symlinks: git add -f models data_store
 
 # Wget artifacts
 wget-log*
@@ -424,6 +433,14 @@ ray_compute/evaluation_results/
 # Embedded/vendored git repositories (use submodules if needed)
 inference/llama-cpp/llama-src/
 inference/llama-cpp/llama.cpp/
+# llama-cpp compiled binaries and runtime artifacts (too large / platform-specific)
+inference/llama-cpp/llama-b8373/
+inference/llama-cpp/llama-b8373-cuda/
+inference/llama-cpp/*.tar.gz
+inference/llama-cpp/models/
+inference/llama-cpp/logs/
+# Public mirror report (generated artifact, not source)
+.public-mirror-report.txt
 
 # =============================================================================
 # Phase 7 Hardening (2025-03-18) - Additions after workspace reorganization
@@ -445,3 +462,4 @@ ray_compute/backups/
 # Editor artifacts
 **/.idea/
 **/__pycache__/
+inference/shl-nano

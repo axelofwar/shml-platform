@@ -1,0 +1,78 @@
+# =============================================================================
+# SHML Platform — Root Virtual Environment Requirements
+# =============================================================================
+# Environment: .venv (Python 3.12)
+# Activate:    source .venv/bin/activate
+# Install:     pip install -r requirements.txt
+#
+# Scope: platform scripts, tests, and all libs/ packages
+#        (NOT training GPU stack — see libs/training/setup.py)
+#        (NOT inference containers — see inference/*/requirements.txt)
+#
+# CRITICAL DEPS: pyspark, asyncpg, psycopg2-binary, mlflow must be present.
+# These are NOT optional — shml_spark.py (Nessie/Iceberg), shml_features.py
+# (pgvector), and mlflow tracking all hard-import these at module level.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Data / Spark / Iceberg / Nessie  [CRITICAL — shml_spark.py requires this]
+# ---------------------------------------------------------------------------
+pyspark>=3.5.0
+
+# ---------------------------------------------------------------------------
+# Database drivers  [CRITICAL — shml_features.py, feature_store/]
+# ---------------------------------------------------------------------------
+psycopg2-binary>=2.9
+asyncpg>=0.29
+
+# ---------------------------------------------------------------------------
+# ML tracking  [CRITICAL — shml_training.integrations.mlflow_utils]
+# ---------------------------------------------------------------------------
+mlflow>=2.17.2
+
+# ---------------------------------------------------------------------------
+# Data processing  [libs/feature_store, libs/evaluation]
+# ---------------------------------------------------------------------------
+polars>=1.0.0
+pandas>=2.0
+pyarrow>=14.0
+numpy>=1.26
+
+# ---------------------------------------------------------------------------
+# API / web frameworks
+# ---------------------------------------------------------------------------
+fastapi>=0.100
+uvicorn>=0.24
+httpx>=0.24
+pydantic>=2.0
+python-dotenv>=1.0
+requests>=2.28
+
+# ---------------------------------------------------------------------------
+# ML orchestration / evaluation  [ray_compute wrappers, evaluation libs]
+# ---------------------------------------------------------------------------
+scikit-learn>=1.3
+
+# ---------------------------------------------------------------------------
+# Monitoring / MLflow support
+# ---------------------------------------------------------------------------
+opentelemetry-api>=1.20
+opentelemetry-sdk>=1.20
+
+# ---------------------------------------------------------------------------
+# Dev tooling / tests
+# ---------------------------------------------------------------------------
+pytest>=7.4
+pytest-asyncio>=0.21
+pytest-mock>=3.10
+redis>=4.6
+docker>=6.0
+GitPython>=3.1
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+click>=8.0
+PyYAML>=6.0
+Jinja2>=3.1
+cryptography>=41.0

@@ -217,15 +217,32 @@ class TestSimilaritySearch:
 
 
 class TestFiftyOneEvalPipeline:
-    """Test the FiftyOne evaluation pipeline structure."""
+    """Test the FiftyOne evaluation pipeline structure.
+
+    The core logic lives in libs/evaluation/face/fiftyone_eval_pipeline.py;
+    ray_compute/jobs/evaluation/fiftyone_eval_pipeline.py is a thin Ray wrapper
+    that delegates to it. Tests check the libs module for domain logic.
+    """
 
     @pytest.fixture
     def pipeline_content(self):
+        """Load the libs-level fiftyone evaluation pipeline source."""
+        path = os.path.join(
+            _root, "libs", "evaluation", "face", "fiftyone_eval_pipeline.py"
+        )
+        if not os.path.exists(path):
+            pytest.skip("libs/evaluation/face/fiftyone_eval_pipeline.py not found")
+        with open(path) as f:
+            return f.read()
+
+    @pytest.fixture
+    def ray_wrapper_content(self):
+        """Load the Ray orchestration wrapper source."""
         path = os.path.join(
             _root, "ray_compute", "jobs", "evaluation", "fiftyone_eval_pipeline.py"
         )
         if not os.path.exists(path):
-            pytest.skip("FiftyOne eval pipeline not found")
+            pytest.skip("ray_compute fiftyone_eval_pipeline.py not found")
         with open(path) as f:
             return f.read()
 
@@ -255,6 +272,15 @@ class TestFiftyOneEvalPipeline:
         """Pipeline should gracefully handle missing FiftyOne."""
         assert "FIFTYONE_AVAILABLE" in pipeline_content
         assert "ImportError" in pipeline_content
+
+    def test_ray_wrapper_delegates_to_libs(self, ray_wrapper_content):
+        """Ray wrapper should delegate to libs.evaluation.face module."""
+        assert "libs.evaluation.face" in ray_wrapper_content
+        assert "fiftyone_eval_pipeline" in ray_wrapper_content
+
+    def test_ray_wrapper_uses_ray_remote(self, ray_wrapper_content):
+        """Ray wrapper must use @ray.remote decorator."""
+        assert "@ray.remote" in ray_wrapper_content
 
 
 # ===========================================================================

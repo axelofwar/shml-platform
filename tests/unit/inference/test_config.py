@@ -1,365 +1,232 @@
-"""
-Unit tests for inference stack configuration
+"""Regression tests for the inference stack compose contract.
 
-Tests configuration validation, defaults, and environment handling
-without requiring GPU access.
-
-Run with:
-    pytest tests/unit/inference/test_config.py -v
+These tests validate the actual docker-compose configuration used by the
+inference services rather than hardcoded example dictionaries.
 """
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
 
 import pytest
-import os
-from pathlib import Path
-from typing import Dict
+import yaml
 
 
-class TestQwen3VLConfig:
-    """Test Qwen3-VL service configuration"""
-
-    def test_default_config(self):
-        """Test default configuration values"""
-        config = {
-            "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
-            "device": "cuda:0",
-            "quantization": "int4",
-            "max_length": 8192,
-            "temperature": 0.7,
-            "host": "0.0.0.0",
-            "port": 8000,
-        }
-
-        assert config["device"].startswith("cuda")
-        assert config["quantization"] in ["int4", "int8", "fp16", "none"]
-        assert config["max_length"] > 0
-        assert 0.0 <= config["temperature"] <= 2.0
-        assert config["port"] > 0
-
-    def test_privacy_config(self):
-        """Test privacy-related configuration"""
-        env_vars = {
-            "TRANSFORMERS_OFFLINE": "1",
-            "HF_HUB_OFFLINE": "1",
-            "HF_DATASETS_OFFLINE": "1",
-        }
-
-        for key, expected in env_vars.items():
-            assert expected == "1"  # All should be set to disable network
-
-    def test_memory_config(self):
-        """Test memory configuration for RTX 2070"""
-        config = {
-            "gpu_memory_limit_mb": 7500,  # Leave 500MB buffer from 8GB
-            "max_batch_size": 1,
-            "gradient_checkpointing": True,
-        }
-
-        # RTX 2070 has 8GB, INT4 model needs ~6-7GB
-        assert config["gpu_memory_limit_mb"] < 8192
-        assert config["max_batch_size"] >= 1
-
-    def test_quantization_options(self):
-        """Test valid quantization options"""
-        valid_options = ["int4", "int8", "fp16", "fp32", "none"]
-
-        # INT4 is optimal for 8GB GPU
-        recommended = "int4"
-        assert recommended in valid_options
+REPO_ROOT = Path(__file__).resolve().parents[3]
+INFERENCE_COMPOSE = REPO_ROOT / "inference" / "docker-compose.inference.yml"
+REQUIRED_PRIORITY = "2147483647"
 
 
-class TestZImageConfig:
-    """Test Z-Image service configuration"""
-
-    def test_default_config(self):
-        """Test default configuration values"""
-        config = {
-            "model_name": "InstantX/Z-Image-Turbo",
-            "device": "cuda:1",
-            "dtype": "float16",
-            "default_steps": 8,
-            "default_size": 1024,
-            "host": "0.0.0.0",
-            "port": 8000,
-        }
-
-        assert config["device"].startswith("cuda")
-        assert config["dtype"] in ["float16", "float32", "bfloat16"]
-        assert config["default_steps"] >= 1
-        assert config["default_size"] in [512, 768, 1024]
-
-    def test_auto_unload_config(self):
-        """Test auto-unload configuration for resource management"""
-        config = {
-            "auto_unload_enabled": True,
-            "idle_timeout_seconds": 300,  # 5 minutes
-            "yield_to_training": True,
-        }
-
-        assert config["idle_timeout_seconds"] > 0
-        assert config["auto_unload_enabled"] == True
-
-    def test_memory_config(self):
-        """Test memory configuration for RTX 3090"""
-        config = {
-            "gpu_memory_limit_mb": 22000,  # Leave 2GB buffer from 24GB
-            "max_batch_size": 4,
-            "attention_slicing": False,  # Not needed with 24GB
-        }
-
-        # RTX 3090 has 24GB
-        assert config["gpu_memory_limit_mb"] < 24576
-        assert config["max_batch_size"] >= 1
-
-    def test_nfe_steps_validation(self):
-        """Test NFE (Number of Function Evaluations) steps"""
-        # Z-Image is optimized for 8 steps
-        recommended_steps = 8
-        valid_range = range(1, 51)
-
-        assert recommended_steps in valid_range
+def _load_compose() -> dict[str, Any]:
+    with open(INFERENCE_COMPOSE, encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
 
 
-class TestGatewayConfig:
-    """Test inference gateway configuration"""
-
-    def test_default_config(self):
-        """Test default gateway configuration"""
-        config = {
-            "host": "0.0.0.0",
-            "port": 8000,
-            "redis_url": "redis://inference-redis:6379/2",
-            "postgres_url": "postgresql://inference:password@inference-postgres:5432/inference",
-            "rate_limit_requests_per_minute": 60,
-            "rate_limit_burst": 10,
-        }
-
-        assert config["port"] > 0
-        assert "redis://" in config["redis_url"]
-        assert "postgresql://" in config["postgres_url"]
-        assert config["rate_limit_requests_per_minute"] > 0
-
-    def test_backend_urls(self):
-        """Test backend service URLs"""
-        backends = {
-            "llm": "http://qwen3-vl-api:8000",
-            "image": "http://z-image-api:8000",
-        }
-
-        for name, url in backends.items():
-            assert url.startswith("http://")
-            assert ":8000" in url
-
-    def test_queue_config(self):
-        """Test queue configuration"""
-        config = {
-            "queue_name": "inference_queue",
-            "max_queue_size": 1000,
-            "request_timeout_seconds": 300,
-            "max_retries": 3,
-        }
-
-        assert config["max_queue_size"] > 0
-        assert config["request_timeout_seconds"] > 0
-        assert config["max_retries"] >= 0
-
-    def test_backup_config(self):
-        """Test backup configuration"""
-        config = {
-            "backup_enabled": True,
-            "backup_schedule": "0 2 * * *",  # 2 AM daily
-            "backup_retention_days": 90,
-            "backup_compression": "zstd",
-            "backup_path": "/data/backups",
-        }
-
-        assert config["backup_retention_days"] > 0
-        assert config["backup_compression"] in ["zstd", "gzip", "none"]
+def _env_dict(service: dict[str, Any]) -> dict[str, str]:
+    env = service.get("environment", [])
+    result: dict[str, str] = {}
+    for item in env:
+        key, value = item.split("=", 1)
+        result[key] = value
+    return result
 
 
-class TestDockerComposeConfig:
-    """Test docker-compose configuration validity"""
+def _label_dict(service: dict[str, Any]) -> dict[str, str]:
+    labels = service.get("labels", [])
+    result: dict[str, str] = {}
+    for item in labels:
+        key, value = item.split("=", 1)
+        result[key] = value
+    return result
 
-    def test_service_names(self):
-        """Test expected service names"""
-        expected_services = [
-            "inference-postgres",
+
+def _device_ids(service: dict[str, Any]) -> list[str]:
+    devices = (
+        service.get("deploy", {})
+        .get("resources", {})
+        .get("reservations", {})
+        .get("devices", [])
+    )
+    if not devices:
+        return []
+    return list(devices[0].get("device_ids", []))
+
+
+@pytest.fixture(scope="module")
+def compose() -> dict[str, Any]:
+    return _load_compose()
+
+
+@pytest.fixture(scope="module")
+def services(compose: dict[str, Any]) -> dict[str, Any]:
+    return compose["services"]
+
+
+class TestComposeStructure:
+    def test_compose_file_exists(self):
+        assert INFERENCE_COMPOSE.exists()
+
+    def test_required_services_exist(self, services: dict[str, Any]):
+        for service_name in [
             "qwen3-vl-api",
             "z-image-api",
             "inference-gateway",
-        ]
+            "pii-blur-api",
+            "pii-ui",
+        ]:
+            assert service_name in services
 
-        for service in expected_services:
-            assert isinstance(service, str)
-            assert len(service) > 0
+    def test_shared_network_declared(self, compose: dict[str, Any]):
+        networks = compose.get("networks", {})
+        assert "shml-platform" in networks
 
-    def test_port_mappings(self):
-        """Test port mappings don't conflict"""
-        port_mappings = {
-            "inference-postgres": 5433,  # Different from mlflow-postgres (5432)
-            "inference-gateway": 8001,  # Different from other APIs
-        }
+    def test_model_cache_and_shared_secret_declared(self, compose: dict[str, Any]):
+        volumes = compose.get("volumes", {})
+        secrets = compose.get("secrets", {})
 
-        # Check no duplicates
-        ports = list(port_mappings.values())
-        assert len(ports) == len(set(ports))
-
-    def test_gpu_reservations(self):
-        """Test GPU device reservations"""
-        gpu_assignments = {
-            "qwen3-vl-api": "0",  # RTX 2070
-            "z-image-api": "1",  # RTX 3090
-        }
-
-        # Check no GPU conflicts
-        devices = list(gpu_assignments.values())
-        assert len(devices) == len(set(devices))
-
-    def test_network_config(self):
-        """Test network configuration"""
-        config = {"network_name": "ml-platform", "network_external": True}
-
-        assert config["network_external"] == True
-
-    def test_volume_mounts(self):
-        """Test volume mount paths"""
-        volumes = {
-            "postgres_data": "/var/lib/postgresql/data",
-            "model_cache": "/root/.cache/huggingface",
-            "backup_data": "/data/backups",
-        }
-
-        for name, path in volumes.items():
-            assert path.startswith("/")
+        assert "model-cache" in volumes
+        assert "shared_db_password" in secrets
 
 
-class TestTraefikLabels:
-    """Test Traefik routing labels"""
+class TestQwen3VLService:
+    def test_environment_matches_expected_contract(self, services: dict[str, Any]):
+        env = _env_dict(services["qwen3-vl-api"])
 
-    def test_priority_value(self):
-        """Test router priority is high enough"""
-        # Must be higher than Traefik internal API (which uses priority 1)
-        required_priority = 2147483647  # Max int32
+        assert env["MODEL_ID"] == "Qwen/Qwen3-VL-8B-Instruct"
+        assert env["QUANTIZATION"] == "int4"
+        assert env["DEVICE"] == "cuda:0"
+        assert env["TRANSFORMERS_OFFLINE"] == "1"
+        assert env["HF_HUB_OFFLINE"] == "1"
+        assert env["YIELD_TO_TRAINING"] == "true"
+        assert env["UNLOAD_TIMEOUT_SECONDS"] == "300"
 
-        assert required_priority == 2147483647
+    def test_gpu_binding_targets_rtx_2070_slot(self, services: dict[str, Any]):
+        assert _device_ids(services["qwen3-vl-api"]) == ["1"]
 
-    def test_route_rules(self):
-        """Test route rule patterns"""
-        rules = {
-            "llm": "PathPrefix(`/api/llm`)",
-            "image": "PathPrefix(`/api/image`)",
-            "inference": "PathPrefix(`/inference`)",
-        }
+    def test_resources_and_port_exposure(self, services: dict[str, Any]):
+        service = services["qwen3-vl-api"]
+        resources = service["deploy"]["resources"]
 
-        for name, rule in rules.items():
-            assert "PathPrefix" in rule
-            assert "`/" in rule
+        assert service["expose"] == ["8000"]
+        assert resources["limits"]["memory"] == "12G"
+        assert resources["reservations"]["memory"] == "6G"
 
-    def test_service_ports(self):
-        """Test service load balancer ports"""
-        services = {
-            "qwen3-vl-api": 8000,
-            "z-image-api": 8000,
-            "inference-gateway": 8000,
-        }
+    def test_traefik_labels_guard_llm_route(self, services: dict[str, Any]):
+        labels = _label_dict(services["qwen3-vl-api"])
 
-        for name, port in services.items():
-            assert port == 8000  # All use internal port 8000
-
-
-class TestEnvironmentVariables:
-    """Test environment variable handling"""
-
-    def test_required_env_vars(self):
-        """Test required environment variables are defined"""
-        required_vars = [
-            "POSTGRES_PASSWORD",
-            "CUDA_VISIBLE_DEVICES",
-            "TRANSFORMERS_OFFLINE",
-            "HF_HUB_OFFLINE",
-        ]
-
-        # These should be defined in docker-compose or .env
-        for var in required_vars:
-            assert isinstance(var, str)
-
-    def test_secret_file_paths(self):
-        """Test secret file path patterns"""
-        secret_paths = {"postgres_password": "/run/secrets/inference_postgres_password"}
-
-        for name, path in secret_paths.items():
-            assert path.startswith("/run/secrets/")
-
-    def test_model_cache_paths(self):
-        """Test model cache directory structure"""
-        cache_paths = {
-            "huggingface": "/root/.cache/huggingface",
-            "transformers": "/root/.cache/huggingface/hub",
-        }
-
-        for name, path in cache_paths.items():
-            assert ".cache" in path
+        assert labels["traefik.http.routers.qwen3-vl.rule"] == "PathPrefix(`/api/llm`)"
+        assert labels["traefik.http.routers.qwen3-vl.priority"] == REQUIRED_PRIORITY
+        assert labels["traefik.http.services.qwen3-vl.loadbalancer.server.port"] == "8000"
+        assert labels["traefik.http.middlewares.qwen3-strip.stripprefix.prefixes"] == "/api/llm"
+        assert labels["traefik.http.routers.qwen3-vl.middlewares"] == "oauth2-errors,oauth2-auth,qwen3-strip"
 
 
-class TestResourceLimits:
-    """Test resource limit configurations"""
+class TestZImageService:
+    def test_environment_matches_expected_contract(self, services: dict[str, Any]):
+        env = _env_dict(services["z-image-api"])
 
-    def test_qwen3_vl_resources(self):
-        """Test Qwen3-VL resource limits"""
-        resources = {
-            "memory_limit": "12g",
-            "memory_reservation": "8g",
-            "shm_size": "2g",
-        }
+        assert env["MODEL_ID"] == "Tongyi-MAI/Z-Image-Turbo"
+        assert env["DTYPE"] == "bfloat16"
+        assert env["NUM_INFERENCE_STEPS"] == "8"
+        assert env["TRANSFORMERS_OFFLINE"] == "1"
+        assert env["HF_HUB_OFFLINE"] == "1"
+        assert env["YIELD_TO_TRAINING"] == "true"
 
-        # Parse memory values
-        def parse_memory(s):
-            if s.endswith("g"):
-                return int(s[:-1])
-            return 0
+    def test_gpu_binding_targets_rtx_2070_slot(self, services: dict[str, Any]):
+        assert _device_ids(services["z-image-api"]) == ["1"]
 
-        mem_limit = parse_memory(resources["memory_limit"])
-        mem_reserve = parse_memory(resources["memory_reservation"])
+    def test_traefik_labels_guard_image_route(self, services: dict[str, Any]):
+        labels = _label_dict(services["z-image-api"])
 
-        assert mem_limit >= mem_reserve
+        assert labels["traefik.http.routers.z-image.rule"] == "PathPrefix(`/api/image`)"
+        assert labels["traefik.http.routers.z-image.priority"] == REQUIRED_PRIORITY
+        assert labels["traefik.http.services.z-image.loadbalancer.server.port"] == "8000"
+        assert labels["traefik.http.middlewares.z-image-strip.stripprefix.prefixes"] == "/api/image"
+        assert labels["traefik.http.routers.z-image.middlewares"] == "oauth2-errors,oauth2-auth,z-image-strip"
 
-    def test_z_image_resources(self):
-        """Test Z-Image resource limits"""
-        resources = {
-            "memory_limit": "32g",
-            "memory_reservation": "24g",
-            "shm_size": "4g",
-        }
 
-        def parse_memory(s):
-            if s.endswith("g"):
-                return int(s[:-1])
-            return 0
+class TestInferenceGatewayService:
+    def test_environment_targets_internal_backends_and_db_secret(self, services: dict[str, Any]):
+        service = services["inference-gateway"]
+        env = _env_dict(service)
 
-        mem_limit = parse_memory(resources["memory_limit"])
-        mem_reserve = parse_memory(resources["memory_reservation"])
+        assert env["QWEN3_VL_URL"] == "http://qwen3-vl-api:8000"
+        assert env["Z_IMAGE_URL"] == "http://z-image-api:8000"
+        assert env["POSTGRES_PASSWORD_FILE"] == "/run/secrets/shared_db_password"
+        assert env["BACKUP_COMPRESSION"] == "zstd"
+        assert env["BACKUP_RETENTION_DAYS"] == "90"
+        assert service["secrets"] == ["shared_db_password"]
 
-        assert mem_limit >= mem_reserve
+    def test_depends_on_model_backends(self, services: dict[str, Any]):
+        depends_on = services["inference-gateway"]["depends_on"]
 
-    def test_gateway_resources(self):
-        """Test Gateway resource limits (no GPU)"""
-        resources = {
-            "memory_limit": "2g",
-            "memory_reservation": "512m",
-            "cpu_limit": "2.0",
-        }
+        assert depends_on["qwen3-vl-api"]["condition"] == "service_started"
+        assert depends_on["z-image-api"]["condition"] == "service_started"
 
-        # Gateway should have modest resource requirements
-        def parse_memory(s):
-            if s.endswith("g"):
-                return int(s[:-1]) * 1024
-            if s.endswith("m"):
-                return int(s[:-1])
-            return 0
+    def test_gateway_has_no_gpu_reservation(self, services: dict[str, Any]):
+        assert _device_ids(services["inference-gateway"]) == []
 
-        mem_limit = parse_memory(resources["memory_limit"])
-        mem_reserve = parse_memory(resources["memory_reservation"])
+    def test_traefik_labels_guard_gateway_route(self, services: dict[str, Any]):
+        labels = _label_dict(services["inference-gateway"])
 
-        assert mem_limit >= mem_reserve
+        assert labels["traefik.http.routers.inference.rule"] == "PathPrefix(`/inference`)"
+        assert labels["traefik.http.routers.inference.priority"] == REQUIRED_PRIORITY
+        assert labels["traefik.http.services.inference.loadbalancer.server.port"] == "8000"
+        assert labels["traefik.http.middlewares.inference-strip.stripprefix.prefixes"] == "/inference"
+        assert labels["traefik.http.routers.inference.middlewares"] == "oauth2-errors,oauth2-auth,inference-strip"
+
+
+class TestPIIBlurService:
+    def test_service_uses_shared_db_secret_and_gpu(self, services: dict[str, Any]):
+        service = services["pii-blur-api"]
+        env = _env_dict(service)
+
+        assert env["POSTGRES_PASSWORD_FILE"] == "/run/secrets/shared_db_password"
+        assert env["ENABLE_LICENSE_PLATE_DETECTION"] == "true"
+        assert service["secrets"] == ["shared_db_password"]
+        assert _device_ids(service) == ["1"]
+
+    def test_traefik_labels_guard_pii_route(self, services: dict[str, Any]):
+        labels = _label_dict(services["pii-blur-api"])
+
+        assert labels["traefik.http.routers.pii-blur.rule"] == "PathPrefix(`/api/pii`)"
+        assert labels["traefik.http.routers.pii-blur.priority"] == REQUIRED_PRIORITY
+        assert labels["traefik.http.services.pii-blur.loadbalancer.server.port"] == "8000"
+        assert labels["traefik.http.middlewares.pii-blur-strip.stripprefix.prefixes"] == "/api/pii"
+        assert labels["traefik.http.routers.pii-blur.middlewares"] == "oauth2-errors,oauth2-auth,pii-blur-strip"
+
+
+class TestSharedInvariants:
+    @pytest.mark.parametrize(
+        "service_name",
+        ["qwen3-vl-api", "z-image-api", "inference-gateway", "pii-blur-api"],
+    )
+    def test_backend_services_share_platform_network(
+        self, services: dict[str, Any], service_name: str
+    ):
+        assert services[service_name]["networks"] == ["shml-platform"]
+
+    @pytest.mark.parametrize(
+        ("service_name", "path_prefix"),
+        [
+            ("qwen3-vl-api", "/api/llm"),
+            ("z-image-api", "/api/image"),
+            ("inference-gateway", "/inference"),
+            ("pii-blur-api", "/api/pii"),
+        ],
+    )
+    def test_public_api_routes_use_max_priority(
+        self, services: dict[str, Any], service_name: str, path_prefix: str
+    ):
+        labels = _label_dict(services[service_name])
+        router_name = next(
+            key.rsplit(".", 2)[1]
+            for key, value in labels.items()
+            if key.endswith(".rule") and value == f"PathPrefix(`{path_prefix}`)"
+        )
+
+        assert labels[f"traefik.http.routers.{router_name}.priority"] == REQUIRED_PRIORITY
 
 
 if __name__ == "__main__":

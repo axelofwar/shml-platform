@@ -1,0 +1,50 @@
+[Unit]
+Description=Qwen3.5-27B llama.cpp CUDA Inference Server
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network.target
+
+[Service]
+Type=simple
+User=axelofwar
+Group=axelofwar
+WorkingDirectory=/home/axelofwar/Projects/shml-platform/inference/llama-cpp
+
+# Library path for CUDA shared objects
+# CUDA_VISIBLE_DEVICES=0: restrict to RTX 3090 Ti (CC 8.6) only.
+# This binary was compiled ARCHS=860; RTX 2070 (CC 7.5) crashes when layers
+# are spread to it via auto-fit (no matching CUDA kernels).
+Environment="LD_LIBRARY_PATH=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373-cuda"
+Environment="CUDA_VISIBLE_DEVICES=0"
+
+ExecStart=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373-cuda/llama-server \
+    --model /home/axelofwar/Projects/shml-platform/inference/llama-cpp/models/Qwen3.5-27B-Q4_K_M.gguf \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --n-gpu-layers 99 \
+    --ctx-size 65536 \
+    --cache-type-k q8_0 \
+    --cache-type-v q8_0 \
+    --threads 8 \
+    --threads-batch 24 \
+    --parallel 2 \
+    --batch-size 512 \
+    --ubatch-size 512 \
+    --api-key none \
+    --alias Qwen3.5-27B-Q4_K_M
+
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qwen35-server
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

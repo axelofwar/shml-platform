@@ -1,0 +1,12 @@
+[Unit]
+Description=SHL GitLab board sync — every 10 minutes
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=10m
+AccuracySec=60s
+Persistent=false
+Unit=shl-gitlab-sync.service
+
+[Install]
+WantedBy=timers.target

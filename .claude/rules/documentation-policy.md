@@ -1,0 +1,1 @@
+../../.agent/rules/documentation-policy.md

@@ -261,3 +261,20 @@ tasks:
         fi
         pip install -e libs/training
         echo "✓ shml-training installed in editable mode from libs/training (shml/training submodule)"
+
+  # ===========================================================================
+  # IDE Config Generation
+  # ===========================================================================
+  "ide-configs":
+    desc: "Regenerate IDE config files (.github/copilot-instructions.md, .claude/CLAUDE.md, .clinerules) from .agent/rules/ sources"
+    cmds:
+      - bash scripts/generate-ide-configs.sh --target all
+    summary: |
+      Assembles IDE-specific configuration files from the canonical rule files in .agent/rules/.
+      Edit sources in .agent/rules/ — never edit generated files directly.
+      Sources: service-management.md, documentation-policy.md, security.md, platform-context.md, api-conventions.md, code-style.md
+
+  "ide-configs:dry-run":
+    desc: "Preview IDE config generation without writing files"
+    cmds:
+      - bash scripts/generate-ide-configs.sh --target all --dry-run

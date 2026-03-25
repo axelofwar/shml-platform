@@ -183,15 +183,15 @@ stop_all_services() {
     docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop unified-grafana global-prometheus pushgateway ml-slo-exporter 2>/dev/null || true
     docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop cadvisor node-exporter 2>/dev/null || true
     # Stop DCGM exporter (GPU metrics)
-    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
-        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml stop 2>/dev/null || true
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml stop 2>/dev/null || true
     fi
     log_success "Monitoring stopped"
     echo ""
 
     # Phase 6: Stop Auth Services
     log_info "━━━ Stopping Auth Services ━━━"
-    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml stop oauth2-proxy role-auth fusionauth 2>/dev/null || true
     log_success "Auth services stopped"
     echo ""
 
@@ -230,8 +230,8 @@ cleanup_containers() {
     if [ -f "inference/coding-model/docker-compose.yml" ]; then
         docker compose --env-file .env -f inference/coding-model/docker-compose.yml down --remove-orphans 2>/dev/null || true
     fi
-    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ]; then
-        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml down --remove-orphans 2>/dev/null || true
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ]; then
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml down --remove-orphans 2>/dev/null || true
     fi
 
     # List of all known containers (both old and new naming schemes)
@@ -360,7 +360,7 @@ rebuild_images() {
 
     # Role Auth (RBAC middleware)
     echo -n "  Building role-auth..."
-    if docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml -f mlflow-server/docker-compose.yml -f ray_compute/docker-compose.yml build role-auth >/dev/null 2>&1; then
+    if docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml build role-auth >/dev/null 2>&1; then
         echo -e " ${GREEN}✓${NC}"
     else
         echo -e " ${YELLOW}⚠ (using existing)${NC}"
@@ -463,7 +463,7 @@ start_all_services() {
     # =========================================================================
     log_info "━━━ Phase 2: FusionAuth (OAuth Provider) ━━━"
     echo "Starting: FusionAuth OAuth/SSO server..."
-    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate fusionauth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "fusionauth" $FUSIONAUTH_TIMEOUT || log_warn "FusionAuth may need initial setup wizard"
     log_success "FusionAuth ready"
@@ -648,7 +648,7 @@ start_all_services() {
     log_info "━━━ Phase 4: OAuth2 Proxy (Auth Middleware) ━━━"
     echo "Starting: OAuth2 Proxy (provides forwardAuth middleware)..."
     echo "  Note: Using /oauth2-proxy/* prefix (FusionAuth uses /oauth2/*)"
-    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
 
     # OAuth2 Proxy healthcheck is DISABLED (scratch image has no wget/curl)
     # So we wait for container to be running, then verify it's working
@@ -670,7 +670,7 @@ start_all_services() {
             echo -e "${RED}║       healthcheck:                                             ║${NC}"
             echo -e "${RED}║         disable: true                                          ║${NC}"
             echo -e "${RED}║                                                                ║${NC}"
-            echo -e "${RED}║  Then restart: docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy${NC}"
+            echo -e "${RED}║  Then restart: docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy${NC}"
             echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
             echo ""
         fi
@@ -736,7 +736,7 @@ start_all_services() {
 
             # Restart oauth2-proxy
             echo "  Restarting OAuth2 Proxy..."
-            docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+            docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
             sleep 10
         fi
     fi
@@ -755,12 +755,12 @@ start_all_services() {
 
         if [ "$health_status" = "starting" ] || [ "$health_status" = "unhealthy" ]; then
             echo -e "${YELLOW}  Health check failing - Traefik ignores unhealthy containers${NC}"
-            echo -e "${YELLOW}  Ensure deploy/compose/docker-compose.infra.yml has 'healthcheck: disable: true'${NC}"
+            echo -e "${YELLOW}  Ensure deploy/compose/docker-compose.auth.yml has 'healthcheck: disable: true'${NC}"
         fi
 
         # Final recovery attempt: restart oauth2-proxy
         echo "  Final recovery attempt..."
-        docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy 2>&1 | grep -v "orphan" || true
         sleep 15
 
         wait_for_middleware "oauth2-auth" 30 || {
@@ -789,7 +789,7 @@ start_all_services() {
     log_info "━━━ Phase 4b: Role Auth Service (RBAC Middleware) ━━━"
     echo "Starting: Role Auth checker (provides role-based access control)..."
     echo "  Note: Validates X-Auth-Request-Groups header for developer/admin roles"
-    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
+    docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate --build role-auth 2>&1 | grep -v "orphan" || true
 
     wait_for_health "role-auth" $DEFAULT_TIMEOUT || log_warn "Role Auth may still be starting"
 
@@ -886,9 +886,9 @@ start_all_services() {
     # Phase 8: GPU Monitoring (Optional)
     # =========================================================================
     log_info "━━━ Phase 8: GPU Monitoring ━━━"
-    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml config >/dev/null 2>&1; then
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter..."
-        docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         log_success "GPU monitoring started"
     else
         log_warn "DCGM configuration not found - skipping GPU monitoring"
@@ -1016,10 +1016,10 @@ start_all_services() {
     # Phase 9c: Chat UI Service (Web interface for chat)
     # =========================================================================
     log_info "━━━ Phase 9c: Chat UI Service ━━━"
-    if [ -f "chat-ui-v2/deploy/compose/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
         echo "Starting: Chat UI (Web interface)..."
         ensure_network
-        docker compose --env-file .env -f chat-ui-v2/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
 
         # Wait for Chat UI to be healthy
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT || log_warn "Chat UI may still be starting"
@@ -1060,10 +1060,10 @@ start_all_services() {
     log_info "━━━ Phase 9e: Agent Service (Developer+ Access) ━━━"
     if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
         log_warn "Boot-safe mode active — skipping Agent Service to avoid GPU/memory pressure on desktop restarts"
-    elif [ -f "inference/agent-service/deploy/compose/docker-compose.yml" ]; then
+    elif [ -f "inference/agent-service/docker-compose.yml" ]; then
         echo "Starting: ACE Agent Service (LangGraph G-R-C workflow)..."
         ensure_network
-        docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
 
         # Wait for agent service health
         AGENT_TIMEOUT=${AGENT_TIMEOUT:-60}
@@ -1353,11 +1353,11 @@ diagnose_auth() {
             echo "  The oauth2-proxy image is scratch/distroless with no shell tools."
             echo "  Health checks using wget/curl will ALWAYS fail."
             echo ""
-            echo "  FIX: In deploy/compose/docker-compose.infra.yml, change:"
+            echo "  FIX: In deploy/compose/docker-compose.auth.yml, change:"
             echo "       healthcheck:"
             echo "         disable: true"
             echo ""
-            echo "  Then run: docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
+            echo "  Then run: docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy"
             ;;
         *)
             echo -e "${YELLOW}$health${NC}"
@@ -1423,12 +1423,12 @@ diagnose_auth() {
         echo -e "${YELLOW}━━━ QUICK FIX ━━━${NC}"
         echo "Run these commands to fix the health check issue:"
         echo ""
-        echo "  # Edit deploy/compose/docker-compose.infra.yml and change oauth2-proxy healthcheck to:"
+        echo "  # Edit deploy/compose/docker-compose.auth.yml and change oauth2-proxy healthcheck to:"
         echo "  #   healthcheck:"
         echo "  #     disable: true"
         echo ""
         echo "  # Then restart:"
-        echo "  docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate oauth2-proxy"
+        echo "  docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --force-recreate oauth2-proxy"
         echo ""
     fi
 }
@@ -1714,9 +1714,9 @@ start_inference() {
     fi
 
     # Chat UI (Developer+ access)
-    if [ -f "chat-ui-v2/deploy/compose/docker-compose.yml" ]; then
+    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
         echo "Starting chat UI..."
-        docker compose --env-file .env -f chat-ui-v2/deploy/compose/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT
     fi
 
@@ -1733,10 +1733,10 @@ start_monitoring() {
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT
 
     # DCGM exporter for GPU metrics (optional — requires NVIDIA drivers)
-    if [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && \
-       docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml config >/dev/null 2>&1; then
+    if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && \
+       docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter (GPU metrics)..."
-        dc_up monitoring/dcgm-exporter/deploy/compose/docker-compose.yml
+        dc_up monitoring/dcgm-exporter/docker-compose.yml
         log_success "DCGM exporter started"
     fi
 
@@ -1806,14 +1806,14 @@ start_agent() {
     fi
 
     # Start agent service
-    if [ -f "inference/agent-service/deploy/compose/docker-compose.yml" ]; then
+    if [ -f "inference/agent-service/docker-compose.yml" ]; then
         echo "Starting ACE Agent Service (LangGraph G-R-C workflow)..."
-        docker compose --env-file .env -f inference/agent-service/deploy/compose/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
+        docker compose --env-file .env -f inference/agent-service/docker-compose.yml up -d --force-recreate --build 2>&1 | grep -v "orphan" || true
         wait_for_health "${PLATFORM_PREFIX:-shml}-agent-service" ${AGENT_TIMEOUT:-60} || log_warn "Agent service may still be initializing"
         update_container_mapping
         log_success "Agent service started (accessible at /api/agent - developer+ only)"
     else
-        log_error "Agent service configuration not found at inference/agent-service/deploy/compose/docker-compose.yml"
+        log_error "Agent service configuration not found at inference/agent-service/docker-compose.yml"
         exit 1
     fi
 }
@@ -1903,8 +1903,8 @@ stop_inference() {
     dc_stop inference/coding-model/docker-compose.yml
     dc_stop inference/nemotron/docker-compose.yml
     dc_stop inference/chat-api/docker-compose.yml
-    dc_stop inference/agent-service/deploy/compose/docker-compose.yml
-    dc_stop chat-ui-v2/deploy/compose/docker-compose.yml
+    dc_stop inference/agent-service/docker-compose.yml
+    dc_stop chat-ui-v2/docker-compose.yml
     log_success "Inference services stopped"
 }
 
@@ -1916,16 +1916,16 @@ down_inference() {
     dc_down inference/coding-model/docker-compose.yml
     dc_down inference/nemotron/docker-compose.yml
     dc_down inference/chat-api/docker-compose.yml
-    dc_down inference/agent-service/deploy/compose/docker-compose.yml
-    dc_down chat-ui-v2/deploy/compose/docker-compose.yml
+    dc_down inference/agent-service/docker-compose.yml
+    dc_down chat-ui-v2/docker-compose.yml
     log_success "Inference containers removed"
 }
 
 stop_monitoring() {
     log_info "━━━ Stopping Monitoring Services ━━━"
     dc_stop deploy/compose/docker-compose.monitoring.yml
-    [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && \
-        dc_stop monitoring/dcgm-exporter/deploy/compose/docker-compose.yml
+    [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && \
+        dc_stop monitoring/dcgm-exporter/docker-compose.yml
     [ -f "deploy/compose/docker-compose.logging.yml" ] && \
         dc_stop deploy/compose/docker-compose.logging.yml
     [ -f "deploy/compose/docker-compose.tracing.yml" ] && \
@@ -1936,8 +1936,8 @@ stop_monitoring() {
 down_monitoring() {
     log_info "━━━ Removing Monitoring Containers ━━━"
     dc_down deploy/compose/docker-compose.monitoring.yml
-    [ -f "monitoring/dcgm-exporter/deploy/compose/docker-compose.yml" ] && \
-        dc_down monitoring/dcgm-exporter/deploy/compose/docker-compose.yml
+    [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && \
+        dc_down monitoring/dcgm-exporter/docker-compose.yml
     [ -f "deploy/compose/docker-compose.logging.yml" ] && \
         dc_down deploy/compose/docker-compose.logging.yml
     [ -f "deploy/compose/docker-compose.tracing.yml" ] && \
@@ -1959,13 +1959,13 @@ down_devtools() {
 
 stop_agent() {
     log_info "━━━ Stopping Agent Service ━━━"
-    dc_stop inference/agent-service/deploy/compose/docker-compose.yml
+    dc_stop inference/agent-service/docker-compose.yml
     log_success "Agent service stopped"
 }
 
 down_agent() {
     log_info "━━━ Removing Agent Containers ━━━"
-    dc_down inference/agent-service/deploy/compose/docker-compose.yml
+    dc_down inference/agent-service/docker-compose.yml
     log_success "Agent containers removed"
 }
 
@@ -2175,7 +2175,7 @@ case "${1:-restart}" in
                 ;;
             monitoring|mon)         dc_pull deploy/compose/docker-compose.monitoring.yml ;;
             devtools|dev)           dc_pull deploy/compose/docker-compose.devtools.yml ;;
-            agent|ace)              dc_pull inference/agent-service/deploy/compose/docker-compose.yml ;;
+            agent|ace)              dc_pull inference/agent-service/docker-compose.yml ;;
             "")
                 log_info "Pulling images for all services..."
                 dc_pull deploy/compose/docker-compose.core.yml

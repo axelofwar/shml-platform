@@ -26,6 +26,21 @@ services:
       - "999"
       - --ctx-size
       - "65536"
+      # KV cache quantization (TurboQuant-aligned: arXiv:2504.19874 validates 3.5-bit quality-neutral)
+      # Architecture (verified from GGUF metadata): nemotron_h_moe, 52 total layers.
+      #   Only 6 are hybrid attention layers (at positions 5,12,19,26,33,42); 46 are Mamba2 SSM.
+      #   KV heads per attn layer = 2 (aggressive GQA), head_dim = 128.
+      #
+      # VRAM budget at ctx=65536, 22.8 GB weights → 1,217 MiB headroom on RTX 3090 Ti:
+      #   KV f16 (default): 384 MiB → 633 MiB remaining  (safe, but tight)
+      #   KV q8_0 (applied): 192 MiB → 825 MiB remaining  (+192 MiB headroom vs f16)
+      #   KV q4_0 (optional): 96 MiB → 921 MiB remaining
+      # q8_0 is the sweet spot: saves 192 MiB of VRAM, still quality-neutral per TurboQuant.
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      # To reduce further (still safe): change both to q4_0 (saves 288 MiB vs f16)
       - --port
       - "8000"
       - --host

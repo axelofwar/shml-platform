@@ -142,14 +142,16 @@ class Client:
                 details=response.json() if response.text else None,
             )
         elif response.status_code >= 400:
+            response_data = None
             try:
-                detail = response.json().get("detail", response.text)
+                response_data = response.json()
+                detail = response_data.get("detail", response.text)
             except Exception:
                 detail = response.text
             raise SHMLError(
                 f"API error: {detail}",
                 status_code=response.status_code,
-                details=response.json() if response.text else None,
+                details=response_data if response.text else None,
             )
 
         if response.status_code == 204:  # No content

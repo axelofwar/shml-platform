@@ -108,6 +108,8 @@ CRITICAL_CONTAINERS=(
     "${PLATFORM_PREFIX}-gitlab"
     "fusionauth"
     "${PLATFORM_PREFIX}-alertmanager"
+    "gpu-manager"           # GPU resource management (required for training jobs)
+    "gpu-control-proxy"     # GPU proxy layer
 )
 
 # Standard: tolerate brief downtime
@@ -125,10 +127,29 @@ STANDARD_CONTAINERS=(
     "${PLATFORM_PREFIX}-agent-service"
     "inference-gateway"
     "ray-head"
+    "ray-compute-api"
     "${PLATFORM_PREFIX}-infisical"
     "${PLATFORM_PREFIX}-nessie"
     "${PLATFORM_PREFIX}-loki"
+    "${PLATFORM_PREFIX}-embedding-service"
+    "${PLATFORM_PREFIX}-role-auth"
+    "${PLATFORM_PREFIX}-alertmanager-telegram"
+    "${PLATFORM_PREFIX}-feature-scheduler"
+    "webhook-deployer"
     "dozzle"
+    # Services present in running platform but previously untracked:
+    "mlflow-api"                            # MLflow enhanced API
+    "mlflow-nginx"                          # MLflow reverse proxy
+    "ray-compute-ui"                        # Ray dashboard UI
+    "ray-prometheus"                        # Ray metrics scraper
+    "${PLATFORM_PREFIX}-chat-api"           # Chat backend API
+    "${PLATFORM_PREFIX}-sba-resource-portal" # SBA portal
+    "${PLATFORM_PREFIX}-cadvisor"           # Container metrics exporter
+    "${PLATFORM_PREFIX}-node-exporter"      # Host metrics exporter
+    "dcgm-exporter"                         # GPU metrics exporter
+    "postgres-backup"                       # Scheduled DB backup
+    "${PLATFORM_PREFIX}-otel-collector"     # OpenTelemetry collector
+    "${PLATFORM_PREFIX}-tempo"              # Distributed tracing backend
 )
 
 # Containers with known memory-growth patterns (watch closely)
@@ -209,111 +230,235 @@ audit() {
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] ACTION=${action} TARGET=${target} DETAIL=${detail}" >> "$AUDIT_LOG"
 }
 
-send_telegram() {
-    local msg="$1"
-    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-        curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${msg}" \
-            -d parse_mode=Markdown \
-            > /dev/null 2>&1 || log "WARN: Telegram send failed"
-    fi
+# ---------------------------------------------------------------------------
+# Telegram alert formatting helpers
+# ---------------------------------------------------------------------------
+_sev_icon() {
+    case "${1,,}" in
+        critical) echo "🔴" ;;
+        warning)  echo "🟡" ;;
+        info)     echo "🔵" ;;
+        ok|recovered) echo "✅" ;;
+        *)        echo "⚪" ;;
+    esac
 }
 
+_html_escape() {
+    printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+# Low-level send — JSON body + HTML parse mode (safe with all special chars)
+send_telegram() {
+    local msg="$1"
+    [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]] && return 0
+    local payload
+    payload=$(jq -n --arg chat "${TELEGRAM_CHAT_ID}" --arg text "$msg" \
+        '{chat_id: $chat, text: $text, parse_mode: "HTML"}') || return 0
+    curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        > /dev/null 2>&1 || log "WARN: Telegram send failed"
+}
+
+# Rich structured event card — named params, 5-section layout.
+# Usage: send_alert_card \
+#   --container <name>  --severity <critical|warning|info|ok> \
+#   --event <type>      --problem <text>  --action <text> \
+#   --agent <name>      --outcome <text>  --gitlab <ref>  --learning <text>
+send_alert_card() {
+    local container="" severity="warning" event_type="" problem=""
+    local action="" agent="shml-watchdog" outcome="" gitlab_ref="" learning=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --container) container="$2"; shift 2 ;;
+            --severity)  severity="$2";  shift 2 ;;
+            --event)     event_type="$2"; shift 2 ;;
+            --problem)   problem="$2";   shift 2 ;;
+            --action)    action="$2";    shift 2 ;;
+            --agent)     agent="$2";     shift 2 ;;
+            --outcome)   outcome="$2";   shift 2 ;;
+            --gitlab)    gitlab_ref="$2"; shift 2 ;;
+            --learning)  learning="$2";  shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    local icon ts host sev_upper div
+    icon=$(_sev_icon "$severity")
+    ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+    host=$(hostname -s)
+    sev_upper=$(echo "$severity" | tr '[:lower:]' '[:upper:]')
+    div="──────────────────────────"
+
+    local msg
+    msg="${icon} <b>SHML PLATFORM — ${sev_upper}</b>
+${div}
+<b>📦 Service</b>
+  Container: <code>${container:-platform}</code>
+  Event:     <code>${event_type:-alert}</code>
+  Host:      <code>${host}</code>  ·  ${ts}"
+
+    if [[ -n "$problem" ]]; then
+        msg+="
+${div}
+<b>⚠️ Problem</b>
+  $(_html_escape "${problem}")"
+    fi
+
+    if [[ -n "$action" ]]; then
+        msg+="
+${div}
+<b>🔧 Remedy</b>
+  $(_html_escape "${action}")
+  Agent: <code>${agent}</code>"
+    fi
+
+    if [[ -n "$outcome" ]]; then
+        msg+="
+${div}
+<b>📊 Post-Action State</b>
+  $(_html_escape "${outcome}")"
+    fi
+
+    if [[ -n "$gitlab_ref" || -n "$learning" ]]; then
+        msg+="
+${div}
+<b>📚 Learning</b>"
+        [[ -n "$gitlab_ref" ]] && msg+="
+  GitLab: $(_html_escape "${gitlab_ref}")"
+        [[ -n "$learning" ]] && msg+="
+  $(_html_escape "${learning}")"
+    fi
+
+    send_telegram "$msg"
+}
+
+# Backwards-compat wrapper: formats old 5-arg calls as a clean HTML event card
 send_telegram_event() {
     local title="$1"
     local goal="$2"
     local systems="$3"
     local details="$4"
     local next_step="${5:-Observe next watchdog cycle}"
-    local msg="🚨 *${title}*\nHost: $(hostname -s)\nGoal: ${goal}\nSystems: ${systems}\nTraining GPU: ${TRAINING_GPU} | Display GPU: ${DISPLAY_GPU}\n\n${details}\n\nNext: ${next_step}"
+    local ts host div
+    ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+    host=$(hostname -s)
+    div="──────────────────────────"
+
+    local msg
+    msg="🚨 <b>${title}</b>
+${div}
+<b>📦 Systems:</b> <code>$(_html_escape "${systems}")</code>
+<b>🖥️  Host:</b>    <code>${host}</code>  ·  ${ts}
+${div}
+<b>🎯 Goal</b>
+  $(_html_escape "${goal}")
+${div}
+<b>📋 Details</b>
+  $(_html_escape "${details}")
+${div}
+<b>➡️  Next</b>
+  $(_html_escape "${next_step}")
+<i>GPU: train=${TRAINING_GPU} display=${DISPLAY_GPU} | Agent: shml-watchdog</i>"
     send_telegram "$msg"
 }
 
 # ---------------------------------------------------------------------------
 # GitLab issue creation (idempotent — won't duplicate issues for same alert)
 # ---------------------------------------------------------------------------
-if declare -F resolve_gitlab_api_url >/dev/null 2>&1; then
-    GITLAB_API_URL="${GITLAB_API_URL:-$(resolve_gitlab_api_url)}"
-else
-    # shml-gitlab:8929 is the correct internal Docker hostname/port.
-    # 127.0.0.1:8929 does NOT work from inside the watchdog container.
-    GITLAB_API_URL="${GITLAB_API_URL:-http://shml-gitlab:8929/gitlab/api/v4}"
-fi
+GITLAB_UTIL="${PLATFORM_DIR}/scripts/platform/gitlab_utils.py"
 GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
-GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}}"
+GITLAB_LAST_ISSUE_IID=""
+
+has_gitlab_event_support() {
+    if [[ ! -f "$GITLAB_UTIL" ]]; then
+        return 1
+    fi
+    if [[ -n "${GITLAB_API_TOKEN:-}" || -n "${GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN:-}" ]]; then
+        return 0
+    fi
+    [[ -f "$PLATFORM_DIR/.env" ]] && grep -qE '^GITLAB_(API_TOKEN|AXELOFWAR_PERSONAL_ACCESS_TOKEN)=' "$PLATFORM_DIR/.env"
+}
 
 create_gitlab_issue() {
     # Usage: create_gitlab_issue "title" "description" "label1,label2"
     local title="$1"
     local description="${2:-}"
     local labels="${3:-source::watchdog}"
+    local ts
+    local update_comment
+    local issue_json
 
-    if [[ -z "${GITLAB_API_TOKEN:-}" ]]; then
-        log "WARN: No GITLAB_API_TOKEN — skipping issue creation"
-        return
+    GITLAB_LAST_ISSUE_IID=""
+    if ! has_gitlab_event_support; then
+        log "WARN: No GitLab PAT available — skipping issue creation"
+        return 0
     fi
 
-    # Check for existing open issue with same title (avoid duplicates)
-    local search_encoded
-    search_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$title'))" 2>/dev/null || echo "$title")
-    local existing
-    existing=$(curl -sf --max-time 10 \
-        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues?state=opened&search=${search_encoded}&per_page=5" \
-        2>/dev/null || echo "[]")
-
-    if echo "$existing" | grep -q "\"title\""; then
-        # Issue already open — add a comment instead of creating a duplicate
-        local iid
-        iid=$(echo "$existing" | python3 -c "
-import sys, json
-issues = json.load(sys.stdin)
-for i in issues:
-    if '$(echo "$title" | sed "s/'/\\\\'/g")'.lower() in i['title'].lower():
-        print(i['iid']); break
-" 2>/dev/null || true)
-
-        if [[ -n "$iid" ]]; then
-            local ts
-            ts=$(date -u '+%Y-%m-%d %H:%M UTC')
-            curl -sf --max-time 10 -X POST \
-                -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "{\"body\": \"**Watchdog update** ($ts):\\n\\n$description\"}" \
-                "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}/notes" \
-                > /dev/null 2>&1 || log "WARN: GitLab comment failed on #${iid}"
-            log "GitLab: Commented on existing issue #${iid} — ${title}"
-            return
-        fi
+    if [[ ! -f "$GITLAB_UTIL" ]]; then
+        log "WARN: Missing GitLab utility at ${GITLAB_UTIL} — skipping issue creation"
+        return 0
     fi
 
-    # Create new issue
-    local payload
-    payload=$(python3 -c "
-import json
-print(json.dumps({
-    'title': '''$title''',
-    'description': '''$description''',
-    'labels': '$labels'
-}))
-" 2>/dev/null || echo "{\"title\":\"$title\",\"labels\":\"$labels\"}")
+    ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+    update_comment="**Watchdog update** (${ts}):
 
-    local resp
-    resp=$(curl -sf --max-time 10 -X POST \
-        -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues" \
-        2>/dev/null || echo "")
+${description}"
 
-    if [[ -n "$resp" ]]; then
-        local new_iid
-        new_iid=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('iid','?'))" 2>/dev/null || echo "?")
-        log "GitLab: Created issue #${new_iid} — ${title}"
-    else
+    if ! issue_json=$(GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID}" \
+        python3 "$GITLAB_UTIL" upsert-issue "$title" \
+            --title "$title" \
+            --description "$description" \
+            --labels "$labels" \
+            --comment "$update_comment" \
+            --reopen 2>/dev/null); then
         log "WARN: GitLab issue creation failed for: ${title}"
+        return 0
     fi
+
+    GITLAB_LAST_ISSUE_IID=$(printf '%s' "$issue_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("iid", ""))' 2>/dev/null || true)
+    if [[ -n "$GITLAB_LAST_ISSUE_IID" ]]; then
+        log "GitLab: Upserted issue #${GITLAB_LAST_ISSUE_IID} — ${title}"
+    else
+        log "GitLab: Upserted issue — ${title}"
+    fi
+
+    return 0
+}
+
+close_gitlab_incident() {
+    # Usage: close_gitlab_incident "incident title" "resolution comment"
+    local title="$1"
+    local comment="${2:-Resolved automatically by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')}"
+    local issue_json
+
+    if ! has_gitlab_event_support; then
+        log "WARN: No GitLab PAT available — skipping incident close"
+        return 0
+    fi
+
+    if [[ ! -f "$GITLAB_UTIL" ]]; then
+        log "WARN: Missing GitLab utility at ${GITLAB_UTIL} — skipping incident close"
+        return 0
+    fi
+
+    if ! issue_json=$(GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID}" \
+        python3 "$GITLAB_UTIL" resolve-issue "$title" \
+            --comment "$comment" 2>/dev/null); then
+        log "WARN: GitLab incident close failed for: ${title}"
+        return 0
+    fi
+
+    local resolved
+    resolved=$(printf '%s' "$issue_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("resolved", False))' 2>/dev/null || echo "False")
+    if [[ "$resolved" == "True" ]]; then
+        local iid
+        iid=$(printf '%s' "$issue_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("iid", ""))' 2>/dev/null || true)
+        log "GitLab: Closed incident #${iid} — ${title}"
+    else
+        log "GitLab: No open incident to close for: ${title} (may already be closed)"
+    fi
+
+    return 0
 }
 
 is_excluded() {
@@ -553,7 +698,14 @@ check_training_gpu_safety() {
                 fi
                 if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 1024 )); then
                     log "ALERT: Non-training process ${pname} (PID ${pid}) using ${mem} MiB on training GPU"
-                    send_telegram "⚠️ *GPU Guard*: \`${pname}\` using ${mem} MiB on training GPU ${TRAINING_GPU}"
+                    send_alert_card \
+                        --container "${pname}" \
+                        --severity "warning" \
+                        --event "gpu_guard_intrusion" \
+                        --problem "Non-training process ${pname} (PID ${pid}) is using ${mem} MiB on training GPU ${TRAINING_GPU}. This competes with the active training job." \
+                        --action "Requesting GPU yield from gpu-manager to evict non-training workload" \
+                        --agent "shml-watchdog" \
+                        --outcome "GPU yield request sent. Training job protection active."
                     audit "GPU_INTRUSION" "$pname" "PID=${pid} GPU=${TRAINING_GPU} MEM=${mem}MiB"
                     request_gpu_yield "$pname"
                 fi
@@ -621,15 +773,20 @@ check_memory_leaks() {
                 if (( growth_per_hour > MEMORY_LEAK_THRESHOLD_MB )); then
                     TOTAL_MEMORY_LEAKS=$((TOTAL_MEMORY_LEAKS + 1))
                     log "LEAK: ${container} growing ${growth_per_hour} MB/hr (${prev_mb}→${mem_mb} MB over $((elapsed/60))m)"
-                    send_telegram "🧠 *Memory Leak*: \`${container}\`
-Growth: ${growth_per_hour} MB/hr
-Now: ${mem_mb} MB (was ${prev_mb} MB)
-Window: $((elapsed / 60)) minutes"
+                    send_alert_card \
+                        --container "${container}" \
+                        --severity "warning" \
+                        --event "memory_leak" \
+                        --problem "Memory growing at ${growth_per_hour} MB/hr (${prev_mb} MB → ${mem_mb} MB over $((elapsed / 60))min). Threshold=${MEMORY_LEAK_THRESHOLD_MB} MB/hr." \
+                        --action "Evaluating preemptive restart if usage exceeds 80% of container memory limit" \
+                        --agent "shml-watchdog" \
+                        --outcome "Escalating to memory leak handler. Restart may be issued." \
+                        --gitlab "Issue created — type::bug priority::high source::watchdog"
                     audit "MEMORY_LEAK" "$container" "Growth=${growth_per_hour}MB/hr Now=${mem_mb}MB"
                     create_gitlab_issue \
                         "Memory Leak: ${container}" \
                         "Container \`${container}\` is leaking memory.\n\nGrowth: ${growth_per_hour} MB/hr\nCurrent: ${mem_mb} MB (was ${prev_mb} MB)\nWindow: $((elapsed / 60)) minutes\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
-                        "type::bug,priority::high,source::watchdog,component::infra"
+                        "type::bug,priority::high,status::todo,source::watchdog,component::infra"
                     handle_memory_leak "$container" "$mem_mb" "$growth_per_hour"
                 fi
 
@@ -658,7 +815,14 @@ handle_memory_leak() {
     # Preemptive restart at >80% of limit
     if (( limit_mb > 0 && current_mb * 100 / limit_mb > 80 )); then
         log "PREEMPTIVE: ${container} at ${current_mb}/${limit_mb} MB (${growth_rate} MB/hr)"
-        send_telegram "🔄 *Preemptive Restart*: \`${container}\` at $((current_mb * 100 / limit_mb))% memory"
+        send_alert_card \
+            --container "${container}" \
+            --severity "warning" \
+            --event "preemptive_restart" \
+            --problem "Memory at $((current_mb * 100 / limit_mb))% of limit (${current_mb}/${limit_mb} MB). Growing at ${growth_rate} MB/hr." \
+            --action "Issuing preemptive restart before OOM occurs to preserve service continuity" \
+            --agent "shml-watchdog" \
+            --outcome "Restart in progress. Memory state will be cleared."
         audit "PREEMPTIVE_RESTART" "$container" "Mem=${current_mb}/${limit_mb}MB Growth=${growth_rate}MB/hr"
         restart_container "$container" "memory-leak-preemptive" || true
         return
@@ -697,65 +861,38 @@ check_oom_killed() {
             # ── Training-active + low-priority: accept kill, mark blocked ──────
             if is_low_priority_container "$name" && is_training_active; then
                 log "SKIP: ${name} is low-priority and training is active — OOM is expected, not a bug"
-                send_telegram "⏸️ *OOM (expected)*: \`${name}\` killed by host OOM.
-Training occupies memory. Will restart when training completes."
+                send_alert_card \
+                    --container "${name}" \
+                    --severity "info" \
+                    --event "oom_training_expected" \
+                    --problem "OOM-killed by kernel. Exit: ${status}. Training is occupying host RAM — low-priority container yields to active training job on GPU ${TRAINING_GPU}." \
+                    --action "No restart attempted. Low-priority policy: training jobs take precedence over display/UI containers." \
+                    --agent "shml-watchdog" \
+                    --outcome "Container suspended for training duration. Will auto-recover when training completes." \
+                    --learning "Low-priority OOM policy enforced. GitLab issue updated to status::blocked."
 
-                # Search for existing open OOM issue for this container and update it
-                local search_title="OOM Kill: ${name}"
-                local search_encoded
-                search_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$search_title'))" 2>/dev/null || echo "$search_title")
-                local existing_issues
-                existing_issues=$(curl -sf --max-time 10 \
-                    -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
-                    "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues?state=opened&search=${search_encoded}&per_page=20" \
-                    2>/dev/null || echo "[]")
-
-                local iids
-                iids=$(echo "$existing_issues" | python3 -c "
-import sys, json
-issues = json.load(sys.stdin)
-matches = [str(i['iid']) for i in issues if '${name}'.lower() in i['title'].lower()]
-print(' '.join(matches))
-" 2>/dev/null || true)
-
-                local comment_body
-                comment_body="**Watchdog:** OOM kill at $(date -u '+%Y-%m-%d %H:%M UTC') is **expected** — face detection training is occupying host RAM (~25 GB). \`${name}\` is a low-priority container and will not be restarted until training completes. Labelling as \`status::blocked\`."
-
-                if [[ -n "$iids" ]]; then
-                    for iid in $iids; do
-                        # Update labels to status::blocked, add comment
-                        curl -sf --max-time 10 -X PUT \
-                            -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
-                            -H "Content-Type: application/json" \
-                            -d "{\"labels\": \"status::blocked,type::bug,source::watchdog,component::fiftyone\", \"state_event\": \"close\"}" \
-                            "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}" \
-                            >/dev/null 2>&1 || true
-                        curl -sf --max-time 10 -X POST \
-                            -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN:-}" \
-                            -H "Content-Type: application/json" \
-                            -d "{\"body\": \"${comment_body}\"}" \
-                            "${GITLAB_API_URL}/projects/${GITLAB_PROJECT_ID}/issues/${iid}/notes" \
-                            >/dev/null 2>&1 || true
-                        log "GitLab: Closed+blocked issue #${iid} — training-time OOM for ${name}"
-                    done
-                else
-                    # First occurrence — create a single blocked issue (no restart)
-                    create_gitlab_issue \
-                        "${search_title}" \
-                        "Container \`${name}\` was OOM-killed because face detection training is occupying host RAM (~25 GB).\n\nThis is expected behaviour — \`${name}\` is low-priority and training takes precedence.\n\n**Action:** No restart attempted. Container will be brought back when training finishes.\n\nStatus: ${status}\nTime: $(date -u '+%Y-%m-%d %H:%M UTC')" \
-                        "type::bug,status::blocked,source::watchdog,component::fiftyone,priority::low"
-                fi
+                create_gitlab_issue \
+                    "OOM Kill: ${name}" \
+                    "Container \`${name}\` was OOM-killed because training is occupying host RAM.\n\nThis is expected behaviour while training is active — \`${name}\` is low-priority and will not be restarted until training completes.\n\nAction: No restart attempted. Container will be brought back when training finishes.\n\nStatus: ${status}\nTime: $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                    "type::bug,status::blocked,source::watchdog,component::fiftyone,priority::low"
                 audit "OOM_BLOCKED_TRAINING" "$name" "low-priority container suppressed during active training"
                 continue
             fi
 
             # ── Standard OOM path ───────────────────────────────────────────────
-            send_telegram "💀 *OOM Kill*: \`${name}\`
-Status: ${status}"
+            send_alert_card \
+                --container "${name}" \
+                --severity "critical" \
+                --event "oom_kill" \
+                --problem "Container killed by Linux OOM manager. Exit: ${status}. Host RAM under pressure." \
+                --action "Issuing docker restart (subject to GPU/training policy check)" \
+                --agent "shml-watchdog" \
+                --outcome "Restart in progress. See recovery event for post-restart state." \
+                --gitlab "Issue created — type::bug priority::high source::watchdog"
             create_gitlab_issue \
                 "OOM Kill: ${name}" \
                 "Container \`${name}\` was OOM-killed.\n\nStatus: ${status}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
-                "type::bug,priority::high,source::watchdog,component::infra"
+                "type::bug,priority::high,status::todo,source::watchdog,component::infra"
 
             # Check if container uses training GPU exclusively
             local gpu_info
@@ -763,7 +900,14 @@ Status: ${status}"
 
             if [[ "$gpu_info" == *"${TRAINING_GPU}"* ]] && [[ "$gpu_info" != *"${WATCHDOG_GPU}"* ]]; then
                 log "SKIP: ${name} uses training GPU — NOT restarting"
-                send_telegram "⏸️ *Skipped*: \`${name}\` uses training GPU. Restart after training."
+                send_alert_card \
+                    --container "${name}" \
+                    --severity "warning" \
+                    --event "oom_restart_skipped" \
+                    --problem "OOM-killed container uses exclusive training GPU ${TRAINING_GPU}. Restart suppressed to protect active training job." \
+                    --action "No restart issued. Container will remain stopped until training completes." \
+                    --agent "shml-watchdog" \
+                    --outcome "Container stopped. Training on GPU ${TRAINING_GPU} protected."
                 audit "OOM_SKIP_TRAINING" "$name" "Uses GPU ${TRAINING_GPU}"
             else
                 restart_container "$name" "oom-killed" || true
@@ -824,7 +968,7 @@ check_gitlab_application_health() {
     create_gitlab_issue \
         "GitLab Application Health Check Failed" \
         "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is not responding.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
-        "type::bug,priority::critical,source::watchdog,component::infra"
+        "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
     return 1
 }
 
@@ -968,7 +1112,15 @@ request_agent_resolution() {
 
             if [[ "$nano_requires_escalation" == "false" && "$nano_severity" != "critical" ]]; then
                 # nano handled it — execute recommended action without full agent
-                send_telegram "⚡ *Nano Diagnosis* [${issue_type}]: ${nano_action:-see audit log}"
+                send_alert_card \
+                    --container "${containers_affected}" \
+                    --severity "${nano_severity}" \
+                    --event "nano_diagnosis" \
+                    --problem "Cross-service issue detected: ${issue_type}" \
+                    --action "${nano_action:-See audit log for nano-directed resolution}" \
+                    --agent "shl-nano (T8.5 fast domain model — GPU ${WATCHDOG_GPU}, sub-2s inference)" \
+                    --outcome "Resolved by shl-nano without full agent escalation. Severity: ${nano_severity}." \
+                    --learning "shl-nano decision logged to audit trail. Pattern contributes to next T8 training cycle."
                 if [[ -n "$nano_restart" ]]; then
                     log "NANO: Restart order: ${nano_restart}"
                     for container in $nano_restart; do
@@ -1029,9 +1181,15 @@ Respond: {\"diagnosis\": \"...\", \"root_cause\": \"...\", \"restart_order\": [.
 
     if [[ -n "$restart_order" ]]; then
         log "AGENT: Restart order: ${restart_order}"
-        send_telegram "🤖 *Agent Diagnosis*: ${issue_type}
-Order: \`${restart_order}\`
-Executing..."
+        send_alert_card \
+            --container "${containers_affected}" \
+            --severity "warning" \
+            --event "agent_resolution" \
+            --problem "Cascading failure: ${issue_type}" \
+            --action "Agent-directed restart sequence: ${restart_order}" \
+            --agent "shml-agent-service (ACE full orchestration — cross-service dependency analysis)" \
+            --outcome "Executing agent restart sequence. Services brought up in dependency order." \
+            --learning "Agent diagnosis and restart order logged. Cross-service dependency pattern recorded."
         audit "AGENT_RESTART_ORDER" "$issue_type" "Order: ${restart_order}"
 
         for container in $restart_order; do
@@ -1053,7 +1211,7 @@ detect_cascading_failure() {
     local count
     count=$(echo "$unhealthy_list" | wc -w)
 
-    if (( count >= 3 )); then
+    if (( count >= 2 )); then  # #531: lowered from 3→2 for faster autonomous escalation
         TOTAL_AGENT_ESCALATIONS=$((TOTAL_AGENT_ESCALATIONS + 1))
         log "CASCADE: ${count} containers unhealthy — requesting agent analysis"
         request_agent_resolution \
@@ -1167,7 +1325,8 @@ restart_container() {
 
     if is_training_sensitive_container "$container" && is_training_active; then
         log "PROTECT: Deferring restart of ${container} (${reason}) — training activity detected on GPU ${TRAINING_GPU}"
-        send_telegram "🛡️ *Training Protected*: Deferred \`${container}\` restart (${reason}) while training is active"
+        send_telegram "🛡️ <b>Training Protected</b>: Deferred restart of <code>${container}</code> (reason: ${reason}).
+Training active on GPU ${TRAINING_GPU}. Restart will be retried when training completes."
         audit "RESTART_DEFER_TRAINING" "$container" "Reason=${reason} GPU=${TRAINING_GPU}"
         return 1
     fi
@@ -1181,7 +1340,8 @@ restart_container() {
         training_active=$(nvidia-smi --id="${TRAINING_GPU}" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l || echo "0")
         if (( training_active > 0 )); then
             log "PROTECT: Skipping restart of ${container} — training active on GPU ${TRAINING_GPU}"
-            send_telegram "🛡️ *Training Protected*: Skipped \`${container}\` restart (GPU ${TRAINING_GPU} busy)"
+            send_telegram "🛡️ <b>Training Protected</b>: Restart of <code>${container}</code> suppressed.
+GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption."
             audit "RESTART_SKIP_TRAINING" "$container" "Training active on GPU ${TRAINING_GPU}"
             return 1
         fi
@@ -1198,26 +1358,41 @@ restart_container() {
             log "SKIP THROTTLE ISSUE: ${container} is low-priority and training is active"
             return 1
         fi
-        send_telegram_event \
-            "Restart throttle reached" \
-            "Stop restart loops and preserve host stability" \
-            "${container}, watchdog" \
-            "${container} hit ${count}/${MAX_RESTARTS} restarts in the last hour. Cooldown=${COOLDOWN_SECONDS}s" \
-            "Hold further restarts until cooldown expires or root cause is fixed"
+        send_alert_card \
+            --container "${container}" \
+            --severity "critical" \
+            --event "restart_throttle" \
+            --problem "${container} has been restarted ${count}/${MAX_RESTARTS} times this hour. Automated cooldown of ${COOLDOWN_SECONDS}s engaged to prevent a restart loop." \
+            --action "No further automated restarts until cooldown expires. GitLab issue created for manual review." \
+            --agent "shml-watchdog" \
+            --outcome "Container remains in current failing state. Manual intervention required." \
+            --gitlab "Issue created — type::bug priority::critical source::watchdog" \
+            --learning "Repeated-restart pattern recorded in audit log. Review root cause and clear restart counter before next attempt."
         create_gitlab_issue \
             "Container Throttled: ${container}" \
             "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
-            "type::bug,priority::critical,source::watchdog,component::infra"
+            "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
         return 1
     fi
 
+    # #531: LLM diagnosis before the final restart attempt (gives agent context before we exhaust retries)
+    if (( count + 1 >= MAX_RESTARTS )); then
+        log "DIAGNOSE: ${container} on final restart attempt — requesting LLM root-cause analysis"
+        request_agent_resolution \
+            "pre_final_restart" \
+            "${container} is about to receive its final automated restart (attempt $((count+1))/${MAX_RESTARTS}). Reason: ${reason}. Perform root-cause analysis and recommend fix before restart loop exhausts." \
+            "$container" || log "WARN: LLM diagnosis unavailable — proceeding with restart"
+    fi
+
     log "REMEDIATE: Restarting ${container} (${reason}, attempt $((count+1))/${MAX_RESTARTS})"
-    send_telegram_event \
-        "Controlled container restart" \
-        "Recover the platform without interrupting face-model training" \
-        "${container}, watchdog, docker" \
-        "Reason=${reason}. Attempt $((count+1))/${MAX_RESTARTS}" \
-        "Watchdog will validate health after restart"
+    send_alert_card \
+        --container "${container}" \
+        --severity "warning" \
+        --event "controlled_restart" \
+        --problem "Container requires restart. Reason: ${reason}." \
+        --action "docker restart --timeout 30 (attempt $((count+1))/${MAX_RESTARTS} — max ${MAX_RESTARTS}/hr)" \
+        --agent "shml-watchdog" \
+        --outcome "Restart issued. Health validation in 15s."
     audit "RESTART" "$container" "Reason=${reason} Attempt=$((count+1))/${MAX_RESTARTS}"
 
     if docker restart "$container" --timeout 30 2>/dev/null; then
@@ -1228,30 +1403,48 @@ restart_container() {
 
         if check_container_health "$container" > /dev/null 2>&1; then
             log "OK: ${container} recovered"
-            send_telegram_event \
-                "Container recovered" \
-                "Confirm the service is healthy again" \
-                "${container}, watchdog" \
-                "${container} passed post-restart health validation" \
-                "Continue monitoring for recurrence"
+            send_alert_card \
+                --container "${container}" \
+                --severity "ok" \
+                --event "container_recovered" \
+                --problem "Container was restarted due to: ${reason}" \
+                --action "docker restart --timeout 30 (attempt $((count+1))/${MAX_RESTARTS})" \
+                --agent "shml-watchdog" \
+                --outcome "✅ Passed post-restart health check. Container is running and healthy." \
+                --learning "Restart resolved the issue. Monitoring at ${CHECK_INTERVAL}s intervals. Pattern logged to audit trail."
             audit "RECOVERED" "$container" "Healthy after restart"
+            local _recovery_comment="Container ${container} recovered after restart (reason: ${reason}). Passed post-restart health check at $(date -u '+%Y-%m-%d %H:%M UTC')."
+            case "$reason" in
+                oom-killed)
+                    close_gitlab_incident "OOM Kill: ${container}" "${_recovery_comment}" ;;
+                memory-leak-preemptive)
+                    close_gitlab_incident "Memory Leak: ${container}" "${_recovery_comment}" ;;
+                *)
+                    # Generic unhealthy / http-probe / gitlab-app-health restarts
+                    close_gitlab_incident "Container Unhealthy: ${container}" "${_recovery_comment}"
+                    close_gitlab_incident "GitLab Application Health Check Failed" "${_recovery_comment}" ;;
+            esac
         else
             log "WARN: ${container} still unhealthy"
             audit "STILL_UNHEALTHY" "$container" "Post-restart failed"
         fi
     else
         log "ERROR: Failed to restart ${container}"
-        send_telegram_event \
-            "Container restart failed" \
-            "Escalate before the failure propagates" \
-            "${container}, docker, watchdog" \
-            "Docker restart failed for ${container}. Reason=${reason}" \
-            "Manual investigation required before watchdog retries again"
+        send_alert_card \
+            --container "${container}" \
+            --severity "critical" \
+            --event "restart_failed" \
+            --problem "docker restart --timeout 30 returned non-zero exit code. Reason: ${reason}. Container is unresponsive to standard restart." \
+            --action "Automated restart attempted and failed. Automated remediation exhausted for this cycle." \
+            --agent "shml-watchdog" \
+            --outcome "❌ Container in unknown/failed state. Manual intervention required." \
+            --gitlab "Issue created — type::bug priority::critical source::watchdog" \
+            --learning "Restart failure logged to audit trail. Next watchdog cycle will re-assess container state."
         audit "RESTART_FAILED" "$container" "Docker restart failed"
         create_gitlab_issue \
             "Restart Failed: ${container}" \
             "Docker restart command failed for \`${container}\`.\nReason: ${reason}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
-            "type::bug,priority::critical,source::watchdog,component::infra"
+            "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
     fi
 }
 
@@ -1313,7 +1506,8 @@ check_control() {
                 if (( IS_PAUSED == 0 )); then
                     IS_PAUSED=1
                     log "CONTROL: Watchdog PAUSED by admin"
-                    send_telegram "⏸️ *Admin*: Watchdog paused — monitoring continues, no remediation"
+                    send_telegram "⏸️ <b>Watchdog Paused</b> — monitoring continues but auto-remediation is suspended.
+<i>Trigger: admin control file  ·  $(date -u '+%H:%M UTC')</i>"
                     audit "ADMIN_PAUSE" "watchdog" "Paused by admin"
                 fi
                 ;;
@@ -1321,13 +1515,15 @@ check_control() {
                 IS_PAUSED=0
                 rm -f "$CONTROL_FILE"
                 log "CONTROL: Watchdog RESUMED by admin"
-                send_telegram "▶️ *Admin*: Watchdog resumed — auto-remediation active"
+                send_telegram "▶️ <b>Watchdog Resumed</b> — auto-remediation is active.
+<i>$(date -u '+%H:%M UTC')</i>"
                 audit "ADMIN_RESUME" "watchdog" "Resumed by admin"
                 ;;
             stop-all)
                 IS_PAUSED=1
                 log "CONTROL: All interventions STOPPED by admin"
-                send_telegram "🛑 *Admin*: All interventions stopped"
+                send_telegram "🛑 <b>All Interventions Stopped</b> — watchdog paused by admin control.
+<i>$(date -u '+%H:%M UTC')</i>"
                 audit "ADMIN_STOP_ALL" "watchdog" "All interventions stopped"
                 echo "pause" > "$CONTROL_FILE"
                 ;;
@@ -1358,12 +1554,15 @@ log "  Memory-watched: ${#MEMORY_WATCH_CONTAINERS[@]}"
 log "  Excluded: ${EXCLUDED[*]:-none}"
 log "============================================="
 
-send_telegram_event \
-    "Watchdog started" \
-    "Protect the host UI while keeping face-model training on GPU ${TRAINING_GPU} alive" \
-    "watchdog, docker, GPU monitoring, host pressure guard" \
-    "Monitoring ${#CRITICAL_CONTAINERS[@]} critical + ${#STANDARD_CONTAINERS[@]} standard containers. Cooldown=${COOLDOWN_SECONDS}s. Host RAM guard=${HOST_MEMORY_HIGH_WATERMARK_PCT}%" \
-    "Resource snapshots will be written to ${RESOURCE_LOG} and remediation starts immediately"
+send_alert_card \
+    --container "shml-watchdog" \
+    --severity "info" \
+    --event "watchdog_started" \
+    --problem "Platform watchdog initialized after restart or first launch." \
+    --action "Loaded ${#CRITICAL_CONTAINERS[@]} critical + ${#STANDARD_CONTAINERS[@]} standard containers. Health monitoring starting at ${CHECK_INTERVAL}s intervals." \
+    --agent "shml-watchdog v2 (self-healing, GPU-aware, agent-integrated)" \
+    --outcome "✅ Monitoring active. Auto-remediation enabled. Swap guard: ${HOST_SWAP_HIGH_WATERMARK_PCT}%. RAM guard: ${HOST_MEMORY_HIGH_WATERMARK_PCT}%." \
+    --learning "Excluded: ${EXCLUDED[*]:-none} | Low-priority: ${LOW_PRIORITY_CONTAINERS} | Protected: ${PROTECTED_CONTAINERS:-none}"
 
 # Verify docker socket access
 if ! docker ps -q >/dev/null 2>&1; then
@@ -1442,6 +1641,14 @@ while true; do
     # --- Memory leak detection (every 10 cycles ≈ 10 min) ---
     if (( cycle % 10 == 0 )); then
         check_memory_leaks || true
+        # #68: psutil-based host process memory guard (VSCode, Python/training)
+        if command -v python3 &>/dev/null; then
+            python3 "${SCRIPT_DIR}/host_process_guard.py" \
+                --state-dir "${STATE_DIR}/host-process-guard" \
+                --threshold-mb "${HOST_PROCESS_LEAK_THRESHOLD_MB:-500}" \
+                --baseline-secs "${HOST_PROCESS_BASELINE_SECS:-1800}" \
+                2>/dev/null || true
+        fi
     fi
 
     # --- OOM detection (every 5 cycles) ---
@@ -1476,15 +1683,6 @@ while true; do
     # --- Full state discovery (every 30 cycles ≈ 30 min) ---
     if (( cycle % 30 == 0 )); then
         discover_platform_state || true
-    fi
-
-    # --- Hourly status report (every 60 cycles) ---
-    if (( cycle % 60 == 0 )); then
-        local_total=$(( ${#CRITICAL_CONTAINERS[@]} + ${#STANDARD_CONTAINERS[@]} ))
-        log "STATUS: Cycle ${cycle} — ${local_total} monitored, ${unhealthy_count} unhealthy, ${action_count} actions"
-        send_telegram "📋 *Hourly Status*
-Monitored: ${local_total} | Unhealthy: ${unhealthy_count} | Actions: ${action_count}
-GPU ${TRAINING_GPU}: protected | Cycle: ${cycle}"
     fi
 
     # --- Track totals & push metrics ---

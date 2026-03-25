@@ -12,8 +12,9 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from sqlalchemy import Column, String, Text, DateTime, JSON, Float, Integer, ARRAY
+from sqlalchemy import Column, String, Text, DateTime, JSON, Float, Integer, ARRAY, text
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 from .database import Base
 import logging
 
@@ -141,9 +142,9 @@ class PlaybookBullet(Base):
     harmful_count = Column(Integer, default=0)
     relevance_score = Column(Float, default=0.0)
 
-    # Rubric scores and embedding stored as JSON
+    # Rubric scores stored as JSONB; embedding stored as pgvector for ANN queries
     rubric_scores = Column(JSONB)
-    embedding = Column(JSONB)  # Store as list for PostgreSQL compatibility
+    embedding = Column(Vector(384))  # pgvector HNSW index (see Alembic migration)
 
     def to_context_bullet(self) -> ContextBullet:
         """Convert to ContextBullet dataclass."""
@@ -536,7 +537,7 @@ async def save_playbook_to_db(db_session, playbook: AgentPlaybook):
 
 async def load_playbook_from_db(db_session, user_id: str) -> AgentPlaybook:
     """Load playbook from PostgreSQL."""
-    from sqlalchemy import select, text
+    from sqlalchemy import select
 
     playbook = AgentPlaybook(user_id=user_id)
 
@@ -557,3 +558,48 @@ async def load_playbook_from_db(db_session, user_id: str) -> AgentPlaybook:
     )
 
     return playbook
+
+
+async def retrieve_ann_from_db(
+    db_session,
+    user_id: str,
+    query_embedding: "np.ndarray",
+    top_k: int = 20,
+    category: Optional[str] = None,
+) -> List["ContextBullet"]:
+    """ANN retrieval using pgvector HNSW <=> cosine-distance operator.
+
+    Replaces the O(n) in-memory numpy cosine scan for large playbooks.
+    Requires the HNSW index created by the Alembic migration:
+        CREATE INDEX ON playbook_bullets USING hnsw (embedding vector_cosine_ops)
+
+    Args:
+        db_session: Async SQLAlchemy session
+        user_id: Filter bullets to this user
+        query_embedding: 384-dim float32 vector from SentenceTransformer
+        top_k: Number of nearest neighbours to return
+        category: Optional category filter
+
+    Returns:
+        List of ContextBullet ordered by cosine similarity (closest first)
+    """
+    from sqlalchemy import select
+
+    vec_literal = query_embedding.tolist()
+
+    stmt = (
+        select(PlaybookBullet)
+        .where(PlaybookBullet.user_id == user_id)
+    )
+    if category:
+        stmt = stmt.where(PlaybookBullet.category == category)
+
+    # pgvector cosine-distance operator <=> (lower = more similar)
+    stmt = stmt.order_by(
+        PlaybookBullet.embedding.cosine_distance(vec_literal)
+    ).limit(top_k)
+
+    result = await db_session.execute(stmt)
+    db_bullets = result.scalars().all()
+    return [b.to_context_bullet() for b in db_bullets]
+

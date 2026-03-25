@@ -17,7 +17,11 @@ python-multipart==0.0.12
 # Database
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.10
+asyncpg>=0.29.0
 alembic==1.12.1
+
+# GraphQL
+strawberry-graphql[fastapi]>=0.234.0
 
 # OAuth & Auth
 python-jose[cryptography]==3.3.0

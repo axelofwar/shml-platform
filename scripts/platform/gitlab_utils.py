@@ -5,7 +5,6 @@ gitlab_utils.py — Shared GitLab CE API helpers for SHML-Platform scripts.
 Used by:
   • watchdog.sh          (via `python3 gitlab_utils.py create-issue ...`)
   • scan_repo_state.sh   (via `python3 gitlab_utils.py upsert-issue ...`)
-  • kanban_updater.py    (import gitlab_utils)
   • autoresearch scripts (via CLI or import)
 
 Environment:
@@ -25,6 +24,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 try:
@@ -37,14 +37,52 @@ except ModuleNotFoundError:  # pragma: no cover - script execution fallback
 
 _DEFAULT_BASE_URL = "http://shml-gitlab:8929/gitlab"
 _DEFAULT_PROJECT_ID = "2"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ENV_CANDIDATES = (
+    _REPO_ROOT / ".env",
+    _REPO_ROOT / "ray_compute" / ".env",
+)
+_ENV_KEYS = {
+    "GITLAB_API_TOKEN",
+    "GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN",
+    "GITLAB_CICD_ACCESS_TOKEN",
+    "GITLAB_BASE_URL",
+    "GITLAB_PROJECT_ID",
+}
+_ENV_FILE_CACHE: dict[str, str] | None = None
+
+
+def _load_env_file_cache() -> dict[str, str]:
+    global _ENV_FILE_CACHE
+    if _ENV_FILE_CACHE is not None:
+        return _ENV_FILE_CACHE
+
+    values: dict[str, str] = {}
+    for env_path in _ENV_CANDIDATES:
+        if not env_path.is_file():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key not in _ENV_KEYS or key in values:
+                continue
+            values[key] = value.strip().strip('"').strip("'")
+
+    _ENV_FILE_CACHE = values
+    return values
 
 
 def _env(key: str, default: str = "") -> str:
-    return os.environ.get(key, default)
+    if key in os.environ:
+        return os.environ[key]
+    return _load_env_file_cache().get(key, default)
 
 
 def _base_url() -> str:
-    return resolve_gitlab_base_url().rstrip("/")
+    return (_env("GITLAB_BASE_URL") or resolve_gitlab_base_url()).rstrip("/")
 
 
 def _project_id() -> str:
@@ -52,10 +90,18 @@ def _project_id() -> str:
 
 
 def _token() -> str:
-    token = _env("GITLAB_API_TOKEN") or _env("GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN")
+    # Preference order:
+    #   1. GITLAB_API_TOKEN          — generic, set to root PAT (see .env comment for regen)
+    #   2. GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN — legacy, may be expired
+    #   3. GITLAB_CICD_ACCESS_TOKEN  — group bot, read-only, limited scope (last resort)
+    token = (
+        _env("GITLAB_API_TOKEN")
+        or _env("GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN")
+        or _env("GITLAB_CICD_ACCESS_TOKEN")
+    )
     if not token:
         raise RuntimeError(
-            "Set GITLAB_API_TOKEN or GITLAB_AXELOFWAR_PERSONAL_ACCESS_TOKEN"
+            "Set GITLAB_API_TOKEN in .env (regenerate via gitlab-rails runner — see .env comment)"
         )
     return token
 
@@ -234,6 +280,7 @@ def upsert_issue(
     labels: list[str] | None = None,
     comment: str | None = None,
     close_if_resolved: bool = False,
+    reopen_closed: bool = False,
     milestone_id: int | None = None,
 ) -> Issue:
     """
@@ -244,13 +291,16 @@ def upsert_issue(
     Useful for watchdog/scan scripts that detect the same condition repeatedly
     and want to avoid duplicate issues.
     """
-    existing = list_issues(search=search_title, state="opened")
+    existing = list_issues(search=search_title, state="all", per_page=100)
     # Exact substring match (GitLab search is fuzzy)
     match = None
+    closed_match = None
     for issue in existing:
         if search_title.lower() in issue.title.lower():
-            match = issue
-            break
+            if issue.state == "opened" and match is None:
+                match = issue
+            elif issue.state == "closed" and closed_match is None:
+                closed_match = issue
 
     if match:
         if comment:
@@ -258,8 +308,25 @@ def upsert_issue(
         if labels:
             update_issue_labels(match.iid, labels)
         if close_if_resolved:
+            # Stamp status::done before closing so the board column is correct
+            current_labels = [lbl for lbl in match.labels if not lbl.startswith("status::")]
+            current_labels.append("status::done")
+            update_issue_labels(match.iid, current_labels)
             return close_issue(match.iid)
         return match
+
+    if reopen_closed and closed_match:
+        reopened = update_issue(
+            closed_match.iid,
+            title=title,
+            description=description or None,
+            labels=labels,
+            state_event="reopen",
+            milestone_id=milestone_id,
+        )
+        if comment:
+            add_issue_comment(reopened.iid, comment)
+        return reopened
 
     # Create new
     return create_issue(
@@ -268,6 +335,107 @@ def upsert_issue(
         labels=labels,
         milestone_id=milestone_id,
     )
+
+
+def resolve_issue(
+    search_title: str,
+    *,
+    comment: str | None = None,
+    extra_labels: list[str] | None = None,
+) -> Issue | None:
+    """
+    Mark an open incident as resolved: set status::done, add an optional
+    comment, then close the issue.
+
+    Returns the closed Issue on success, or None if no open match is found.
+    This is the counterpart to upsert_issue for the recovery / resolution path.
+    """
+    existing = list_issues(search=search_title, state="opened", per_page=100)
+    match = None
+    for issue in existing:
+        if search_title.lower() in issue.title.lower():
+            match = issue
+            break
+
+    if match is None:
+        return None  # No open incident to close — that's fine
+
+    # Strip all status:: labels and apply status::done
+    new_labels = [lbl for lbl in match.labels if not lbl.startswith("status::")]
+    new_labels.append("status::done")
+    if extra_labels:
+        new_labels.extend(extra_labels)
+    update_issue_labels(match.iid, new_labels)
+
+    if comment:
+        add_issue_comment(match.iid, comment)
+
+    return close_issue(match.iid)
+
+
+def sync_issue(
+    search_title: str,
+    *,
+    title: str | None = None,
+    description: str = "",
+    labels: list[str] | None = None,
+    comment: str | None = None,
+    set_status: str | None = None,
+    reopen_closed: bool = False,
+) -> Issue:
+    """Find an issue by title and update it while preserving existing non-status labels."""
+    existing = list_issues(search=search_title, state="all", per_page=100)
+    match = None
+    closed_match = None
+    for issue in existing:
+        if search_title.lower() in issue.title.lower():
+            if issue.state == "opened" and match is None:
+                match = issue
+            elif issue.state == "closed" and closed_match is None:
+                closed_match = issue
+
+    target = match
+    state_event = None
+    if target is None and reopen_closed and closed_match is not None:
+        target = closed_match
+        state_event = "reopen"
+
+    if target is not None:
+        merged_labels = set(target.labels)
+        if labels:
+            merged_labels.update(labels)
+        if set_status:
+            merged_labels = {label for label in merged_labels if not label.startswith("status::")}
+            merged_labels.add(set_status)
+
+        update_kwargs: dict[str, Any] = {}
+        if title is not None:
+            update_kwargs["title"] = title
+        if description:
+            update_kwargs["description"] = description
+        if labels or set_status:
+            update_kwargs["labels"] = sorted(merged_labels)
+        if state_event is not None:
+            update_kwargs["state_event"] = state_event
+
+        updated = update_issue(target.iid, **update_kwargs) if update_kwargs else target
+        if comment:
+            add_issue_comment(updated.iid, comment)
+        return get_issue(updated.iid)
+
+    create_labels = set(labels or [])
+    if set_status:
+        create_labels = {label for label in create_labels if not label.startswith("status::")}
+        create_labels.add(set_status)
+
+    created = create_issue(
+        title or search_title,
+        description=description,
+        labels=sorted(create_labels) or None,
+    )
+    if comment:
+        add_issue_comment(created.iid, comment)
+    return created
 
 
 # ── Label helpers ────────────────────────────────────────────────────────────
@@ -321,6 +489,53 @@ def ensure_milestone(title: str, *, description: str = "") -> dict:
     if description:
         body["description"] = description
     return _api("POST", f"/projects/{pid}/milestones", data=body)
+
+
+# ── Board helpers ────────────────────────────────────────────────────────────
+
+
+def list_boards() -> list[dict]:
+    """List all issue boards for the project."""
+    pid = _project_id()
+    return _api("GET", f"/projects/{pid}/boards")
+
+
+def ensure_board(name: str = "Development") -> dict:
+    """Create an issue board if it doesn't exist."""
+    for board in list_boards():
+        board_name = board.get("name") or board.get("title") or ""
+        if board_name.lower() == name.lower():
+            return board
+
+    pid = _project_id()
+    return _api("POST", f"/projects/{pid}/boards", data={"name": name})
+
+
+def list_board_lists(board_id: int) -> list[dict]:
+    """List all label lists on a board."""
+    pid = _project_id()
+    return _api("GET", f"/projects/{pid}/boards/{board_id}/lists")
+
+
+def ensure_board_list(board_id: int, label_name: str) -> dict:
+    """Create a label-backed board list if it doesn't already exist."""
+    existing_lists = list_board_lists(board_id)
+    for board_list in existing_lists:
+        label = board_list.get("label") or {}
+        if label.get("name", "").lower() == label_name.lower():
+            return board_list
+
+    label_map = {lab["name"]: lab for lab in list_labels()}
+    label = label_map.get(label_name)
+    if label is None:
+        raise RuntimeError(f"Label not found for board list: {label_name}")
+
+    pid = _project_id()
+    return _api(
+        "POST",
+        f"/projects/{pid}/boards/{board_id}/lists",
+        data={"label_id": label["id"]},
+    )
 
 
 # ── Pipeline helpers ─────────────────────────────────────────────────────────
@@ -402,6 +617,51 @@ def register_project_webhook(
 # ── CLI interface ────────────────────────────────────────────────────────────
 
 
+def _render_issue_description(
+    *,
+    template: str,
+    summary: str,
+    outcome: str,
+    scope: str,
+    acceptance: list[str],
+    dependencies: str,
+    observability: str,
+    risks: str,
+    rollback: str,
+    extra_description: str,
+) -> str:
+    """Render a structured issue body for GitLab CE without premium custom fields."""
+    header_map = {
+        "bug": "## Problem",
+        "task": "## Task",
+        "improvement": "## Improvement",
+    }
+    lines = [header_map.get(template, "## Summary")]
+    lines.append(summary or "TBD")
+
+    if outcome:
+        lines.extend(["", "## Outcome", outcome])
+    if scope:
+        lines.extend(["", "## Scope", scope])
+    if acceptance:
+        lines.append("")
+        lines.append("## Acceptance Criteria")
+        for item in acceptance:
+            lines.append(f"- [ ] {item}")
+    if dependencies:
+        lines.extend(["", "## Dependencies", dependencies])
+    if observability:
+        lines.extend(["", "## Observability", observability])
+    if risks:
+        lines.extend(["", "## Risks", risks])
+    if rollback:
+        lines.extend(["", "## Rollback", rollback])
+    if extra_description:
+        lines.extend(["", "## Notes", extra_description])
+
+    return "\n".join(lines).strip()
+
+
 def _cli_create_issue(args: list[str]) -> int:
     """CLI: create-issue <title> [--labels l1,l2] [--description text]"""
     import argparse
@@ -411,14 +671,44 @@ def _cli_create_issue(args: list[str]) -> int:
     parser.add_argument("--labels", default="", help="Comma-separated labels")
     parser.add_argument("--description", default="", help="Issue body (markdown)")
     parser.add_argument("--confidential", action="store_true")
+    parser.add_argument("--milestone-title", default=None)
+    parser.add_argument("--template", choices=["bug", "task", "improvement"], default=None)
+    parser.add_argument("--summary", default="")
+    parser.add_argument("--outcome", default="")
+    parser.add_argument("--scope", default="")
+    parser.add_argument("--acceptance", action="append", default=[])
+    parser.add_argument("--dependencies", default="")
+    parser.add_argument("--observability", default="")
+    parser.add_argument("--risks", default="")
+    parser.add_argument("--rollback", default="")
     parsed = parser.parse_args(args)
 
     labels = [l.strip() for l in parsed.labels.split(",") if l.strip()] or None
+    milestone_id = None
+    if parsed.milestone_title:
+        milestone_id = ensure_milestone(parsed.milestone_title)["id"]
+
+    description = parsed.description
+    if parsed.template:
+        description = _render_issue_description(
+            template=parsed.template,
+            summary=parsed.summary,
+            outcome=parsed.outcome,
+            scope=parsed.scope,
+            acceptance=parsed.acceptance,
+            dependencies=parsed.dependencies,
+            observability=parsed.observability,
+            risks=parsed.risks,
+            rollback=parsed.rollback,
+            extra_description=parsed.description,
+        )
+
     issue = create_issue(
         parsed.title,
-        description=parsed.description,
+        description=description,
         labels=labels,
         confidential=parsed.confidential,
+        milestone_id=milestone_id,
     )
     print(json.dumps({"iid": issue.iid, "title": issue.title, "url": issue.web_url}))
     return 0
@@ -435,6 +725,7 @@ def _cli_upsert_issue(args: list[str]) -> int:
     parser.add_argument("--description", default="", help="Issue body for new issue")
     parser.add_argument("--comment", default=None, help="Comment to add if issue exists")
     parser.add_argument("--close", action="store_true", help="Close if found")
+    parser.add_argument("--reopen", action="store_true", help="Reopen a matching closed issue instead of creating a new one")
     parsed = parser.parse_args(args)
 
     labels = [l.strip() for l in parsed.labels.split(",") if l.strip()] or None
@@ -445,8 +736,56 @@ def _cli_upsert_issue(args: list[str]) -> int:
         labels=labels,
         comment=parsed.comment,
         close_if_resolved=parsed.close,
+        reopen_closed=parsed.reopen,
     )
     print(json.dumps({"iid": issue.iid, "title": issue.title, "state": issue.state, "url": issue.web_url}))
+    return 0
+
+
+def _cli_resolve_issue(args: list[str]) -> int:
+    """CLI: resolve-issue <search_title> [--comment text] [--labels l1,l2]"""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="gitlab_utils resolve-issue")
+    parser.add_argument("search_title", help="Title substring of the incident to close")
+    parser.add_argument("--comment", default=None, help="Resolution comment to add")
+    parser.add_argument("--labels", default="", help="Extra labels to add (comma-separated)")
+    parsed = parser.parse_args(args)
+
+    extra_labels = [l.strip() for l in parsed.labels.split(",") if l.strip()] or None
+    issue = resolve_issue(parsed.search_title, comment=parsed.comment, extra_labels=extra_labels)
+    if issue is None:
+        print(json.dumps({"resolved": False, "reason": "no open issue found"}))
+    else:
+        print(json.dumps({"resolved": True, "iid": issue.iid, "title": issue.title, "url": issue.web_url}))
+    return 0
+
+
+def _cli_sync_issue(args: list[str]) -> int:
+    """CLI: sync-issue <search_title> [--comment text] [--status s] [--labels l1,l2]"""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="gitlab_utils sync-issue")
+    parser.add_argument("search_title", help="Title substring to search")
+    parser.add_argument("--title", default=None, help="Full title for new issue or rename")
+    parser.add_argument("--labels", default="", help="Comma-separated labels to add/preserve")
+    parser.add_argument("--description", default="", help="Issue body for new issue or description refresh")
+    parser.add_argument("--comment", default=None, help="Comment to append")
+    parser.add_argument("--status", default=None, help="Set status label without clobbering other labels")
+    parser.add_argument("--reopen", action="store_true", help="Reopen a matching closed issue instead of creating a new one")
+    parsed = parser.parse_args(args)
+
+    labels = [l.strip() for l in parsed.labels.split(",") if l.strip()] or None
+    issue = sync_issue(
+        parsed.search_title,
+        title=parsed.title,
+        description=parsed.description,
+        labels=labels,
+        comment=parsed.comment,
+        set_status=parsed.status,
+        reopen_closed=parsed.reopen,
+    )
+    print(json.dumps({"iid": issue.iid, "title": issue.title, "state": issue.state, "labels": issue.labels, "url": issue.web_url}))
     return 0
 
 
@@ -459,6 +798,62 @@ def _cli_add_comment(args: list[str]) -> int:
     body = " ".join(args[1:])
     result = add_issue_comment(iid, body)
     print(json.dumps({"note_id": result.get("id"), "iid": iid}))
+    return 0
+
+
+def _cli_update_issue(args: list[str]) -> int:
+    """CLI: update-issue <iid> [--add-label x] [--remove-label y] [--set-status s]."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="gitlab_utils update-issue")
+    parser.add_argument("iid", type=int, help="Issue IID")
+    parser.add_argument("--title", default=None)
+    parser.add_argument("--description", default=None)
+    parser.add_argument("--add-label", action="append", default=[])
+    parser.add_argument("--remove-label", action="append", default=[])
+    parser.add_argument("--set-status", default=None)
+    parser.add_argument("--state", choices=["close", "reopen"], default=None)
+    parser.add_argument("--milestone-title", default=None)
+    parsed = parser.parse_args(args)
+
+    issue = get_issue(parsed.iid)
+    labels = set(issue.labels)
+
+    for label in parsed.add_label:
+        if label:
+            labels.add(label)
+
+    for label in parsed.remove_label:
+        if label:
+            labels.discard(label)
+
+    if parsed.set_status:
+        labels = {label for label in labels if not label.startswith("status::")}
+        labels.add(parsed.set_status)
+
+    milestone_id = None
+    if parsed.milestone_title:
+        milestone_id = ensure_milestone(parsed.milestone_title)["id"]
+
+    updated = update_issue(
+        parsed.iid,
+        title=parsed.title,
+        description=parsed.description,
+        labels=sorted(labels),
+        state_event=parsed.state,
+        milestone_id=milestone_id,
+    )
+    print(
+        json.dumps(
+            {
+                "iid": updated.iid,
+                "title": updated.title,
+                "state": updated.state,
+                "labels": updated.labels,
+                "url": updated.web_url,
+            }
+        )
+    )
     return 0
 
 
@@ -497,6 +892,10 @@ def _cli_setup_board(args: list[str]) -> int:
         ("priority::low", "#A8D695", "Nice to have"),
         # Status labels
         ("status::blocked", "#7F8C8D", "Blocked by external dependency"),
+        ("status::todo", "#5E6AD2", "Committed for the current planning horizon"),
+        ("status::in-review", "#9C27B0", "Implemented and under review or validation"),
+        ("status::done", "#2EAD4B", "Done in working state, awaiting closure"),
+        ("status::icebox", "#5F6368", "Explicitly deferred until later"),
         ("status::stale", "#808080", "No activity for 7+ days"),
         # Component labels
         ("component::watchdog", "#9400D3", "Self-healing watchdog"),
@@ -511,6 +910,7 @@ def _cli_setup_board(args: list[str]) -> int:
         ("source::scan", "#FF6347", "Auto-created by scan_repo_state"),
         ("source::autoresearch", "#FF6347", "Auto-created by autoresearch"),
         ("source::ci", "#8B4513", "Auto-created by CI pipeline"),
+        ("source::pipeline", "#1E90FF", "Auto-created by training pipeline automation"),
         # Status workflow labels (JIRA-style board columns)
         ("status::backlog", "#808080", "Prioritised but not yet ready to start"),
         ("status::ready", "#00C853", "Ready to start, no blockers"),
@@ -555,6 +955,24 @@ def _cli_setup_board(args: list[str]) -> int:
         ms = ensure_milestone(title, description=desc)
         print(f"  ✓ Milestone: {ms['title']}")
 
+    board = ensure_board("Development")
+    board_name = board.get("name") or board.get("title") or "Development"
+    print(f"  ✓ Board: {board_name}")
+
+    workflow_lists = [
+        "status::backlog",
+        "status::todo",
+        "status::ready",
+        "status::in-progress",
+        "status::in-review",
+        "status::blocked",
+        "status::icebox",
+        "status::done",
+    ]
+    for label_name in workflow_lists:
+        ensure_board_list(board["id"], label_name)
+        print(f"  ✓ Board list: {label_name}")
+
     print("Board setup complete.")
     return 0
 
@@ -582,7 +1000,7 @@ def _cli_seed_phase0_issues(args: list[str]) -> int:
                 "### Checklist\n"
                 "- [ ] Run `python3 scripts/platform/gitlab_utils.py setup-board` to create all labels/milestones\n"
                 "- [ ] Run `python3 scripts/platform/gitlab_utils.py seed-phase0-issues` to create all Phase 0 issues\n"
-                "- [ ] Verify Labels Board at `/-/boards` shows 5 columns (backlog/ready/in-progress/blocked/closed)\n"
+                "- [ ] Verify Labels Board at `/-/boards` shows workflow lists for backlog/todo/ready/in-progress/in-review/blocked/icebox/done\n"
                 "- [ ] All Phase 0-5 tasks exist as issues with correct labels + milestones\n\n"
                 "**Blocks:** All other Phase 0 tasks\n"
                 "**Gate:** GitLab board shows correct JIRA-style columns"
@@ -592,14 +1010,15 @@ def _cli_seed_phase0_issues(args: list[str]) -> int:
             "title": "Phase 0.2: Migrate Obsidian kanban → GitLab Issues",
             "labels": ["type::chore", "component::ci-cd", "priority::high", "status::backlog"],
             "description": (
-                "## Goal\nStop writing to KANBAN.md/TRACK-8-NANOCHAT.md/PLATFORM_STATUS.md. "
-                "All state tracking via GitLab Issues API.\n\n"
+                "## Goal\nComplete the GitLab Issues migration and remove any remaining runtime "
+                "dependency on legacy markdown task tracking. All active state tracking must flow "
+                "through the GitLab Issues API.\n\n"
                 "### Checklist\n"
-                "- [ ] Create `scripts/data/update_gitlab_board.sh` (replaces update_kanban.sh)\n"
-                "- [ ] Create `scripts/platform/gitlab_board_updater.py` (replaces kanban_updater.py)\n"
-                "- [ ] Update `scripts/platform/scan_repo_state.sh` — remove Obsidian writes, add GitLab transitions\n"
-                "- [ ] Rename systemd timer `shl-nano-kanban.*` → `shl-gitlab-sync.*`\n"
-                "- [ ] Archive `docs/obsidian-vault/50-Projects/{KANBAN.md,TRACK-8-NANOCHAT.md,PLATFORM_STATUS.md}`\n"
+                "- [ ] Ensure `scripts/data/update_gitlab_board.sh` is the only active board sync entrypoint\n"
+                "- [ ] Ensure `scripts/platform/gitlab_board_updater.py` is the reconciliation layer for GitLab transitions\n"
+                "- [ ] Update `scripts/platform/scan_repo_state.sh` to reconcile GitLab state only\n"
+                "- [ ] Ensure only `shl-gitlab-sync.*` systemd units remain active\n"
+                "- [ ] Keep any legacy markdown board material archived or historical only\n"
                 "- [ ] Verify 30min scan produces correct GitLab issue transitions\n\n"
                 "**Depends on:** Phase 0.1"
             ),
@@ -711,6 +1130,122 @@ def _cli_seed_phase0_issues(args: list[str]) -> int:
     return 0 if fail == 0 else 1
 
 
+
+# ── Project management helpers ────────────────────────────────────────────────
+
+
+def update_project(
+    *,
+    description: str | None = None,
+    topics: list[str] | None = None,
+    visibility: str | None = None,
+    avatar: str | None = None,
+) -> dict:
+    """Update project-level metadata (description, topics, visibility)."""
+    pid = _project_id()
+    body: dict[str, Any] = {}
+    if description is not None:
+        body["description"] = description
+    if topics is not None:
+        body["topics"] = topics
+    if visibility is not None:
+        body["visibility"] = visibility
+    return _api("PUT", f"/projects/{pid}", data=body)
+
+
+def get_project() -> dict:
+    """Get current project metadata."""
+    pid = _project_id()
+    return _api("GET", f"/projects/{pid}")
+
+
+def find_user_by_email(email: str) -> dict | None:
+    """Look up a GitLab user by email address. Returns None if not found."""
+    results = _api("GET", "/users", params={"search": email})
+    for user in results:
+        if user.get("email") == email or user.get("public_email") == email:
+            return user
+    # Try username match as fallback (GitLab CE may hide emails)
+    return results[0] if results else None
+
+
+def add_project_member(user_id: int, access_level: int = 50) -> dict:
+    """Add or update a project member.
+
+    access_level: 10=Guest, 20=Reporter, 30=Developer, 40=Maintainer, 50=Owner
+    Owner (50) is available in GitLab CE 13.x+ for project members.
+    """
+    pid = _project_id()
+    try:
+        return _api(
+            "POST",
+            f"/projects/{pid}/members",
+            data={"user_id": user_id, "access_level": access_level},
+        )
+    except RuntimeError as exc:
+        if "already" in str(exc).lower() or "409" in str(exc):
+            # Member exists — update instead
+            return _api(
+                "PUT",
+                f"/projects/{pid}/members/{user_id}",
+                data={"access_level": access_level},
+            )
+        raise
+
+
+def _cli_update_project(args: list[str]) -> int:
+    """CLI: update-project — Set project description, topics, and owner email."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="gitlab_utils update-project")
+    parser.add_argument("--description", default=None, help="Project description")
+    parser.add_argument(
+        "--topics", default=None, help="Comma-separated topics/tags"
+    )
+    parser.add_argument(
+        "--owner-email",
+        default=None,
+        help="Email of user to add as Owner-level member",
+    )
+    parser.add_argument(
+        "--visibility",
+        choices=["private", "internal", "public"],
+        default=None,
+    )
+    parsed = parser.parse_args(args)
+
+    update_kwargs: dict[str, Any] = {}
+    if parsed.description is not None:
+        update_kwargs["description"] = parsed.description
+    if parsed.topics is not None:
+        update_kwargs["topics"] = [t.strip() for t in parsed.topics.split(",") if t.strip()]
+    if parsed.visibility is not None:
+        update_kwargs["visibility"] = parsed.visibility
+
+    if update_kwargs:
+        proj = update_project(**update_kwargs)
+        print(f"  ✓ Project updated: {proj.get('name_with_namespace')} — {proj.get('web_url')}")
+        if parsed.description:
+            print(f"    description: {proj.get('description', '')[:80]}")
+
+    if parsed.owner_email:
+        user = find_user_by_email(parsed.owner_email)
+        if user is None:
+            print(
+                f"  ✗ User not found for email: {parsed.owner_email}\n"
+                "    Ensure the account exists in GitLab before granting access.",
+                file=sys.stderr,
+            )
+            return 1
+        member = add_project_member(user["id"], access_level=50)
+        print(
+            f"  ✓ Member added: {user.get('username')} ({parsed.owner_email}) "
+            f"→ access_level={member.get('access_level')}"
+        )
+
+    return 0
+
+
 def _cli_setup_webhook(args: list[str]) -> int:
     """CLI: setup-webhook — Register GitLab outbound webhook to webhook-deployer."""
     import argparse
@@ -732,156 +1267,6 @@ def _cli_setup_webhook(args: list[str]) -> int:
     return 0
 
 
-def _cli_migrate_kanban(args: list[str]) -> int:
-    """CLI: migrate-kanban — Create GitLab issues from KANBAN.md snapshot.
-
-    Idempotent: uses upsert_issue so re-running won’t create duplicates.
-    """
-    kanban_items = [
-        # ── In Progress ─────────────────────────────────────────────────────
-        {
-            "title": "Autoresearch Round 3 — PII Face Detection (recall > 0.760)",
-            "labels": ["type::training", "component::autoresearch", "component::pii-blurring",
-                       "priority::critical", "status::in-progress", "metric::recall-primary",
-                       "source::autoresearch"],
-            "description": (
-                "## Goal\nBeat Phase 9 recall (0.729) → **recall > 0.760** on WIDER Face val.\n\n"
-                "**Primary metric:** recall (PII: a missed face = privacy violation)\n"
-                "**Floor:** mAP50 ≥ 0.798 (Phase 5 baseline)\n"
-                "**Hardware:** RTX 3090 Ti 24GB\n"
-                "**Strategy:** multi-scale imgsz=960 ±33%, batch=2, 30 epochs, "
-                "Phase 9 loss weights locked\n\n"
-                "*Migrated from KANBAN.md*"
-            ),
-        },
-        {
-            "title": "Track 8: nanochat — T8.1 pipeline (Stage 1 data export)",
-            "labels": ["type::training", "component::agent-service", "priority::high",
-                       "status::in-progress"],
-            "description": "T8.1 pipeline running — Stage 1 data export for nanochat SFT.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "Memory Watchdog — psutil memory leak guard",
-            "labels": ["type::chore", "component::watchdog", "priority::medium",
-                       "status::in-progress"],
-            "description": "psutil-based memory leak guard for VSCode + training processes.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T3.3 GEPA live cycle — first skill evolution cycle",
-            "labels": ["type::feature", "component::agent-service", "priority::medium",
-                       "status::in-progress"],
-            "description": "First real GEPA cycle.\nTrigger: `curl -X POST http://localhost:8000/api/skills/evolve -d '{\"skill\":\"coding-assistant\"}'`\n\n*Migrated from KANBAN.md*",
-        },
-        # ── Backlog ────────────────────────────────────────────────────────
-        {
-            "title": "CLOUD_API_KEY — activate cloud failover tier",
-            "labels": ["type::chore", "component::infra", "priority::high", "status::ready"],
-            "description": "T5.1 hybrid router is built; just needs CLOUD_API_KEY env var set.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T6.1 Nemotron-3-Super-120B — eval as cloud fallback",
-            "labels": ["type::research", "component::agent-service", "priority::medium"],
-            "description": "Eval Nemotron-3-Super-120B as cloud fallback; 12B active / 120B MoE.\nRef: https://research.nvidia.com/labs/nemotron/Nemotron-3-Super/\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T6.2 Moondream edge vision — benchmark vs YOLO on WIDER Hard",
-            "labels": ["type::research", "component::face-detection", "priority::medium"],
-            "description": "Benchmark moondream vs YOLO on WIDER Hard subset; VQA PII queries.\nRef: https://github.com/vikhyat/moondream\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T6.4 Base44 superagents — multi-agent orchestration review",
-            "labels": ["type::research", "component::agent-service", "priority::low"],
-            "description": "Review multi-agent orchestration vs ACE loop.\nRef: https://base44.com/superagents\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T7.6 Telegram activation — alertmanager-telegram token setup",
-            "labels": ["type::chore", "component::infra", "priority::medium"],
-            "description": "BotFather → TELEGRAM_BOT_TOKEN + CHAT_ID → activate alertmanager-telegram.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T7.7 skill_updater path sync — SKILLS_DIR in compose",
-            "labels": ["type::bug", "component::agent-service", "priority::medium"],
-            "description": "SKILLS_DIR=/workspace/inference/agent-service/skills in compose.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T7.8 MLflow artifact hardening",
-            "labels": ["type::chore", "component::infra", "priority::low"],
-            "description": "Add `user: '1000:1000'` + startup write-check to mlflow service.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T8.6 Shadow A/B — 10% traffic nano vs Qwen3",
-            "labels": ["type::feature", "component::agent-service", "priority::medium"],
-            "description": "Route 10% of inference requests to nano model vs Qwen3.\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T8.8 Weekly Retrain — auto SFT on new conversations",
-            "labels": ["type::chore", "component::agent-service", "priority::low"],
-            "description": "Auto-retrain SFT on new conversations (cron, post T8.4).\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T8.9 Unsloth packing — 3× SFT speedup for nanochat",
-            "labels": ["type::feature", "component::agent-service", "priority::medium"],
-            "description": "Apply Unsloth 3× packing to nanochat SFT data pipeline.\nRef: https://docs.unsloth.ai/new/3x-faster-training-packing\n\n*From links.md 2025-12-13*",
-        },
-        # ── Blocked ────────────────────────────────────────────────────────
-        {
-            "title": "FiftyOne deep eval — blocked on autoresearch Round 3 winner",
-            "labels": ["type::training", "component::face-detection", "priority::high",
-                       "status::blocked", "metric::recall-primary"],
-            "description": "Run FiftyOne Brain failure analysis once recall > 0.760 achieved.\nBlocked by: Autoresearch Round 3\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T7.4 Phase 6B: YOLOv8l P2 — blocked on autoresearch champion",
-            "labels": ["type::training", "component::face-detection", "priority::high",
-                       "status::blocked"],
-            "description": "Start YOLOv8l P2 Phase 6B full training once Round 3 produces a champion config.\nBlocked by: Autoresearch Round 3\n\n*Migrated from KANBAN.md*",
-        },
-        {
-            "title": "T7.5 RF-DETR vs YOLO comparison — blocked on T7.4",
-            "labels": ["type::training", "component::face-detection", "priority::medium",
-                       "status::blocked"],
-            "description": "Compare RF-DETR curriculum pipeline vs YOLOv8l P2 once T7.4 completes.\nRef: https://github.com/roboflow/rf-detr\nBlocked by: T7.4\n\n*Migrated from KANBAN.md*",
-        },
-        # ── New — from links.md analysis ─────────────────────────────────
-        {
-            "title": "Evaluate autoresearch-at-home loop improvements",
-            "labels": ["type::research", "component::autoresearch", "priority::low"],
-            "description": "Evaluate mutable-state-inc/autoresearch-at-home for loop design improvements (LLM mutation quality).\nRef: https://github.com/mutable-state-inc/autoresearch-at-home\n\n*From links.md 2026-03-12*",
-        },
-        {
-            "title": "Evaluate computer-use-large for GUI agent fine-tuning",
-            "labels": ["type::research", "component::agent-service", "priority::low"],
-            "description": "48k videos / 12.3k hrs of professional screen recordings (AutoCAD, Excel, VS Code etc). Evaluate as training data for a computer-use agent.\nRef: https://huggingface.co/datasets/markov-ai/computer-use-large\n\n*From links.md 2026-03-12*",
-        },
-        {
-            "title": "Synthetic hard-negative face mining via NeMo DataDesigner",
-            "labels": ["type::feature", "component::face-detection", "priority::medium",
-                       "metric::recall-primary"],
-            "description": "Use NVIDIA NeMo DataDesigner to generate synthetic hard-negative faces (small/occluded in crowds) to augment WIDER Face training set.\nPlan for Round 4 after Round 3 completes.\nRef: https://github.com/NVIDIA-NeMo/DataDesigner\n\n*From links.md analysis*",
-        },
-    ]
-
-    print(f"Migrating {len(kanban_items)} kanban items to GitLab issues...")
-    ok = 0
-    fail = 0
-    for item in kanban_items:
-        try:
-            issue = upsert_issue(
-                item["title"][:50],  # search key
-                title=item["title"],
-                description=item.get("description", ""),
-                labels=item.get("labels", []),
-            )
-            print(f"  ✓ #{issue.iid:4d}  {item['title'][:65]}")
-            ok += 1
-        except Exception as e:
-            print(f"  ✗ FAILED  {item['title'][:65]} — {e}")
-            fail += 1
-
-    print(f"\nDone: {ok} created/updated, {fail} failed.")
-    return 0 if fail == 0 else 1
-
-
 def main() -> int:
     if len(sys.argv) < 2:
         print(
@@ -889,12 +1274,15 @@ def main() -> int:
             "Commands:\n"
             "  create-issue      Create a new issue\n"
             "  upsert-issue      Find or create an issue (idempotent)\n"
+            "  sync-issue        Update issue by title while preserving existing labels\n"
+            "  resolve-issue     Mark an open incident as status::done and close it\n"
             "  add-comment       Add a comment to an issue\n"
+            "  update-issue      Update labels/state/milestone on an issue\n"
             "  list-issues       List open issues\n"
             "  setup-board       Create labels and milestones (incl. robotics)\n"
             "  seed-phase0-issues  Create all Phase 0 tracking issues\n"
             "  setup-webhook     Register GitLab outbound webhook\n"
-            "  migrate-kanban    Migrate KANBAN.md items to GitLab issues\n",
+            "  update-project    Set project description, topics, owner email\n",
             file=sys.stderr,
         )
         return 1
@@ -905,12 +1293,15 @@ def main() -> int:
     dispatch = {
         "create-issue": _cli_create_issue,
         "upsert-issue": _cli_upsert_issue,
+        "sync-issue": _cli_sync_issue,
+        "resolve-issue": _cli_resolve_issue,
         "add-comment": _cli_add_comment,
+        "update-issue": _cli_update_issue,
         "list-issues": _cli_list_issues,
         "setup-board": _cli_setup_board,
         "seed-phase0-issues": _cli_seed_phase0_issues,
         "setup-webhook": _cli_setup_webhook,
-        "migrate-kanban": _cli_migrate_kanban,
+        "update-project": _cli_update_project,
     }
 
     handler = dispatch.get(cmd)

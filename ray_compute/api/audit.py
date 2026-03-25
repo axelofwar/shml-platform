@@ -309,3 +309,7 @@ class AuditLogger:
 def get_audit_logger(db: Session) -> AuditLogger:
     """Dependency for getting audit logger instance."""
     return AuditLogger(db)
+
+
+# Re-export for modules that import log_audit_event from this module
+from .auth import log_audit_event  # noqa: E402, F401

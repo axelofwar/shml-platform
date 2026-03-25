@@ -141,6 +141,9 @@ class TrainingConfig:
     # Memory optimization
     gradient_checkpointing: bool = True
     amp: bool = True  # Mixed precision
+    # batch_size=64 is the 640px base for RTX 3090 Ti (24GB).
+    # _calculate_batch_size() scales by area ratio so 960/1280 phases get correct budgets.
+    batch_size: int = 64
     workers: int = 8
 
     # Checkpointing
@@ -511,17 +514,17 @@ class SOTATrainer:
         )
 
     def _calculate_batch_size(self, imgsz: int) -> int:
-        """Calculate optimal batch size for image size"""
-        # Memory estimation: larger images need smaller batches
-        # RTX 3090 Ti has 24GB, with gradient checkpointing
-        base_batch = self.config.batch_size
+        """Calculate optimal batch size for image size.
 
-        if imgsz <= 640:
-            return base_batch
-        elif imgsz <= 960:
-            return max(base_batch // 2, 4)
-        else:  # 1280+
-            return max(base_batch // 4, 2)
+        Activation memory scales with pixel area (imgsz²), so batch size scales
+        inversely with area relative to the 640px base.
+        base_batch=64 calibrated for YOLOv8n on RTX 3090 Ti (24GB) with AMP + gradient ckpt.
+        640px → 64, 960px → 28, 1280px → 16.
+        """
+        base_batch = self.config.batch_size
+        # Area ratio relative to 640px baseline
+        scale = (640.0 / imgsz) ** 2
+        return max(int(base_batch * scale), 4)
 
     def _apply_close_mosaic(self, epoch: int) -> bool:
         """Check if mosaic should be disabled"""

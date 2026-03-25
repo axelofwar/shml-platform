@@ -374,3 +374,67 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_marker)
             elif host_option == "vpn" and "lan" in item.keywords:
                 item.add_marker(skip_marker)
+
+
+# ===========================================================================
+# Unit test fixtures — no live services required
+# ===========================================================================
+
+import sys
+from unittest.mock import AsyncMock, MagicMock
+
+
+def _ensure_asyncpg_mock() -> None:
+    """Inject a lightweight asyncpg stub so DB-backed code can be imported."""
+    if "asyncpg" not in sys.modules:
+        mock = MagicMock()
+        mock.Pool = MagicMock
+        mock.create_pool = AsyncMock(return_value=MagicMock())
+        sys.modules["asyncpg"] = mock
+
+
+_ensure_asyncpg_mock()
+
+
+@pytest.fixture
+def mock_asyncpg_pool():
+    """Async mock of an asyncpg connection pool; acts as async context manager."""
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock(return_value=None)
+    pool.fetch = AsyncMock(return_value=[])
+    pool.fetchval = AsyncMock(return_value=None)
+    pool.execute = AsyncMock(return_value="OK")
+    pool.executemany = AsyncMock(return_value=None)
+    pool.acquire = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=pool)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return pool
+
+
+@pytest.fixture
+def mock_ray_job_client():
+    """Mock of ray.job_submission.JobSubmissionClient."""
+    client = MagicMock()
+    client.submit_job = MagicMock(return_value="test-job-00001")
+    client.get_job_status = MagicMock(return_value=MagicMock(value="RUNNING"))
+    client.get_job_info = MagicMock(return_value=MagicMock(
+        job_id="test-job-00001", status=MagicMock(value="RUNNING"), message="", entrypoint="",
+    ))
+    client.list_jobs = MagicMock(return_value=[])
+    client.stop_job = MagicMock(return_value=True)
+    client.get_job_logs = MagicMock(return_value="")
+    return client
+
+
+@pytest.fixture
+def mock_mlflow_client():
+    """Mock of mlflow.MlflowClient — use for unit tests that reference MLflow."""
+    client = MagicMock()
+    client.search_experiments = MagicMock(return_value=[])
+    client.get_experiment = MagicMock(return_value=MagicMock(name="test-exp"))
+    client.create_experiment = MagicMock(return_value="1")
+    client.create_run = MagicMock(return_value=MagicMock(info=MagicMock(run_id="run-001")))
+    client.log_metric = MagicMock()
+    client.log_param = MagicMock()
+    client.set_terminated = MagicMock()
+    return client

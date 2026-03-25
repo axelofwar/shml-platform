@@ -1,0 +1,9 @@
+# libs/feature_store — production dependencies
+# These are the packages required by libs/feature_store at runtime.
+# The ray_compute service installs these via ray_compute/requirements.txt;
+# this file documents them for direct consumers of the library.
+
+fastapi>=0.115.0
+asyncpg>=0.29.0
+strawberry-graphql[fastapi]>=0.234.0
+pydantic>=2.0.0

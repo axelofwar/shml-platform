@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
+          pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi pydantic-settings
 
           # Install project-specific requirements if they exist
           for req in requirements.txt tests/requirements.txt mlflow-server/api/requirements.txt ray_compute/api/requirements.txt; do
@@ -40,10 +40,27 @@ jobs:
             fi
           done
 
+          # Re-pin pydantic v2 last — some upstream requirements.txt files pin
+          # pydantic<2 (e.g. older MLflow/Ray), which downgrades pydantic after the
+          # line above and breaks pydantic-settings (requires pydantic._internal.*).
+          pip install "pydantic>=2.0" pydantic-settings --upgrade
+
       - name: Run unit tests
         run: |
           if [ -d "tests/unit" ]; then
-            pytest tests/unit/ -v --tb=short -x
+            EXTRA_IGNORE=""
+            # libs/training is a private submodule (http://shml-gitlab:...) not accessible
+            # from GitHub Actions — skip those tests gracefully when submodule is absent.
+            if ! python -c "import sys; sys.path.insert(0,'libs/training'); import shml_training" 2>/dev/null; then
+              echo "shml_training submodule not available (private intranet) — skipping training tests"
+              for f in tests/unit/libs/test_training*.py; do
+                [ -f "$f" ] && EXTRA_IGNORE="$EXTRA_IGNORE --ignore=$f"
+              done
+            fi
+            pytest tests/unit/ -v --tb=short \
+              --cov=libs --cov=ray_compute --cov=inference \
+              --cov-report=term-missing --cov-fail-under=0 \
+              $EXTRA_IGNORE
           else
             echo "No unit tests directory found"
           fi
@@ -451,6 +468,17 @@ jobs:
             -v \
             --tb=short
 
+      - name: Run FusionAuth admin-flow smoke tests
+        if: steps.check_fusionauth.outputs.skip != 'true'
+        env:
+          ML_PLATFORM_URL: https://${{ secrets.PUBLIC_DOMAIN }}
+          FUSIONAUTH_API_KEY: ${{ secrets.FUSIONAUTH_API_KEY }}
+        run: |
+          pytest tests/integration/test_fusionauth_admin_flow.py \
+            -v \
+            --tb=short \
+            -m "integration and security"
+
       - name: Live tests skipped
         if: steps.check_fusionauth.outputs.skip == 'true'
         run: |
@@ -493,6 +521,7 @@ jobs:
             echo "AUTHENTIK_DB_PASSWORD=dummy-password"
             echo "AUTHENTIK_BOOTSTRAP_PASSWORD=dummy-password"
             echo "SHARED_DB_PASSWORD=dummy-password"
+            echo "DB_PASSWORD=dummy-password"
             echo "GRAFANA_ADMIN_PASSWORD=dummy-password"
             echo "PUBLIC_DOMAIN=ci.example.local"
             echo "LAN_IP=127.0.0.1"
@@ -500,20 +529,89 @@ jobs:
             echo "FUSIONAUTH_PROXY_CLIENT_ID=ci-client-id"
             echo "FUSIONAUTH_PROXY_CLIENT_SECRET=ci-client-secret"
             echo "FUSIONAUTH_API_KEY=ci-fa-api-key"
+            echo "FUSIONAUTH_URL=https://ci.example.local/auth"
+            echo "FUSIONAUTH_RUNTIME_MODE=development"
+            echo "FUSIONAUTH_MLFLOW_CLIENT_ID=ci-mlflow-id"
+            echo "FUSIONAUTH_MLFLOW_CLIENT_SECRET=ci-mlflow-secret"
+            echo "FUSIONAUTH_RAY_CLIENT_ID=ci-ray-id"
+            echo "FUSIONAUTH_RAY_CLIENT_SECRET=ci-ray-secret"
             echo "GITLAB_RUNNER_REGISTRATION_TOKEN=ci-runner-token"
             echo "GITLAB_OIDC_CLIENT_ID=ci-oidc-id"
             echo "GITLAB_OIDC_CLIENT_SECRET=ci-oidc-secret"
             echo "INFISICAL_TOKEN=ci-infisical-token"
+            echo "INFISICAL_ADMIN_EMAIL=ci@example.com"
+            echo "INFISICAL_AUTH_SECRET=ci-auth-secret"
+            echo "INFISICAL_DB_PASSWORD=ci-db-password"
+            echo "INFISICAL_ENCRYPTION_KEY=ci-encryption-key"
+            echo "INFISICAL_SITE_URL=https://ci.example.local/infisical"
             echo "TELEGRAM_BOT_TOKEN=ci-telegram-token"
             echo "TELEGRAM_CHAT_ID=0"
+            echo "HF_TOKEN=ci-hf-token"
+            echo "RAY_API_SECRET_KEY=ci-ray-secret"
+            echo "RAY_NUM_GPUS=0"
+            echo "RAY_PRIMARY_GPU_ID=0"
+            echo "RAY_VISIBLE_GPUS=0"
+            echo "CORS_ORIGINS=http://localhost"
+            echo "OAUTH_ENABLED=false"
+            echo "PLATFORM_PREFIX=shml"
+            echo "SHML_IMAGE_TAG=latest"
+            echo "SHML_IMAGE_PULL_POLICY=never"
+            echo "SHML_REGISTRY_IMAGE_PREFIX=shml-platform"
+            echo "NEMOCLAW_FACTORY_URL=http://localhost:9095"
+            echo "NEMOCLAW_GATEWAY_URL=http://localhost:9090"
+            echo "NEMOCLAW_FACTORY_TIMEOUT=30"
+            echo "NEMOCLAW_FALLBACK_TO_DOCKER=true"
+            echo "NEMOCLAW_CLOUD_PROFILE_ENABLED=false"
+            echo "CICD_ADMIN_KEY=ci-admin-key"
+            echo "CICD_DEVELOPER_KEY=ci-dev-key"
+            echo "CICD_ELEVATED_DEVELOPER_KEY=ci-elevated-key"
+            echo "CICD_VIEWER_KEY=ci-viewer-key"
           } > .env
 
-      - name: Validate compose files
+      - name: Validate compose files (all stacks)
         run: |
           # Pass --env-file explicitly: docker compose looks for .env relative to
           # the compose file's directory, but our .env is in the repo root.
-          docker compose --env-file .env -f deploy/compose/docker-compose.yml config -q
-          docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml config -q
+          FAILED=0
+          COMPOSE_STACKS=(
+            deploy/compose/docker-compose.yml
+            deploy/compose/docker-compose.infra.yml
+            deploy/compose/docker-compose.auth.yml
+            deploy/compose/docker-compose.logging.yml
+            deploy/compose/docker-compose.tracing.yml
+            # docker-compose.secrets.yml is an optional Infisical overlay that
+            # requires real infrastructure secrets (INFISICAL_ENCRYPTION_KEY etc.)
+            # and has a YAML schema issue with :?ERROR: unquoted scalars in CI.
+            # Validate on the host where Infisical is deployed, not in GitHub Actions.
+            mlflow-server/docker-compose.yml
+            ray_compute/docker-compose.yml
+            inference/docker-compose.inference.yml
+            inference/chat-api/docker-compose.yml
+            inference/coding-model/docker-compose.yml
+            inference/agent-service/docker-compose.yml
+            inference/embedding-service/docker-compose.yml
+            inference/gpu-manager/docker-compose.yml
+            inference/nemotron/docker-compose.yml
+            chat-ui-v2/docker-compose.yml
+            monitoring/dcgm-exporter/docker-compose.yml
+          )
+          for stack in "${COMPOSE_STACKS[@]}"; do
+            if [ -f "$stack" ]; then
+              if docker compose --env-file .env -f "$stack" config -q 2>/dev/null; then
+                echo "✓ $stack"
+              else
+                echo "✗ $stack — config invalid"
+                FAILED=1
+              fi
+            else
+              echo "⚠ $stack — file missing (skipped)"
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::One or more compose files failed validation"
+            exit 1
+          fi
+          echo "All compose stacks validated successfully"
 
       - name: Build MLflow containers (dry-run)
         run: |
