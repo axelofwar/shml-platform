@@ -50,6 +50,8 @@ regexes = [
     # Placeholder API keys with underscores
     '''YOUR_API_KEY''',
     '''YOUR_[A-Z_]+''',
+    # Documentation "bad example" client_secret placeholder used in security rules docs
+    '''JsDs6mClPCWKqEq''',
     # UUID placeholders (app IDs, not secrets)
     '''acda34f0-7cf2-40eb-9cba-7cb0048857d3''',
     '''50a4dc27-578a-47f1-a98e-1b9f47e2e81b''',
@@ -68,6 +70,16 @@ fingerprints = [
     # Commit 2e6d7a88 — API_REFERENCE.md line 714:
     # Example X-API-Key header in curl documentation example. File later deleted.
     "2e6d7a8842bf1c742d02e57caac886e3eb840752:API_REFERENCE.md:curl-auth-header:714",
+    # Commit f92dff46 — security rules docs contain "bad example" placeholder patterns:
+    # - ❌ PASSWORD=gNz8AP... (high-entropy base64, shown as what NOT to commit)
+    # - ❌ client_secret=JsDs6m... (shown as what NOT to commit)
+    # These are documentation examples. The base value was replaced with a plaintext
+    # password in subsequent commits; these fingerprints suppress the historical scan.
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.github/instructions/security.instructions.md:generic-api-key:87",
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.agent/rules/security.md:generic-api-key:85",
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.agent/rules/security.md:generic-api-key:88",
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.claude/CLAUDE.md:generic-api-key:242",
+    "f92dff462a1d549ba6f276598fdacc72dff8a3b0:.claude/CLAUDE.md:generic-api-key:245",
 ]
 
 # Allowlist specific commits/findings (false positives in git history)

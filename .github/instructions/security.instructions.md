@@ -81,7 +81,7 @@ def load_secret(name: str) -> str:
 
 **Never in committed files:**
 ```
-❌ PASSWORD=gNz8APgrUF8Q3hMe2sQXQK8DPGHs3CGcVhoPLbcqvi4=
+❌ PASSWORD=AiSolutions2350!
 ❌ TAILSCALE_IP=100.x.x.x
 ❌ DB_HOST=192.168.1.100
 ❌ client_secret=JsDs6mClPCWKqEq...
