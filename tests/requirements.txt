@@ -11,8 +11,8 @@ pytest-asyncio==0.23.2
 requests==2.32.5
 httpx==0.27.0
 
-# MLflow for integration tests
-mlflow==2.9.2
+# MLflow for integration tests — matched to production version (2.9.2 had CVE-2025-* vulns)
+mlflow==2.17.2
 
 # Scientific computing for model tests
 numpy==1.26.4
