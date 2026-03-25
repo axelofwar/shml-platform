@@ -200,9 +200,20 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     logger.info("Agent scheduler started")
 
+    # Start autonomous agent loop (off by default; enable via AGENT_LOOP_ENABLED=true)
+    from .agent_loop import get_agent_loop
+    agent_loop = get_agent_loop()
+    if agent_loop._config.enabled:
+        await agent_loop.start()
+        logger.info("Autonomous agent loop started (max_complexity=%.1f)", agent_loop._config.max_complexity)
+    else:
+        logger.info("Autonomous agent loop disabled (set AGENT_LOOP_ENABLED=true to enable)")
+
     yield
 
     logger.info("Shutting down Agent Service...")
+    if agent_loop._config.enabled:
+        await agent_loop.stop()
     await scheduler.stop()
     logger.info("Agent scheduler stopped")
 
@@ -291,6 +302,66 @@ async def trigger_skill_evolution(
         "force": force,
         "triggered_by": user.user_id,
     }
+
+
+# ── Autonomous Agent Loop endpoints ──────────────────────────────────────────
+
+@app.post("/admin/agent/loop/start")
+async def start_agent_loop(
+    max_complexity: float = None,
+    user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER)),
+):
+    """Start the autonomous issue loop (elevated-developer / admin only)."""
+    from .agent_loop import get_agent_loop
+    loop = get_agent_loop()
+    if max_complexity is not None:
+        await loop.update_config(max_complexity=max_complexity)
+    await loop.start()
+    return {"status": "started", "loop": loop.status(), "started_by": user.user_id}
+
+
+@app.post("/admin/agent/loop/pause")
+async def pause_agent_loop(
+    reason: str = "manual pause",
+    user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER)),
+):
+    """Pause the autonomous issue loop between cycles."""
+    from .agent_loop import get_agent_loop
+    loop = get_agent_loop()
+    await loop.pause(reason=reason)
+    return {"status": "paused", "reason": reason, "paused_by": user.user_id}
+
+
+@app.post("/admin/agent/loop/resume")
+async def resume_agent_loop(
+    user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER)),
+):
+    """Resume a paused autonomous issue loop."""
+    from .agent_loop import get_agent_loop
+    loop = get_agent_loop()
+    await loop.resume()
+    return {"status": "resumed", "loop": loop.status(), "resumed_by": user.user_id}
+
+
+@app.post("/admin/agent/loop/stop")
+async def stop_agent_loop(
+    user: AuthUser = Depends(require_min_role(UserRole.ADMIN)),
+):
+    """Stop the autonomous issue loop (admin only)."""
+    from .agent_loop import get_agent_loop
+    loop = get_agent_loop()
+    await loop.stop()
+    return {"status": "stopped", "stopped_by": user.user_id}
+
+
+@app.get("/admin/agent/loop/status")
+async def agent_loop_status(
+    user: AuthUser = Depends(require_min_role(UserRole.ELEVATED_DEVELOPER)),
+):
+    """Return current agent loop state and counters."""
+    from .agent_loop import get_agent_loop
+    loop = get_agent_loop()
+    return loop.status()
 
 
 @app.get("/user/me")

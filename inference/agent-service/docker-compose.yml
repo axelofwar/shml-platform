@@ -61,6 +61,32 @@ services:
       # Container hostname is shml-gitlab on the shml-platform Docker network
       - GITLAB_BASE_URL=${GITLAB_BASE_URL:-http://shml-gitlab:8929/gitlab}
       - GITLAB_PROJECT_ID=${GITLAB_PROJECT_ID:-2}
+      - GITLAB_REMOTE_URL=${GITLAB_REMOTE_URL:-http://shml-gitlab:8929/gitlab/shml/platform.git}
+
+      # ── Autonomous Agent Loop ──────────────────────────────────────────────
+      # Set AGENT_LOOP_ENABLED=true to activate; default off for safety
+      - AGENT_LOOP_ENABLED=${AGENT_LOOP_ENABLED:-false}
+      # Seconds between issue-pick cycles
+      - AGENT_LOOP_POLL_INTERVAL=${AGENT_LOOP_POLL_INTERVAL:-300}
+      # Maximum issue complexity to attempt (0.0–1.0)
+      - AGENT_LOOP_MAX_COMPLEXITY=${AGENT_LOOP_MAX_COMPLEXITY:-0.4}
+      # Circuit-breaker: pause after N consecutive failures
+      - AGENT_LOOP_CIRCUIT_BREAKER=${AGENT_LOOP_CIRCUIT_BREAKER:-3}
+      # Max review/fix cycles per issue
+      - AGENT_LOOP_MAX_REVIEW_CYCLES=${AGENT_LOOP_MAX_REVIEW_CYCLES:-3}
+      - AGENT_LOOP_MAX_FIX_RETRIES=${AGENT_LOOP_MAX_FIX_RETRIES:-3}
+      # Issue types that auto-merge without human gate (comma-separated)
+      - AGENT_LOOP_AUTO_MERGE_TYPES=${AGENT_LOOP_AUTO_MERGE_TYPES:-chore,docs}
+      # Workspace root inside the container (for git ops and file reads)
+      - AGENT_WORKSPACE_ROOT=${AGENT_WORKSPACE_ROOT:-/workspace}
+      # GitHub PAT for Copilot Chat Completions API code review
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Coding model endpoint (Qwen3.5 coder)
+      - QWEN_CODING_URL=${QWEN_CODING_URL:-http://qwen-coding:8000/v1}
+      - CODING_MODEL_NAME=${CODING_MODEL_NAME:-qwen3.5-coder}
+      # Git author identity for agent commits
+      - AGENT_GIT_AUTHOR_NAME=${AGENT_GIT_AUTHOR_NAME:-Qwen3.5 Agent}
+      - AGENT_GIT_AUTHOR_EMAIL=${AGENT_GIT_AUTHOR_EMAIL:-agent@shml-platform.local}
 
     volumes:
       - ./logs:/app/logs

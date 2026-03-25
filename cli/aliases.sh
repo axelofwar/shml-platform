@@ -138,6 +138,47 @@ prompt() {
 alias learnings='cat $SHML_DIR/.agent/learnings/$(date +%Y-%m-%d).jsonl 2>/dev/null | python3 -c "import sys,json; [print(json.dumps(json.loads(l), indent=2)) for l in sys.stdin if l.strip()]" || echo "No learnings for today"'
 alias learnhist='ls $SHML_DIR/.agent/learnings/'
 
+# === Autonomous Agent Loop ===
+
+# Loop status (pretty JSON from admin API)
+alias loop-status='curl -sf http://localhost/api/agent/admin/agent/loop/status | python3 -m json.tool'
+
+# Start / pause / resume / stop the loop (requires ELEVATED_DEVELOPER token in SHML_TOKEN env)
+_loop_call() {
+    local action="${1:?Usage: loop-start|loop-pause|loop-resume|loop-stop}"
+    local method="POST"
+    if _token="${SHML_AGENT_TOKEN:-${SHML_TOKEN:-}}"; then
+        curl -sf -X "${method}" \
+            -H "Authorization: Bearer ${_token}" \
+            "http://localhost/api/agent/admin/agent/loop/${action}" \
+            | python3 -m json.tool
+    else
+        echo "Set SHML_AGENT_TOKEN (elevated-developer JWT) to control the loop"
+    fi
+}
+alias loop-start='_loop_call start'
+alias loop-pause='_loop_call pause'
+alias loop-resume='_loop_call resume'
+alias loop-stop='_loop_call stop'
+
+# Tail the autonomous loop log lines from agent-service container
+alias looplogs='docker logs shml-agent-service -f --tail=100 2>&1 | grep -E "agent.loop|AgentLoop|LoopState|issue #"'
+
+# Show open issues on the agent queue (requires python3 + GITLAB_API_TOKEN)
+alias aqueue='python3 -c "
+import os, urllib.request, json
+token = os.environ[\"GITLAB_API_TOKEN\"]
+url = os.environ.get(\"GITLAB_BASE_URL\", \"http://172.30.0.40:8929/gitlab\")
+pid = os.environ.get(\"GITLAB_PROJECT_ID\", \"2\")
+req = urllib.request.Request(
+    f\"{url}/api/v4/projects/{pid}/issues?state=opened&labels=status::ready&per_page=20\",
+    headers={\"PRIVATE-TOKEN\": token}
+)
+issues = json.loads(urllib.request.urlopen(req, timeout=10).read())
+for i in issues:
+    print(f\"  #{i[\'iid\']} [{i.get(\'labels\', [])}] {i[\'title\']}\")
+" 2>/dev/null || echo "Set GITLAB_API_TOKEN to use aqueue"'
+
 # === Connection Map ===
 
 # Regenerate the platform connection map
