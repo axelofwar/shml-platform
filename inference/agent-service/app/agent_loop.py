@@ -245,8 +245,8 @@ def _priority_score(issue: Issue) -> int:
 class AgentLoop:
     """Autonomous development loop daemon."""
 
-    def __init__(self) -> None:
-        self._config = LoopConfig()
+    def __init__(self, config: Optional[LoopConfig] = None) -> None:
+        self._config = config or LoopConfig()
         self._status = LoopStatus(
             complexity_threshold=self._config.max_complexity
         )
