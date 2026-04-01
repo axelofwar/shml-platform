@@ -166,11 +166,13 @@ def _conventions() -> str:
 class CodeWorker:
     """Orchestrates code generation and git operations for a single GitLab issue."""
 
-    def __init__(self, issue: Any) -> None:
+    def __init__(self, issue: Any, memory_context: str = "") -> None:
         # issue is inference.agent_service.app.gitlab_client.Issue
         self.issue = issue
         self._slug = re.sub(r"[^\w-]", "-", issue.title.lower())[:40].strip("-")
         self._branch = f"agent/issue-{issue.iid}-{self._slug}"
+        # Pattern 36: cross-session memory context injected by AgentLoop
+        self._memory_context = memory_context
 
     # ── Plan ──────────────────────────────────────────────────────────────────
 
@@ -200,6 +202,13 @@ class CodeWorker:
             Return ONLY the JSON object. No prose, no markdown fences.
         """).strip()
 
+        # Pattern 36: include prior agent memory when available
+        memory_section = (
+            f"\n\n            ### Prior Agent Memory\n            {self._memory_context}"
+            if self._memory_context
+            else ""
+        )
+
         user_prompt = textwrap.dedent(f"""
             ## Issue #{self.issue.iid}: {self.issue.title}
             Labels: {', '.join(self.issue.labels)}
@@ -208,7 +217,7 @@ class CodeWorker:
             {self.issue.description or '(no description)'}
 
             ### Relevant code context
-            {context_snippets}
+            {context_snippets}{memory_section}
         """).strip()
 
         raw = await _chat(
@@ -245,16 +254,26 @@ class CodeWorker:
         return plan
 
     async def _collect_context(self) -> str:
-        """Gather relevant file snippets for the planning prompt."""
+        """Gather relevant file snippets for the planning prompt.
+
+        Pattern 28: reads all candidate files concurrently with asyncio.gather()
+        instead of sequentially to reduce wall-clock latency on multi-file issues.
+        """
         # Simple keyword-based file discovery
         keywords = re.findall(r"\b[\w/]+\.py\b|\b[\w/]+\.ts\b|\b[\w/]+\.yml\b", self.issue.description or "")
+        paths = keywords[:10]  # cap file hints from description
+        if not paths:
+            return "(No specific files identified in issue description)"
+
+        # P28: concurrent reads — gather all candidate files in parallel
+        full_paths = [os.path.join(_WORKSPACE_ROOT, p) for p in paths]
+        contents = await asyncio.gather(*[_read_file_safe(fp) for fp in full_paths])
+
         snippets: list[str] = []
         char_used = 0
-
-        for path in keywords[:10]:  # cap file hints from description
+        for path, content in zip(paths, contents):
             if char_used >= _PLAN_CTX_CHAR_BUDGET:
                 break
-            content = await _read_file_safe(os.path.join(_WORKSPACE_ROOT, path))
             if content:
                 excerpt = content[: min(3000, _PLAN_CTX_CHAR_BUDGET - char_used)]
                 snippets.append(f"### {path}\n```\n{excerpt}\n```")

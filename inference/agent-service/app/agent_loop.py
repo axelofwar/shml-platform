@@ -25,6 +25,8 @@ from typing import Any, Optional
 from prometheus_client import Counter, Gauge, Histogram
 
 from .gitlab_client import Issue, close_issue, list_agent_queue
+from .hooks import HookBlocked, HookEventType, get_hook_bus
+from .memory_store import get_memory_store
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +260,10 @@ class AgentLoop:
         self._stop_event = asyncio.Event()
         # Backoff state
         self._backoff_seconds = self._config.poll_interval
+        # Pattern 36: cross-session memory
+        self._memory = get_memory_store()
+        # Pattern 41: lifecycle hook bus
+        self._hooks = get_hook_bus()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -270,6 +276,9 @@ class AgentLoop:
         self._status.state = LoopState.IDLE
         self._task = asyncio.create_task(self._run(), name="agent-loop")
         logger.info("AgentLoop started (enabled=%s)", self._config.enabled)
+        asyncio.create_task(
+            self._hooks.emit(HookEventType.SESSION_START, enabled=self._config.enabled)
+        )
 
     def pause(self, reason: str = "manual") -> None:
         self._status.state = LoopState.PAUSED
@@ -288,6 +297,14 @@ class AgentLoop:
         if self._task:
             self._task.cancel()
         logger.info("AgentLoop stop requested")
+        asyncio.create_task(
+            self._hooks.emit(
+                HookEventType.SESSION_END,
+                total_completed=self._status.total_completed,
+                total_failed=self._status.total_failed,
+                session_summary=self._memory.get_session_summary(),
+            )
+        )
 
     def status(self) -> dict[str, Any]:
         return self._status.to_dict()
@@ -334,6 +351,7 @@ class AgentLoop:
             return
         if await _is_gpu_training_active():
             logger.info("GPU training active — loop waiting")
+            await self._hooks.emit(HookEventType.GPU_CONTENTION)
             return
 
         # ── 1. PICK ───────────────────────────────────────────────────────────
@@ -342,11 +360,15 @@ class AgentLoop:
         if issue is None:
             self._status.state = LoopState.IDLE
             self._backoff_seconds = self._config.poll_interval
+            await self._hooks.emit(HookEventType.ISSUE_NO_QUEUE)
             return
 
         self._status.current_issue_iid = issue.iid
         self._status.current_issue_title = issue.title
         logger.info("Loop picked issue #%d: %s", issue.iid, issue.title)
+        await self._hooks.emit(
+            HookEventType.ISSUE_PICKED, issue_iid=issue.iid, issue_title=issue.title
+        )
 
         try:
             await self._process_issue(issue)
@@ -389,9 +411,18 @@ class AgentLoop:
 
         # ── 2. PLAN ───────────────────────────────────────────────────────────
         self._status.state = LoopState.PLANNING
-        worker = CodeWorker(issue)
+        await self._hooks.emit(HookEventType.PLAN_START, issue_iid=issue.iid)
+        # Pattern 36: inject cross-session memory into the planning context
+        memory_context = self._memory.get_recent_context(n=5)
+        worker = CodeWorker(issue, memory_context=memory_context)
         plan = await worker.plan()
         logger.info("Issue #%d plan ready (%d files)", issue.iid, len(plan.files_to_touch))
+        await self._hooks.emit(
+            HookEventType.PLAN_READY,
+            issue_iid=issue.iid,
+            file_count=len(plan.files_to_touch),
+            files=plan.files_to_touch,
+        )
 
         # Pattern 31: verification nudge — warn if large plan has no test files
         test_files = [f for f in plan.files_to_touch if "test" in f.lower()]
@@ -401,27 +432,64 @@ class AgentLoop:
                 len(plan.files_to_touch),
                 issue.iid,
             )
+            await self._hooks.emit(
+                HookEventType.PLAN_NUDGE,
+                issue_iid=issue.iid,
+                file_count=len(plan.files_to_touch),
+            )
 
         # ── 3. BUILD ──────────────────────────────────────────────────────────
         self._status.state = LoopState.BUILDING
-        build_result = await worker.build(plan)
+        await self._hooks.emit(HookEventType.BUILD_START, issue_iid=issue.iid)
+        try:
+            build_result = await worker.build(plan)
+        except RuntimeError as exc:
+            # Pattern 33 branch-lock conflict surfaces as RuntimeError
+            if "already being built" in str(exc):
+                await self._hooks.emit(
+                    HookEventType.BRANCH_LOCK_CONFLICT,
+                    issue_iid=issue.iid,
+                    error=str(exc),
+                )
+            await self._hooks.emit(
+                HookEventType.BUILD_FAILED, issue_iid=issue.iid, error=str(exc)
+            )
+            raise
         logger.info("Issue #%d build complete: branch=%s", issue.iid, build_result.branch_name)
+        await self._hooks.emit(
+            HookEventType.BUILD_COMPLETE,
+            issue_iid=issue.iid,
+            branch=build_result.branch_name,
+            changed_files=build_result.changed_files,
+        )
 
         # ── 4. TEST ───────────────────────────────────────────────────────────
         self._status.state = LoopState.TESTING
+        await self._hooks.emit(HookEventType.TEST_START, issue_iid=issue.iid)
         test_worker = TestWorker(issue, build_result)
         test_result = await test_worker.run(
             max_fix_retries=self._config.max_fix_retries
         )
         if not test_result.passed:
+            await self._hooks.emit(
+                HookEventType.TEST_FAILED,
+                issue_iid=issue.iid,
+                summary=test_result.summary,
+            )
             raise RuntimeError(
                 f"Tests failed after {self._config.max_fix_retries} retries: "
                 f"{test_result.summary}"
             )
         logger.info("Issue #%d tests passed (%d tests)", issue.iid, test_result.test_count)
+        await self._hooks.emit(
+            HookEventType.TEST_PASSED,
+            issue_iid=issue.iid,
+            test_count=test_result.test_count,
+        )
 
         # ── 5. REVIEW ─────────────────────────────────────────────────────────
         self._status.state = LoopState.REVIEWING
+        await self._hooks.emit(HookEventType.REVIEW_START, issue_iid=issue.iid)
         reviewer = ReviewClient(issue, build_result)
         review_result = await reviewer.review(
             max_cycles=self._config.max_review_iterations
@@ -436,21 +504,35 @@ class AgentLoop:
             _REVIEW_BLOCKING.inc(review_result.blocking_count)
         if review_result.suggestion_count:
             _REVIEW_SUGGESTIONS.inc(review_result.suggestion_count)
+        await self._hooks.emit(
+            HookEventType.REVIEW_PASSED,
+            issue_iid=issue.iid,
+            blocking=review_result.blocking_count,
+            suggestions=review_result.suggestion_count,
+            quality_score=review_result.quality_score,
+        )
 
         # ── 6. GATE ───────────────────────────────────────────────────────────
         issue_type = self._get_issue_type(issue)
         if issue_type in self._config.auto_merge_types:
             await worker.merge_mr(build_result)
             logger.info("Issue #%d auto-merged (%s)", issue.iid, issue_type)
+            await self._hooks.emit(
+                HookEventType.AUTO_MERGE, issue_iid=issue.iid, issue_type=issue_type
+            )
         else:
             await worker.set_ready_for_review(build_result)
             self._status.state = LoopState.AWAITING_HUMAN
             logger.info("Issue #%d moved to in-review (human gate)", issue.iid)
+            await self._hooks.emit(
+                HookEventType.READY_FOR_REVIEW, issue_iid=issue.iid, issue_type=issue_type
+            )
 
         # ── 7. LEARN ──────────────────────────────────────────────────────────
         self._status.state = LoopState.LEARNING
         learner = LearningWorker(issue, build_result, test_result, review_result)
         await learner.run()
+        await self._hooks.emit(HookEventType.LEARNING_COMPLETE, issue_iid=issue.iid)
 
         gap_detector = GapDetector()
         gap_list = await gap_detector.scan_after_merge(build_result.changed_files)
@@ -459,7 +541,25 @@ class AgentLoop:
             _GAP_ISSUES_CREATED.inc(len(gap_list))
 
         # ── SUCCESS ───────────────────────────────────────────────────────────
+        # Pattern 36: record to cross-session memory
+        self._memory.record(
+            issue_iid=issue.iid,
+            branch=build_result.branch_name,
+            outcome="success",
+            learnings=(
+                f"Completed '{issue.title}' in {len(build_result.changed_files)} files. "
+                f"Test strategy: {plan.test_strategy[:120]}"
+            ),
+            files_changed=build_result.changed_files,
+        )
+        await self._hooks.emit(
+            HookEventType.MEMORY_RECORDED, issue_iid=issue.iid, outcome="success"
+        )
+
         self._handle_success()
+        await self._hooks.emit(
+            HookEventType.ISSUE_COMPLETE, issue_iid=issue.iid, branch=build_result.branch_name
+        )
         self._status.state = LoopState.IDLE
         self._status.current_issue_iid = None
         self._status.current_issue_title = ""
@@ -491,8 +591,22 @@ class AgentLoop:
         if self._status.consecutive_failures >= self._config.circuit_breaker_threshold:
             self.pause(reason=f"Circuit breaker: {self._status.consecutive_failures} consecutive failures")
             asyncio.create_task(self._create_alert_issue())
+            asyncio.create_task(
+                self._hooks.emit(
+                    HookEventType.CIRCUIT_BREAKER,
+                    consecutive_failures=self._status.consecutive_failures,
+                    error=error,
+                )
+            )
 
         # Pattern 38: track review/permission denials separately
+        asyncio.create_task(
+            self._hooks.emit(
+                HookEventType.ISSUE_FAILED, error=error,
+                issue_iid=(issue.iid if issue else None),
+            )
+        )
+
         if any(kw in error.lower() for kw in ("review", "blocked", "denied", "rejected")):
             self._status.consecutive_denials += 1
             self._status.total_denials += 1
@@ -500,9 +614,22 @@ class AgentLoop:
                 "Denial #%d detected — transitioning to AWAITING_HUMAN if >= 3",
                 self._status.consecutive_denials,
             )
+            asyncio.create_task(
+                self._hooks.emit(
+                    HookEventType.REVIEW_DENIAL,
+                    count=self._status.consecutive_denials,
+                    total=self._status.total_denials,
+                )
+            )
             if self._status.consecutive_denials >= 3:
                 self._status.state = LoopState.AWAITING_HUMAN
                 logger.warning("3 consecutive denials — entering AWAITING_HUMAN state")
+                asyncio.create_task(
+                    self._hooks.emit(
+                        HookEventType.AWAITING_HUMAN,
+                        consecutive_denials=self._status.consecutive_denials,
+                    )
+                )
         else:
             self._status.consecutive_denials = 0
 
@@ -526,6 +653,13 @@ class AgentLoop:
                 )
                 self._status.complexity_threshold = new_threshold
                 _COMPLEXITY_THRESHOLD.set(new_threshold)
+                asyncio.create_task(
+                    self._hooks.emit(
+                        HookEventType.COMPLEXITY_GRADUATED,
+                        old_threshold=new_threshold - 0.1,
+                        new_threshold=new_threshold,
+                    )
+                )
 
     async def _post_failure_comment(self, issue: Issue, error: str) -> None:
         """Post a failure comment on the GitLab issue."""
