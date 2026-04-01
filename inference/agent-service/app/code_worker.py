@@ -10,10 +10,12 @@ Workflow per issue:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
 import re
+import tempfile
 import textwrap
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -35,6 +37,28 @@ _WORKSPACE_ROOT = os.getenv("AGENT_WORKSPACE_ROOT", "/workspace")
 _PLAN_CTX_TOKEN_BUDGET = 40_000
 # Characters used as rough token proxy (1 token ≈ 4 chars)
 _PLAN_CTX_CHAR_BUDGET = _PLAN_CTX_TOKEN_BUDGET * 4
+
+# Lock directory for multi-agent branch serialisation (Pattern 33)
+_LOCK_DIR = os.getenv("AGENT_LOCK_DIR", "/tmp/agent_locks")
+
+
+# Pattern 34 — context-aware token budget for code generation
+def _context_aware_max_tokens(file_count: int) -> int:
+    """Return a generation token budget scaled to the number of files in the plan.
+
+    Thresholds (from free-code thinking.ts Pattern 34):
+      <=2 files  → 4 096  (typical small fix)
+       3-5 files → 6 144  (medium change)
+       6-9 files → 8 192  (large change)
+      >=10 files → 12 288 (wide refactor — cap before OOM)
+    """
+    if file_count >= 10:
+        return 12_288
+    if file_count >= 6:
+        return 8_192
+    if file_count >= 3:
+        return 6_144
+    return 4_096
 
 
 # ── Domain models ──────────────────────────────────────────────────────────────
@@ -263,8 +287,38 @@ class CodeWorker:
     # ── Build ─────────────────────────────────────────────────────────────────
 
     async def build(self, plan: IssuePlan) -> BuildResult:
-        """Generate and apply code changes on a feature branch."""
+        """Generate and apply code changes on a feature branch.
+
+        Uses a per-branch fcntl lock (Pattern 33) so two concurrent agents
+        cannot write to the same branch simultaneously.
+        """
         logger.info("Building issue #%d on branch %s", self.issue.iid, self._branch)
+
+        # Pattern 33 — acquire exclusive branch lock
+        os.makedirs(_LOCK_DIR, exist_ok=True)
+        lock_path = os.path.join(_LOCK_DIR, re.sub(r"[^\w-]", "_", self._branch) + ".lock")
+        lock_fh = open(lock_path, "w")  # noqa: WPS515 (file handle held for lock duration)
+        try:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_fh.close()
+            raise RuntimeError(
+                f"Branch {self._branch!r} is already being built by another agent (lock: {lock_path})"
+            )
+        try:
+            return await self._build_locked(plan)
+        finally:
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            lock_fh.close()
+
+    async def _build_locked(self, plan: IssuePlan) -> BuildResult:
+        """Inner build logic executed while holding the branch lock."""
+        # Pattern 34 — scale generation budget to scope of change
+        gen_tokens = _context_aware_max_tokens(len(plan.files_to_touch))
+        logger.info(
+            "Issue #%d: %d files planned → gen_tokens=%d",
+            self.issue.iid, len(plan.files_to_touch), gen_tokens,
+        )
 
         # Set git identity + create branch
         await self._setup_git()
@@ -279,7 +333,7 @@ class CodeWorker:
 
         for file_path in plan.files_to_touch:
             existing = await _read_file_safe(os.path.join(_WORKSPACE_ROOT, file_path))
-            new_content = await self._generate_file_change(file_path, existing, plan)
+            new_content = await self._generate_file_change(file_path, existing, plan, gen_tokens)
             if new_content is None:
                 continue
 
@@ -327,7 +381,8 @@ class CodeWorker:
         )
 
     async def _generate_file_change(
-        self, file_path: str, existing_content: str, plan: IssuePlan
+        self, file_path: str, existing_content: str, plan: IssuePlan,
+        max_tokens: int = 6144,
     ) -> Optional[str]:
         """Ask Qwen3.5 to generate the full new content for a single file."""
         steps_text = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(plan.implementation_steps))
@@ -369,7 +424,7 @@ class CodeWorker:
         result = await _chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.05,
-            max_tokens=6144,
+            max_tokens=max_tokens,
         )
 
         # Strip any accidental markdown code fences the model may have added

@@ -9,6 +9,8 @@ import asyncio
 import sys
 import time
 
+import pytest
+
 PASS = 0
 FAIL = 0
 
@@ -28,6 +30,11 @@ def fail(label, detail=""):
 # ─── A) conversation_history ────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not __import__("os").getenv("DATABASE_URL"),
+    reason="DATABASE_URL not set — requires running PostgreSQL",
+)
 async def test_conversation_history():
     print("\n═══ A) conversation_history ═══")
     from app.database import AsyncSessionLocal, engine
@@ -123,6 +130,10 @@ async def test_conversation_history():
 # ─── B) hybrid_router ───────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    not __import__("importlib.util", fromlist=["find_spec"]).find_spec("pydantic_settings"),
+    reason="pydantic_settings not installed — runs in Docker only",
+)
 def test_hybrid_router():
     print("\n═══ B) hybrid_router ═══")
     from app.hybrid_router import get_hybrid_router, HybridRouter, RoutingDecision
