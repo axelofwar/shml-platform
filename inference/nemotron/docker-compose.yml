@@ -46,12 +46,28 @@ services:
       - --host
       - 0.0.0.0
       - --jinja
+      # reasoning-format auto: lets model use extended thinking when needed for tool calls.
+      # Validated by JoelDeTeves (2026-03-28): zero tool-call failures at 100+ T/s on RTX A5000.
+      # Replaces --reasoning-budget 0 (which was silently disabling all chain-of-thought).
+      - --reasoning-format
+      - auto
+      # Flash attention: reduces VRAM overhead for long contexts, prerequisite for 128k ctx.
+      - --flash-attn
+      - --batch-size
+      - "4096"
+      - --ubatch-size
+      - "2048"
       - --temp
       - "0.6"
       - --top-p
       - "0.95"
-      - --reasoning-budget
-      - "0"
+      - --top-k
+      - "20"
+      - --min-p
+      - "0.0"
+      # presence-penalty 0.5: key setting — prevents repetitive tool-call loops.
+      - --presence-penalty
+      - "0.5"
 
     # SECURITY: No direct port exposure - access through Traefik only
     # ports:

@@ -109,6 +109,15 @@ class Settings(BaseSettings):
     MAX_AGENT_ITERATIONS: int = 15
     AGENT_THINKING_TIMEOUT: int = 300  # 5 minutes per step
 
+    # Pattern 22 — adaptive thinking config
+    THINKING_MODE: str = os.getenv("THINKING_MODE", "auto")  # "auto" | "always" | "never"
+    MAX_THINKING_TOKENS: int = int(os.getenv("MAX_THINKING_TOKENS", "10000"))
+    ULTRATHINK_BUDGET_TOKENS: int = int(os.getenv("ULTRATHINK_BUDGET_TOKENS", "31999"))
+
+    # Pattern 23 — cost / budget hard stops
+    MAX_SESSION_COST_USD: float = float(os.getenv("MAX_SESSION_COST_USD", "5.0"))
+    MAX_LOOP_ITERATIONS: int = int(os.getenv("MAX_LOOP_ITERATIONS", "100"))
+
     # FusionAuth for GitHub token storage
     FUSIONAUTH_URL: str = os.getenv("FUSIONAUTH_URL", "http://fusionauth:9011")
     FUSIONAUTH_API_KEY: str = os.getenv("FUSIONAUTH_API_KEY", "")

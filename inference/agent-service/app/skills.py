@@ -1485,7 +1485,8 @@ def get_active_skills(user_task: str, user_role: str = "viewer") -> List[str]:
     allowed_skills = filter_skills_for_role(SKILLS, user_role)
 
     contexts = []
-    for skill_class in allowed_skills:
+    # Pattern 26: sort alphabetically for stable KV cache prefix across calls
+    for skill_class in sorted(allowed_skills, key=lambda s: s.__name__):
         if skill_class.is_activated(user_task):
             context = skill_class.get_context(user_task)
             if context:

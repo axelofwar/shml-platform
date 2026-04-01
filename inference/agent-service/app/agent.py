@@ -353,6 +353,15 @@ async def call_coding_model(
             logger.info(f"Primary model health check error: {e}, routing to fallback")
             use_fallback = True
 
+        # Pattern 37 — ultrathink keyword → max thinking budget
+        import re as _re
+        _ULTRATHINK_RE = _re.compile(r'\bultrathink\b', _re.IGNORECASE)
+        if _ULTRATHINK_RE.search(prompt):
+            max_tokens = settings.ULTRATHINK_BUDGET_TOKENS
+            logger.info("ultrathink detected → budget_tokens=%d", max_tokens)
+        elif max_tokens == 2048 and settings.THINKING_MODE == "auto":
+            max_tokens = settings.MAX_THINKING_TOKENS
+
         # Step 2: Select endpoint based on health check
         if use_fallback:
             endpoint = f"{fallback_url}/v1/chat/completions"

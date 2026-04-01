@@ -119,6 +119,8 @@ class LoopStatus:
     complexity_threshold: float = 0.4
     total_completed: int = 0
     total_failed: int = 0
+    consecutive_denials: int = 0  # Pattern 38: blocked/review-rejection tracking
+    total_denials: int = 0
     last_completed_at: Optional[float] = None
     last_error: str = ""
     started_at: Optional[float] = None
@@ -134,6 +136,8 @@ class LoopStatus:
             "complexity_threshold": self.complexity_threshold,
             "total_completed": self.total_completed,
             "total_failed": self.total_failed,
+            "consecutive_denials": self.consecutive_denials,
+            "total_denials": self.total_denials,
             "last_completed_at": self.last_completed_at,
             "last_error": self.last_error,
             "uptime_seconds": (time.time() - self.started_at) if self.started_at else 0,
@@ -389,6 +393,15 @@ class AgentLoop:
         plan = await worker.plan()
         logger.info("Issue #%d plan ready (%d files)", issue.iid, len(plan.files_to_touch))
 
+        # Pattern 31: verification nudge — warn if large plan has no test files
+        test_files = [f for f in plan.files_to_touch if "test" in f.lower()]
+        if len(plan.files_to_touch) >= 3 and not test_files:
+            logger.warning(
+                "Pattern 31 nudge: %d files planned for issue #%d with no test coverage — consider adding tests",
+                len(plan.files_to_touch),
+                issue.iid,
+            )
+
         # ── 3. BUILD ──────────────────────────────────────────────────────────
         self._status.state = LoopState.BUILDING
         build_result = await worker.build(plan)
@@ -478,6 +491,20 @@ class AgentLoop:
         if self._status.consecutive_failures >= self._config.circuit_breaker_threshold:
             self.pause(reason=f"Circuit breaker: {self._status.consecutive_failures} consecutive failures")
             asyncio.create_task(self._create_alert_issue())
+
+        # Pattern 38: track review/permission denials separately
+        if any(kw in error.lower() for kw in ("review", "blocked", "denied", "rejected")):
+            self._status.consecutive_denials += 1
+            self._status.total_denials += 1
+            logger.warning(
+                "Denial #%d detected — transitioning to AWAITING_HUMAN if >= 3",
+                self._status.consecutive_denials,
+            )
+            if self._status.consecutive_denials >= 3:
+                self._status.state = LoopState.AWAITING_HUMAN
+                logger.warning("3 consecutive denials — entering AWAITING_HUMAN state")
+        else:
+            self._status.consecutive_denials = 0
 
     def _handle_success(self) -> None:
         self._status.consecutive_successes += 1
