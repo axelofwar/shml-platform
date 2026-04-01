@@ -5,6 +5,49 @@ operating the SHML Platform. Updated as we discover things worth keeping.
 
 ---
 
+## Autonomous Agent Patterns — claw-code + free-code Audit (2025-06)
+
+### Full Audit Summary (43 Patterns Across Two Forks)
+
+**Sources audited:**
+- **claw-code** (`instructkr/claw-code`) — Rust port; 9 modules; 21 patterns (T1–T21)
+- **free-code** (`paoloanzn/free-code`) — Leaked production TypeScript (2026-03-31); 10 source files; 22 patterns (22–43); Bun + React/Ink + Zod v4 + MCP/LSP
+
+**Sprint 1 — Implemented (commit `fdad720a3`):**
+
+| Pattern | File | Change | Expected Gain |
+|---------|------|---------|---------------|
+| T1 | `nemotron/docker-compose.yml` | `--reasoning-format auto` + perf flags | +25% Tier-2 tool-call success |
+| P26 | `skills.py` | Sort skill pool by `__name__` | ~40-70% KV cache hit → first-token latency |
+| P22/P23 | `config.py` | `THINKING_MODE`, `MAX_THINKING_TOKENS`, `ULTRATHINK_BUDGET_TOKENS`, `MAX_SESSION_COST_USD`, `MAX_LOOP_ITERATIONS` | Adaptive thinking + budget guardrails |
+| P37 | `agent.py` | Ultrathink regex → 32K budget; auto → 10K default | 4× reasoning depth on hard problems |
+| P38 | `agent_loop.py` | `consecutive_denials` + `AWAITING_HUMAN` gate at 3 | Eliminates infinite loops on repeated MR rejections |
+| P31 | `agent_loop.py` | Verification nudge: warn when ≥3 files planned, no test files | Catches coverage gaps earlier |
+
+**Key gotchas from the audit:**
+- `--reasoning-budget 0` in llama-server KILLS chain-of-thought entirely — never set to 0
+- Sorted tool pool = stable system prompt prefix = KV cache hits. One `.sort()` = ~50% latency reduction
+- `ultrathink` is a keyword detected in the user prompt (`re.IGNORECASE`) — no API param, just a signal
+- One-shot agents (`Explore`, `Plan` in free-code) skip agentId/SendMessage overhead (~135 tokens saved per call)
+- Hook exit code 2 = blocking error; first-line `{"async":true}` = background execution (free-code pattern)
+- Workspace trust gate: interactive mode requires dialog acceptance for ALL hooks (security: prevents RCE from untrusted workspace)
+
+**Sprint 2 priorities (not yet implemented):**
+- P36: MEMORY.md two-tier memory (cross-session context, ~30-50% re-learning reduction)
+- P28/P33: Parallel file I/O + multi-agent file locking with `fcntl`
+- P34: Context-aware token budgets (bump to 40K when `plan.files_to_touch > 5`)
+- P41: Lifecycle hook bus (25+ event types from free-code `hooks.ts`)
+- TurboQuant: pending llama.cpp merge — track arXiv:2504.19874 + llama.cpp PR feed
+
+### TurboQuant Initiative — Status
+
+- **Paper:** arXiv:2504.19874 — expanding to full model weight compression (confirmed by @Mayhem4Markets)
+- **Impact:** Qwen3.5-27B fp16 (54GB) → ~9GB effective; 6× VRAM savings
+- **Platform effect:** Would upgrade T1 router from 8B INT4 → 27B TurboQuant at same VRAM cost → +20-25% correct first-attempt rate
+- **Status:** Pending llama.cpp merge — **do not implement yet**, monitor PR feed
+
+---
+
 ## Research Findings & Platform Applications
 
 ### TurboQuant / QJL / PolarQuant — KV Cache Compression

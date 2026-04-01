@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent: Sprint 1 — 43-pattern audit implementation** (commit `fdad720a3`)
+  - `inference/nemotron/docker-compose.yml` (T1): restored `--reasoning-format auto`, perf flags — fixes Tier-2 tool-call success
+  - `inference/agent-service/app/skills.py` (P26): sort skill pool by `__name__` → stable KV cache prefix
+  - `inference/agent-service/app/config.py` (P22/P23): `THINKING_MODE`, `MAX_THINKING_TOKENS`, `ULTRATHINK_BUDGET_TOKENS`, `MAX_SESSION_COST_USD`, `MAX_LOOP_ITERATIONS`
+  - `inference/agent-service/app/agent.py` (P37): ultrathink keyword → 32K tokens; auto → 10K default
+  - `inference/agent-service/app/agent_loop.py` (P38+P31): denial tracking + AWAITING_HUMAN gate + verification nudge
+  - `LESSONS_LEARNED.md`: full 43-pattern audit summary + TurboQuant status table
+
 - **Inference: Nemotron KV cache quantization** (2026-03)
   - `inference/nemotron/docker-compose.yml`: added `--cache-type-k q8_0 --cache-type-v q8_0`
   - Architecture verified from GGUF metadata: `nemotron_h_moe`, 52 blocks, **6 hybrid attention layers** (positions 5,12,19,26,33,42), 2 KV heads (aggressive GQA), head_dim=128
