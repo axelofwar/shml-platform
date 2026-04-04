@@ -38,7 +38,7 @@ class TrainingStatus:
     """Check training status from qwen-manager (GPU yield lifecycle)"""
 
     QWEN_MANAGER_URLS = [
-        "http://qwen-manager:8000/status",
+        "http://nemotron-manager:8000/status",
         "http://localhost:8021/status",
     ]
     # Legacy alias kept for backwards compatibility
@@ -170,7 +170,7 @@ class ModelRouter:
         self.models_config = {
             ModelType.QWEN_CODER: {
                 "name": "Qwen3.5-35B-A3B-Q4_K_M",  # Qwen3.5 MoE, thinking enabled
-                "url": "http://qwen-coding:8000",
+                "url": "http://qwopus-coding:8000",
                 "gpu": "cuda:0",  # RTX 3090 Ti (GPU 0)
                 "capabilities": ["code", "general", "reasoning"],
             },

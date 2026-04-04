@@ -40,7 +40,12 @@ _DIARY_DIR.mkdir(parents=True, exist_ok=True)
 
 # Obsidian watcher — path to docs/research/ relative to repo root
 # Agent-service lives at inference/agent-service/, so ../../docs/research
-_RESEARCH_DIR = Path(__file__).resolve().parents[3] / "docs" / "research"
+# Use env var to allow override; fall back gracefully if path depth unavailable (Docker)
+_RESEARCH_DIR_ENV = os.getenv("RESEARCH_DIR")
+try:
+    _RESEARCH_DIR = Path(_RESEARCH_DIR_ENV) if _RESEARCH_DIR_ENV else Path(__file__).resolve().parents[3] / "docs" / "research"
+except IndexError:
+    _RESEARCH_DIR = Path("/tmp/research")  # no-op fallback in Docker
 _OBSIDIAN_WATCHER_DEBOUNCE: float = float(
     os.getenv("OBSIDIAN_WATCHER_DEBOUNCE_SECS", "10")
 )

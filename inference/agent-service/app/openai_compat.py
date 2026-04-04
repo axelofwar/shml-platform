@@ -239,14 +239,16 @@ class OpenAICompatibilityLayer:
         self, openai_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Convert OpenAI messages to internal format."""
-        return [
-            {
+        result = []
+        for msg in openai_messages:
+            m: Dict[str, Any] = {
                 "role": msg.get("role"),
-                "content": msg.get("content"),
-                "name": msg.get("name"),
+                "content": msg.get("content") or "",
             }
-            for msg in openai_messages
-        ]
+            if msg.get("name"):
+                m["name"] = msg["name"]
+            result.append(m)
+        return result
 
     def _resolve_endpoint(
         self, model_preference: str, prompt: str = ""

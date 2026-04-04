@@ -283,7 +283,7 @@ async def trigger_skill_evolution(
         if force:
             # Skip threshold check — run regardless of lesson count
             engine = get_evolution_engine(
-                base_url=os.environ.get("CODING_MODEL_URL", "http://qwen-coding:8000")
+                base_url=os.environ.get("CODING_MODEL_URL", "http://qwopus-coding:8000")
             )
             session_id = f"manual_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
             results = await engine.process_lessons([], session_id=session_id)

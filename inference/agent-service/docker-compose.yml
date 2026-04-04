@@ -103,6 +103,10 @@ services:
       # Agent uses docker-proxy (read-only GET /containers) via DOCKER_HOST env var
       # SandboxSkill and ShellSkill docker commands route through restricted proxy
 
+    # Localhost-only port for IDE tools (Hermes, OpenCode, Cline) - no network exposure
+    ports:
+      - "127.0.0.1:8099:8000"
+
     networks:
       - shml-platform
 
