@@ -82,6 +82,64 @@ const App: React.FC = () => {
     }
   };
 
+  // Export Q&A session as formatted text
+  const exportCallNotes = () => {
+    if (!currentQuestion && !currentResponse) {
+      alert("No Q&A session to export. Ask a question first!");
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const dateStr = new Date().toLocaleString(undefined, {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    let formattedText = `SBA RESOURCE PORTAL - CALL NOTES\n`;
+    formattedText += `Generated: ${dateStr}\n`;
+    formattedText += `Session ID: ${timestamp.split('T')[1].split('.')[0]}\n`;
+    formattedText += `="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="="\n\n`;
+
+    if (currentQuestion?.text) {
+      formattedText += `CUSTOMER QUESTION:\n${currentQuestion.text}\n\n`;
+    }
+
+    if (currentResponse?.text) {
+      formattedText += `AI RESPONSE:\n${currentResponse.text}\n\n`;
+    }
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(formattedText).then(() => {
+      alert("Call notes copied to clipboard!\n\nYou can now paste directly into your CRM.");
+    }).catch(err => {
+      console.error("Failed to copy to clipboard:", err);
+      alert("Failed to copy to clipboard. Downloading file instead.");
+      downloadNotes(formattedText, `call-notes-${Date.now()}`);
+    });
+
+    // Also download as .txt file
+    downloadNotes(formattedText, `call-notes-${Date.now()}`);
+  };
+
+  const downloadNotes = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Check if there's content to export
+  const hasContentToExport = currentQuestion?.text || currentResponse?.text;
+
   const playAudioData = useCallback(async (base64Data: string, messageId: string) => {
     try {
       // Stop any currently playing audio first
@@ -282,6 +340,19 @@ const App: React.FC = () => {
               <span className="text-xs font-medium hidden sm:inline">Stop</span>
             </button>
           )}
+
+          {/* Export Call Notes Button */}
+          <button
+            onClick={exportCallNotes}
+            disabled={!hasContentToExport}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-900/30 hover:bg-blue-900/50 border border-blue-700/50 text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export Q&A session for CRM"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+            </svg>
+            <span className="text-xs font-medium hidden sm:inline">Export</span>
+          </button>
         </div>
 
         {/* Centered Title Group */}
