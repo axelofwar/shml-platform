@@ -13,11 +13,11 @@ services:
       - CUDA_VISIBLE_DEVICES=0
 
     volumes:
-      - ../../data/models/nemotron-3:/models:ro
+      - ../../data/models/qwopus:/models:ro
 
     command:
       - --model
-      - /models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf
+      - /models/Qwen3.5-27B.Q4_K_M.gguf
       - --alias
       - nemotron-coding
       - --threads
@@ -26,16 +26,15 @@ services:
       - "999"
       - --ctx-size
       - "65536"
-      # KV cache quantization (TurboQuant-aligned: arXiv:2504.19874 validates 3.5-bit quality-neutral)
-      # Architecture (verified from GGUF metadata): nemotron_h_moe, 52 total layers.
-      #   Only 6 are hybrid attention layers (at positions 5,12,19,26,33,42); 46 are Mamba2 SSM.
-      #   KV heads per attn layer = 2 (aggressive GQA), head_dim = 128.
+      # KV cache quantization
+      # Architecture: Qwen3.5-27B — pure transformer, all ~36 attention layers have KV.
+      #   GQA: n_kv_heads ≈ 8, head_dim=128. Very different from Nemotron (only 6 attn layers).
       #
-      # VRAM budget at ctx=65536, 22.8 GB weights → 1,217 MiB headroom on RTX 3090 Ti:
-      #   KV f16 (default): 384 MiB → 633 MiB remaining  (safe, but tight)
-      #   KV q8_0 (applied): 192 MiB → 825 MiB remaining  (+192 MiB headroom vs f16)
-      #   KV q4_0 (optional): 96 MiB → 921 MiB remaining
-      # q8_0 is the sweet spot: saves 192 MiB of VRAM, still quality-neutral per TurboQuant.
+      # VRAM budget at ctx=65536, 16.5 GB Q4_K_M weights → 7.5 GB headroom on RTX 3090 Ti:
+      #   KV f16 (default): ~9.0 GB → total ~25.5 GB → over 24 GB limit ❌
+      #   KV q8_0 (applied): ~4.5 GB → total ~21.0 GB → 3.0 GB remaining ✅
+      #   KV q4_0 (optional): ~2.25 GB → total ~18.75 GB → 5.25 GB remaining ✅
+      # q8_0 is the sweet spot: 3 GB headroom, negligible quality loss vs f16.
       - --cache-type-k
       - q8_0
       - --cache-type-v

@@ -320,7 +320,7 @@ def get_container_status(container_name: str) -> ServiceInfo:
 
     # VRAM estimates
     vram_estimates = {
-        "nemotron-coding": 22.0,
+        "nemotron-coding": 16.5,  # Qwopus Q4_K_M (Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled)
         "qwen3-vl-api": 8.0,
         "z-image-api": 12.0,
         "coding-model-fallback": 6.0,

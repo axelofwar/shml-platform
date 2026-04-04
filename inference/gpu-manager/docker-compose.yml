@@ -14,7 +14,7 @@
 # - GET /status - Detailed status of all GPUs and services
 #
 # This replaces nemotron-manager with a unified approach that handles:
-# - Nemotron (RTX 3090 Ti, 22GB) - Primary coding model
+# - Qwopus/Qwen3.5-27B Q4_K_M (RTX 3090 Ti, 16.5GB) - Primary coding model
 # - coding-model-fallback (RTX 2070, 6GB) - Backup during training
 # - embedding-service (RTX 2070, 1.5GB) - Embeddings
 # - pii-blur-api (RTX 2070, 3GB) - Face detection/blurring
