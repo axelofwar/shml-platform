@@ -1,13 +1,21 @@
 # Unified GPU Manager - Coordinates GPU resources for training and inference
+# Uses uv for fast dependency installation
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
-RUN pip install --no-cache-dir \
+ENV PATH="/root/.local/bin:$PATH" \
+    UV_SYSTEM_PYTHON=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+RUN uv pip install --system \
     fastapi==0.109.0 \
-    uvicorn[standard]==0.27.0 \
+    "uvicorn[standard]==0.27.0" \
     docker==7.0.0 \
     pydantic==2.5.3
 
