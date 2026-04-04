@@ -58,6 +58,8 @@ class OpenAIChatCompletionRequest:
         presence_penalty: float = 0.0,
         stop: Optional[List[str]] = None,
         n: int = 1,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
     ):
         self.model = model
         self.messages = messages
@@ -69,6 +71,8 @@ class OpenAIChatCompletionRequest:
         self.presence_penalty = presence_penalty
         self.stop = stop
         self.n = n
+        self.tools = tools
+        self.tool_choice = tool_choice
 
 
 class OpenAIChatCompletionResponse:
@@ -140,16 +144,28 @@ class OpenAICompatibilityLayer:
         messages = self._convert_messages(request.messages)
 
         # Call model
-        response_text, model_used = await self._call_model(
+        response_data, model_used = await self._call_model(
             messages=messages,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             model_preference=request.model,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
         )
+
+        # Unpack response — may contain tool_calls
+        response_text = response_data.get("content") or ""
+        tool_calls = response_data.get("tool_calls")
+        finish_reason = "tool_calls" if tool_calls else "stop"
 
         # Calculate tokens (approximate)
         prompt_tokens = sum(len(m.get("content", "").split()) for m in request.messages)
         completion_tokens = len(response_text.split())
+
+        # Build message dict — include tool_calls when present
+        message_dict: Dict[str, Any] = {"role": "assistant", "content": response_text or None}
+        if tool_calls:
+            message_dict["tool_calls"] = tool_calls
 
         # Build OpenAI response
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
@@ -160,11 +176,8 @@ class OpenAICompatibilityLayer:
             choices=[
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": response_text,
-                    },
-                    "finish_reason": "stop",
+                    "message": message_dict,
+                    "finish_reason": finish_reason,
                 }
             ],
             usage={
@@ -205,7 +218,74 @@ class OpenAICompatibilityLayer:
         # Convert to internal format
         messages = self._convert_messages(request.messages)
 
-        # Stream from model
+        # When tools are present, use non-streaming path and emit SSE from the result.
+        # Tool calls must be complete before Hermes can execute them — no benefit to streaming.
+        if request.tools:
+            response_data, model_name = await self._call_model(
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                model_preference=request.model,
+                tools=request.tools,
+                tool_choice=request.tool_choice,
+            )
+            tool_calls = response_data.get("tool_calls")
+            content = response_data.get("content") or ""
+
+            if tool_calls:
+                # Emit role chunk
+                role_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_at,
+                    "model": model_name,
+                    "choices": [{"index": 0, "delta": {"role": "assistant", "content": None}, "finish_reason": None}],
+                }
+                yield f"data: {json.dumps(role_chunk)}\n\n"
+
+                # Emit each tool call as a delta chunk per OpenAI spec
+                for i, tc in enumerate(tool_calls):
+                    tc_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": model_name,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [{
+                                    "index": i,
+                                    "id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["function"]["name"],
+                                        "arguments": tc["function"].get("arguments", ""),
+                                    },
+                                }]
+                            },
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield f"data: {json.dumps(tc_chunk)}\n\n"
+
+                # Final finish chunk
+                finish_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_at,
+                    "model": model_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                }
+                yield f"data: {json.dumps(finish_chunk)}\n\n"
+            else:
+                # No tool calls — stream the content as text
+                async for chunk in self._stream_words(content, model_name, completion_id, created_at):
+                    yield chunk
+
+            yield "data: [DONE]\n\n"
+            return
+
+        # Stream from model (no tools)
         async for chunk in self._stream_model(
             messages=messages,
             temperature=request.temperature,
@@ -235,18 +315,55 @@ class OpenAICompatibilityLayer:
         # Send [DONE] marker
         yield "data: [DONE]\n\n"
 
+    async def _stream_words(
+        self,
+        content: str,
+        model_name: str,
+        completion_id: str,
+        created_at: int,
+    ) -> AsyncGenerator[str, None]:
+        """Yield content word-by-word as SSE chunks."""
+        words = content.split()
+        chunk_size = 3
+        for i in range(0, len(words), chunk_size):
+            chunk_text = " ".join(words[i: i + chunk_size])
+            if i + chunk_size < len(words):
+                chunk_text += " "
+            stream_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_at,
+                "model": model_name,
+                "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(stream_chunk)}\n\n"
+            await asyncio.sleep(0.01)
+        done_chunk = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created_at,
+            "model": model_name,
+            "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(done_chunk)}\n\n"
+
     def _convert_messages(
         self, openai_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Convert OpenAI messages to internal format."""
+        """Convert OpenAI messages to internal format, preserving tool call fields."""
         result = []
         for msg in openai_messages:
             m: Dict[str, Any] = {
                 "role": msg.get("role"),
-                "content": msg.get("content") or "",
+                "content": msg.get("content") if msg.get("content") is not None else "",
             }
             if msg.get("name"):
                 m["name"] = msg["name"]
+            # Preserve tool calling fields for multi-turn tool use
+            if msg.get("tool_calls"):
+                m["tool_calls"] = msg["tool_calls"]
+            if msg.get("tool_call_id"):
+                m["tool_call_id"] = msg["tool_call_id"]
             result.append(m)
         return result
 
@@ -308,12 +425,14 @@ class OpenAICompatibilityLayer:
         temperature: float,
         max_tokens: Optional[int],
         model_preference: str,
-    ) -> tuple[str, str]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+    ) -> tuple[Dict[str, Any], str]:
         """
         Call inference model (non-streaming) via hybrid router.
 
         Returns:
-            (response_text, model_used)
+            (response_dict with content and optional tool_calls, model_used)
         """
         # Extract prompt for routing decision
         prompt = ""
@@ -330,15 +449,18 @@ class OpenAICompatibilityLayer:
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             try:
-                resp = await client.post(
-                    model_endpoint,
-                    json={
-                        "messages": messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens or 2048,
-                        "stream": False,
-                    },
-                )
+                body: Dict[str, Any] = {
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens or 2048,
+                    "stream": False,
+                }
+                if tools:
+                    body["tools"] = tools
+                if tool_choice is not None:
+                    body["tool_choice"] = tool_choice
+
+                resp = await client.post(model_endpoint, json=body)
 
                 if resp.status_code != 200:
                     raise HTTPException(
@@ -347,9 +469,13 @@ class OpenAICompatibilityLayer:
                     )
 
                 data = resp.json()
-                response_text = data["choices"][0]["message"]["content"]
+                msg = data["choices"][0]["message"]
+                response_data: Dict[str, Any] = {
+                    "content": msg.get("content") or "",
+                    "tool_calls": msg.get("tool_calls"),
+                }
 
-                return response_text, model_name
+                return response_data, model_name
 
             except httpx.RequestError as e:
                 logger.error(f"HTTP request failed: {e}")

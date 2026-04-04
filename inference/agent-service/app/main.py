@@ -460,6 +460,8 @@ async def openai_chat_completions(request: dict):
             presence_penalty=request.get("presence_penalty", 0.0),
             stop=request.get("stop"),
             n=request.get("n", 1),
+            tools=request.get("tools"),
+            tool_choice=request.get("tool_choice"),
         )
 
         # TODO: Extract user info from OAuth2-Proxy headers
