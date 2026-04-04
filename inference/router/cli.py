@@ -56,17 +56,22 @@ def load_env():
 
 
 def get_google_api_key() -> Optional[str]:
-    """Get Google API key from various sources."""
+    """Get Google API key for the router (personal/dev use only).
+
+    NOTE: BNCCYBERSPACE_GOOGLE_API_KEY is intentionally excluded here.
+    That key is scoped to the SBA Resource Portal via SBA_GEMINI_API_KEY
+    on the inference-gateway container and must not be used by other
+    local agentic services.
+    """
     # Try direct env var first
     key = os.environ.get("GOOGLE_API_KEY")
     if key:
         return key
 
-    # Try project-specific keys
-    for var in ["AXELOFWAR_GOOGLE_API_KEY", "BNCCYBERSPACE_GOOGLE_API_KEY"]:
-        key = os.environ.get(var)
-        if key:
-            return key
+    # Personal dev key only — not the SBA client key
+    key = os.environ.get("AXELOFWAR_GOOGLE_API_KEY")
+    if key:
+        return key
 
     return None
 

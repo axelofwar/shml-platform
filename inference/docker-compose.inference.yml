@@ -166,8 +166,8 @@ services:
       - RATE_LIMIT_WINDOW_SECONDS=60
       - BACKUP_COMPRESSION=zstd
       - BACKUP_RETENTION_DAYS=90
-      # Gemini proxy (SBA Resource Portal) — key lives server-side only
-      - GEMINI_API_KEY=${BNCCYBERSPACE_GOOGLE_API_KEY:-}
+      # Gemini proxy (SBA Resource Portal) — scoped key, not used by other services
+      - SBA_GEMINI_API_KEY=${BNCCYBERSPACE_GOOGLE_API_KEY:-}
     volumes:
       - ./backups:/backups
       - ./logs/gateway:/app/logs

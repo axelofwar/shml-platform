@@ -3,7 +3,7 @@ Gemini Proxy Router — server-side Gemini API wrapper for the SBA Resource Port
 
 Keeps the Google API key off the client bundle. The SBA frontend calls these
 endpoints; this router forwards to generativelanguage.googleapis.com using the
-server-side GEMINI_API_KEY environment variable.
+server-side SBA_GEMINI_API_KEY environment variable.
 
 Endpoints:
   POST /api/gemini/generate  — multimodal Q&A (text + audio + attachments)
@@ -101,7 +101,7 @@ async def generate(req: GenerateRequest) -> GenerateResponse:
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="Gemini API key not configured on server. Set GEMINI_API_KEY.",
+            detail="Gemini API key not configured on server. Set SBA_GEMINI_API_KEY.",
         )
 
     parts = _build_parts(req)
@@ -152,7 +152,7 @@ async def speech(req: SpeechRequest) -> SpeechResponse:
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="Gemini API key not configured on server. Set GEMINI_API_KEY.",
+            detail="Gemini API key not configured on server. Set SBA_GEMINI_API_KEY.",
         )
 
     if not req.text or not req.text.strip():
