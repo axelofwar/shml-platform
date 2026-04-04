@@ -13,3 +13,5 @@ zstandard>=0.22.0
 
 # Utilities
 python-multipart>=0.0.6
+
+# Gemini proxy (SBA Resource Portal) — uses httpx (already listed above), no extra SDK needed

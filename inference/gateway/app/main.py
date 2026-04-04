@@ -30,6 +30,7 @@ from .backup import create_backup, list_backups, cleanup_old_backups
 from .training_router import router as training_router
 from .feedback_router import router as feedback_router
 from .audio_router import router as audio_router
+from .gemini_router import router as gemini_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ app.add_middleware(
 app.include_router(training_router)
 app.include_router(feedback_router)
 app.include_router(audio_router)  # DMCA-safe audio workflow
+app.include_router(gemini_router)  # Gemini proxy for SBA Resource Portal
 
 
 def get_user_id(x_user_id: Optional[str] = Header(default=None)) -> str:

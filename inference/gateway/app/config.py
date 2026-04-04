@@ -52,3 +52,11 @@ BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "90"))
 
 # Paths
 LOG_DIR = Path(os.getenv("LOG_DIR", "/app/logs"))
+
+# =============================================================================
+# Gemini proxy (SBA Resource Portal)
+# Key lives server-side — never sent to the client bundle
+# =============================================================================
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_GENERATE_MODEL: str = os.getenv("GEMINI_GENERATE_MODEL", "gemini-2.5-flash")
+GEMINI_TTS_MODEL: str = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
