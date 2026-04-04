@@ -2,16 +2,16 @@
 # Auto-generated: 2025-12-18
 
 # Default model for coding tasks
-defaultModel = "local-coding/nemotron-coding"
+defaultModel = "local-coding/qwopus-coding"
 
 # Agent-service exposes OpenAI-compatible /v1/chat/completions at port 8099.
-# nemotron-coding (llama-server) is Docker-internal only — no direct host port.
+# qwopus-coding (llama-server) is Docker-internal only — no direct host port.
 [providers.local-coding]
 type = "openai"
 baseURL = "http://localhost:8099/v1"
 
 [[providers.local-coding.models]]
-id = "nemotron-coding"
+id = "qwopus-coding"
 name = "Qwopus-27B (Local via agent-service)"
 maxTokens = 16384
 contextWindow = 65536

@@ -46,15 +46,15 @@
 
 ## Steps to reproduce
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Environment
 
-- **Service / container:** 
+- **Service / container:**
 - **GPU:** RTX 3090 Ti (cuda:0) / RTX 2070 (cuda:1) / N/A
-- **Commit / version:** 
+- **Commit / version:**
 - **Logs:** (paste relevant lines or link to `docker logs <container>`)
 
 ## Severity

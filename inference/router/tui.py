@@ -40,7 +40,7 @@ class ModelSelector(Static):
     """Widget for selecting reasoning and execution models"""
 
     reasoning_model = reactive("gemini-2.0-flash-exp")
-    execution_model = reactive("nemotron-coding")
+    execution_model = reactive("qwopus-coding")
 
     def compose(self) -> ComposeResult:
         yield Label("🧠 Reasoning Model:", classes="label")
@@ -58,11 +58,11 @@ class ModelSelector(Static):
         yield Label("⚡ Execution Model:", classes="label")
         yield Select(
             [
-                ("Qwopus-27B (Local)", "nemotron-coding"),
+                ("Qwopus-27B (Local)", "qwopus-coding"),
                 ("Qwen3-VL-8B (Local)", "qwen3-vl-8b"),
                 ("Same as Reasoning", "same"),
             ],
-            value="nemotron-coding",
+            value="qwopus-coding",
             id="execution-select",
         )
 

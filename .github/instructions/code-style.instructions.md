@@ -170,6 +170,49 @@ const JobCard: React.FC<{ job: JobStatus }> = ({ job }) => {
 - Nesting: ≤3 levels deep (extract early returns, helper functions)
 - No "clever" one-liners that obscure intent
 
+## Dockerfiles — uv (MANDATORY, replaces pip)
+
+**Use `uv` for ALL Python package installs in Dockerfiles.** 10-100× faster than pip due to parallel resolution and caching.
+
+```dockerfile
+# Standard uv setup — add to every Python Dockerfile:
+ENV PATH="/root/.local/bin:$PATH" \
+    UV_SYSTEM_PYTHON=1
+
+# Include curl in apt install, then:
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# ❌ NEVER
+RUN pip install --no-cache-dir package-name
+RUN pip3 install package-name
+
+# ✅ ALWAYS
+RUN uv pip install --system package-name
+```
+
+**Torch wheel selection:**
+
+```dockerfile
+# GPU training containers (RL policy networks, inference):
+# Use CUDA base image + standard torch — uv resolves CUDA wheels from the base
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+RUN uv pip install --system "torch>=2.0.0"
+
+# CPU-only containers (pure API services, no training, no inference):
+RUN uv pip install --system "torch>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+
+# JAX-GPU containers: skip torch entirely — JAX handles GPU
+# Standard GPU containers: uv resolves CUDA wheels automatically
+```
+
+**Custom find-links indexes (e.g. JAX CUDA):**
+
+```dockerfile
+RUN uv pip install --system \
+    "jax[cuda12_pip]==0.4.25" \
+    -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+
 ## What NOT to add without request
 
 - Don't add docstrings to code you didn't change

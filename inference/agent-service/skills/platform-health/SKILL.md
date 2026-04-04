@@ -51,7 +51,7 @@ Test internal health endpoints for critical services:
 ```bash
 # Inference models
 docker exec inference-gateway curl -sf http://localhost:8000/health
-docker exec nemotron-coding curl -sf http://localhost:8000/health
+docker exec qwopus-coding curl -sf http://localhost:8000/health
 docker exec qwen3-vl-api curl -sf http://localhost:8000/health
 
 # Agent service
@@ -79,7 +79,7 @@ free -h
 
 ```bash
 # Verify key internal DNS resolves (from within Docker network)
-docker exec inference-gateway getent hosts shml-postgres nemotron-coding qwen3-vl-api shml-redis
+docker exec inference-gateway getent hosts shml-postgres qwopus-coding qwen3-vl-api shml-redis
 ```
 
 ## Remediation

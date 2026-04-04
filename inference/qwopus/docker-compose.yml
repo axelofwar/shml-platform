@@ -1,11 +1,11 @@
 services:
-  nemotron-coding:
-    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/nemotron-coding:${SHML_IMAGE_TAG:-latest}
+  qwopus-coding:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/qwopus-coding:${SHML_IMAGE_TAG:-latest}
     pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nemotron-coding
+    container_name: qwopus-coding
     restart: unless-stopped
 
     environment:
@@ -19,7 +19,7 @@ services:
       - --model
       - /models/${CODING_MODEL_GGUF:-Qwen3.5-27B.Q4_K_M.gguf}
       - --alias
-      - ${CODING_MODEL_ALIAS:-nemotron-coding}
+      - ${CODING_MODEL_ALIAS:-qwopus-coding}
       - --threads
       - "-1"
       - --n-gpu-layers
@@ -50,8 +50,9 @@ services:
       # Replaces --reasoning-budget 0 (which was silently disabling all chain-of-thought).
       - --reasoning-format
       - auto
-      # Flash attention: reduces VRAM overhead for long contexts, prerequisite for 128k ctx.
+      # Flash attention: requires explicit on/off/auto value in newer llama.cpp builds.
       - --flash-attn
+      - "on"
       - --batch-size
       - "4096"
       - --ubatch-size
@@ -110,14 +111,12 @@ services:
     restart: unless-stopped
 
     environment:
-      - NEMOTRON_CONTAINER=nemotron-coding
+      - NEMOTRON_CONTAINER=qwopus-coding
       - GPU_INDEX=0
       - YIELD_WAIT_SECONDS=5
-      - DOCKER_HOST=tcp://docker-proxy:2375
 
-    # SECURITY: Docker socket removed - using proxy instead
-    # volumes:
-    #   - /var/run/docker.sock:/var/run/docker.sock  # REMOVED: host-escape vector
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     # Run with docker group for socket access
     user: "1000:984" # UID:docker-GID (adjust GID if different)
@@ -146,7 +145,7 @@ services:
       start_period: 10s
 
     depends_on:
-      - nemotron-coding
+      - qwopus-coding
 
 networks:
   shml-platform:

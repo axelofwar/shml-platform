@@ -201,6 +201,7 @@ HTTP_SERVICES=(
     "pii-blur-api|http://pii-blur-api:8000/health|PII Blur API"
     "audio-copyright-api|http://audio-copyright-api:8000/health|Audio Copyright API"
     "mlflow-api|http://mlflow-api:8000/health|MLflow API"
+    "${PLATFORM_PREFIX}-sba-resource-portal|http://${PLATFORM_PREFIX}-sba-resource-portal:3000/|SBA Resource Portal"
 )
 
 if [[ -n "${PROTECTED_CONTAINERS:-}" ]]; then
@@ -645,6 +646,151 @@ check_display_gpu_pressure() {
             "GPU ${DISPLAY_GPU}: util=${util}% memory=${mem_used}MiB temp=${temp}°C. Stopped:${stopped}" \
             "Leave GPU ${DISPLAY_GPU} idle until desktop responsiveness is stable"
         audit "DISPLAY_GPU_PRESSURE" "GPU-${DISPLAY_GPU}" "Util=${util}% Mem=${mem_used}MiB Temp=${temp}C Stopped=${stopped}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Host process monitor — Qwen3.5-27B llama.cpp coding server
+# The llama-server is a bare host process (not a Docker container).
+# We probe it via HTTP from within Docker using the Docker bridge gateway IP.
+# If unhealthy AND training is not active → alert + escalate.
+# Restart is handled by the systemd service (qwen35-server.service).
+# ---------------------------------------------------------------------------
+LLAMA_STATE_FILE="${STATE_DIR}/llama-server.state"
+LLAMA_DOWN_CYCLES=0
+
+check_llama_server() {
+    # Resolve Docker bridge gateway to reach host from within the container
+    local host_ip
+    host_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+    [[ -z "$host_ip" ]] && return 0  # Can't determine host IP — skip silently
+
+    local health_url="http://${host_ip}:${LLAMA_SERVER_PORT:-8000}/health"
+
+    # Probe the health endpoint (3s timeout)
+    local http_code
+    http_code=$(curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$health_url" 2>/dev/null) || http_code="000"
+
+    if [[ "$http_code" == "200" ]]; then
+        # Server is healthy — clear failure counter
+        if [[ "${LLAMA_DOWN_CYCLES}" -gt 0 ]]; then
+            log "OK: llama-server recovered (was down for ${LLAMA_DOWN_CYCLES} cycles)"
+            send_alert_card \
+                --container "qwen35-server (host)" \
+                --severity "ok" \
+                --event "llama_server_recovered" \
+                --problem "llama-server was unreachable for ${LLAMA_DOWN_CYCLES} watchdog cycles" \
+                --action "Health check now passing at ${health_url}" \
+                --agent "shml-watchdog" \
+                --outcome "✅ llama-server is healthy — Continue.dev and Cline are operational."
+            close_gitlab_incident "llama-server Unreachable" "Recovered at $(date -u '+%Y-%m-%d %H:%M UTC')"
+            audit "LLAMA_RECOVERED" "qwen35-server" "Cycles down=${LLAMA_DOWN_CYCLES}"
+        fi
+        LLAMA_DOWN_CYCLES=0
+        echo "$(date +%s) healthy" > "$LLAMA_STATE_FILE"
+        return 0
+    fi
+
+    # Server is unreachable
+    LLAMA_DOWN_CYCLES=$((LLAMA_DOWN_CYCLES + 1))
+    echo "$(date +%s) down ${LLAMA_DOWN_CYCLES}" > "$LLAMA_STATE_FILE"
+
+    # Only alert after 2 consecutive failures (avoids transient hiccup noise)
+    if (( LLAMA_DOWN_CYCLES < 2 )); then
+        log "WARN: llama-server returned HTTP ${http_code} (cycle ${LLAMA_DOWN_CYCLES}/2 before alert)"
+        return 0
+    fi
+
+    log "ALERT: llama-server unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
+
+    if is_training_active; then
+        # Training is running — server stopped intentionally to free GPU 0
+        log "INFO: llama-server down AND training active — GPU 0 in use, no action needed"
+        send_alert_card \
+            --container "qwen35-server (host)" \
+            --severity "info" \
+            --event "llama_down_training" \
+            --problem "llama-server is unreachable (HTTP ${http_code}). This is expected while training occupies GPU 0." \
+            --action "No restart attempted — training has exclusive GPU 0 access. systemd service will start the server automatically when GPU is free." \
+            --agent "shml-watchdog" \
+            --outcome "Continue.dev unavailable during training. Will auto-recover when training completes."
+        audit "LLAMA_DOWN_TRAINING" "qwen35-server" "Training active — no action"
+        return 0
+    fi
+
+    # No training active AND server is down — alert and request systemd restart via agent
+    send_alert_card \
+        --container "qwen35-server (host)" \
+        --severity "critical" \
+        --event "llama_server_down" \
+        --problem "llama-server unreachable for ${LLAMA_DOWN_CYCLES} cycles (HTTP ${http_code}). GPU 0 is idle. Continue.dev and Cline requests are timing out." \
+        --action "Creating GitLab incident. systemd service (qwen35-server.service) should auto-restart within 30s. If systemd is not enabled, run: bash inference/llama-cpp/start-qwen35-cuda.sh" \
+        --agent "shml-watchdog" \
+        --outcome "Monitoring for recovery. Next check in ${CHECK_INTERVAL}s." \
+        --gitlab "Incident created — type::bug priority::critical source::watchdog component::infra"
+    audit "LLAMA_DOWN" "qwen35-server" "HTTP=${http_code} Cycles=${LLAMA_DOWN_CYCLES}"
+    create_gitlab_issue \
+        "llama-server Unreachable" \
+        "The Qwen3.5-27B llama.cpp coding server is not responding at \`${health_url}\`.\n\nHTTP status: ${http_code}\nDown cycles: ${LLAMA_DOWN_CYCLES}\nTraining active: false\n\nThe systemd service \`qwen35-server.service\` should attempt an automatic restart (Restart=on-failure, RestartSec=30). If the service is not enabled, start manually:\n\`\`\`bash\nbash inference/llama-cpp/start-qwen35-cuda.sh\n\`\`\`\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+        "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
+
+    # Request agent resolution (will attempt restart via systemd API if configured)
+    if (( IS_PAUSED == 0 )) && [[ -n "${AGENT_SERVICE_URL:-}" ]]; then
+        request_agent_resolution \
+            "llama_server_down" \
+            "qwen35-server (host process) unreachable at ${health_url} for ${LLAMA_DOWN_CYCLES} cycles. GPU 0 is idle. Restart via systemd: systemctl restart qwen35-server.service" \
+            "qwen35-server" || log "WARN: Agent escalation unavailable for llama-server"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Cline / Continue.dev slot saturation check
+# ---------------------------------------------------------------------------
+# State: count consecutive cycles where ALL parallel slots are saturated
+CLINE_SATURATION_CYCLES="${CLINE_SATURATION_CYCLES:-0}"
+CLINE_SATURATION_STATE_FILE="${STATE_DIR}/cline_saturation"
+[[ -f "$CLINE_SATURATION_STATE_FILE" ]] && \
+    CLINE_SATURATION_CYCLES=$(awk '{print $2}' "$CLINE_SATURATION_STATE_FILE" 2>/dev/null || echo 0)
+
+check_cline_slot_availability() {
+    local host_ip
+    host_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+    [[ -z "$host_ip" ]] && return 0
+
+    local slots_url="http://${host_ip}:${LLAMA_SERVER_PORT:-8000}/slots"
+    local slots_json
+    slots_json=$(curl -sf --max-time 3 "$slots_url" 2>/dev/null) || return 0  # skip if unreachable
+
+    local total_slots busy_slots
+    total_slots=$(echo "$slots_json" | python3 -c "import sys,json; s=json.load(sys.stdin); print(len(s))" 2>/dev/null || echo 0)
+    busy_slots=$(echo "$slots_json" | python3 -c "import sys,json; s=json.load(sys.stdin); print(sum(1 for x in s if x.get('is_processing',False)))" 2>/dev/null || echo 0)
+
+    if [[ "$total_slots" -eq 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$busy_slots" -ge "$total_slots" ]]; then
+        CLINE_SATURATION_CYCLES=$((CLINE_SATURATION_CYCLES + 1))
+        echo "$(date +%s) ${CLINE_SATURATION_CYCLES}" > "$CLINE_SATURATION_STATE_FILE"
+        log "WARN: All ${total_slots} inference slots busy (cycle ${CLINE_SATURATION_CYCLES}) — Cline requests will queue or timeout"
+        # Alert only after sustained saturation (5+ cycles = ~5 minutes)
+        if (( CLINE_SATURATION_CYCLES == 5 )); then
+            send_alert_card \
+                --container "qwen35-server (host)" \
+                --severity "warning" \
+                --event "cline_slots_saturated" \
+                --problem "All ${total_slots} inference slots have been busy for ${CLINE_SATURATION_CYCLES} consecutive watchdog cycles. Cline tasks are likely timing out." \
+                --action "Cause: Continue.dev indexing may be saturating all slots. No automatic action — increase --parallel slots or pause Continue indexing if needed." \
+                --agent "shml-watchdog" \
+                --outcome "Monitor. If persistent, consider: systemctl restart qwen35-server (reloads with current --parallel setting)"
+            audit "CLINE_SATURATED" "qwen35-server" "Slots=${busy_slots}/${total_slots} Cycles=${CLINE_SATURATION_CYCLES}"
+        fi
+    else
+        if [[ "${CLINE_SATURATION_CYCLES}" -gt 0 ]]; then
+            log "OK: Inference slots available again (${busy_slots}/${total_slots} busy, was saturated for ${CLINE_SATURATION_CYCLES} cycles)"
+        fi
+        CLINE_SATURATION_CYCLES=0
+        echo "$(date +%s) 0" > "$CLINE_SATURATION_STATE_FILE"
     fi
 }
 
@@ -1362,12 +1508,17 @@ GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption
             --container "${container}" \
             --severity "critical" \
             --event "restart_throttle" \
-            --problem "${container} has been restarted ${count}/${MAX_RESTARTS} times this hour. Automated cooldown of ${COOLDOWN_SECONDS}s engaged to prevent a restart loop." \
-            --action "No further automated restarts until cooldown expires. GitLab issue created for manual review." \
+            --problem "${container} has been restarted ${count}/${MAX_RESTARTS} times this hour. Automated cooldown of ${COOLDOWN_SECONDS}s engaged to prevent a restart loop.
+• Current failure reason: ${reason}
+• Exit code: <code>$(docker inspect --format='{{.State.ExitCode}}' "${container}" 2>/dev/null || echo "unknown")</code>
+• Docker restart count: $(docker inspect --format='{{.RestartCount}}' "${container}" 2>/dev/null || echo "unknown")
+<b>Last 8 log lines:</b>
+<pre>$(docker logs --tail=8 "${container}" 2>&1 | tail -8 | sed 's/</\&lt;/g; s/>/\&gt;/g' || echo "(logs unavailable)")</pre>" \
+            --action "No further automated restarts until cooldown expires (${COOLDOWN_SECONDS}s). GitLab issue created for manual review." \
             --agent "shml-watchdog" \
-            --outcome "Container remains in current failing state. Manual intervention required." \
+            --outcome "Container remains in failing state. Manual intervention required: inspect logs above, fix root cause, then run <code>docker start ${container}</code>." \
             --gitlab "Issue created — type::bug priority::critical source::watchdog" \
-            --learning "Repeated-restart pattern recorded in audit log. Review root cause and clear restart counter before next attempt."
+            --learning "Repeated-restart pattern recorded in audit log. Common causes: OOM, missing volume mount, misconfigured env var, dependency not ready. Clear restart counter after fix: <code>rm ${STATE_DIR}/${container}.restarts</code>"
         create_gitlab_issue \
             "Container Throttled: ${container}" \
             "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
@@ -1385,15 +1536,40 @@ GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption
     fi
 
     log "REMEDIATE: Restarting ${container} (${reason}, attempt $((count+1))/${MAX_RESTARTS})"
+
+    # --- Capture diagnostic snapshot BEFORE the restart ---
+    local exit_code started_at uptime_secs uptime_str restart_doc_count last_logs
+    exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${container}" 2>/dev/null || echo "unknown")
+    started_at=$(docker inspect --format='{{.State.StartedAt}}' "${container}" 2>/dev/null | cut -c1-19 | tr 'T' ' ' || echo "unknown")
+    restart_doc_count=$(docker inspect --format='{{.RestartCount}}' "${container}" 2>/dev/null || echo "0")
+    if [[ "$started_at" != "unknown" ]]; then
+        local started_epoch
+        started_epoch=$(date -d "${started_at}" +%s 2>/dev/null || echo "0")
+        uptime_secs=$(( $(date +%s) - started_epoch ))
+        uptime_str="${uptime_secs}s"
+        (( uptime_secs >= 60 )) && uptime_str="$((uptime_secs/60))m $((uptime_secs%60))s"
+        (( uptime_secs >= 3600 )) && uptime_str="$((uptime_secs/3600))h $(((uptime_secs%3600)/60))m"
+    else
+        uptime_str="unknown"
+    fi
+    last_logs=$(docker logs --tail=12 "${container}" 2>&1 | tail -12 | sed 's/</\&lt;/g; s/>/\&gt;/g' | head -12 || echo "(logs unavailable)")
+
     send_alert_card \
         --container "${container}" \
         --severity "warning" \
         --event "controlled_restart" \
-        --problem "Container requires restart. Reason: ${reason}." \
-        --action "docker restart --timeout 30 (attempt $((count+1))/${MAX_RESTARTS} — max ${MAX_RESTARTS}/hr)" \
+        --problem "Container unhealthy. Reason: <b>${reason}</b>
+• Exit code: <code>${exit_code}</code>
+• Last started: ${started_at} UTC (uptime: ${uptime_str})
+• Docker restart count: ${restart_doc_count}
+• Watchdog restart attempt: $((count+1))/${MAX_RESTARTS}
+
+<b>Last 12 log lines:</b>
+<pre>${last_logs}</pre>" \
+        --action "Issuing <code>docker restart --timeout 30 ${container}</code> (watchdog attempt $((count+1))/${MAX_RESTARTS}, max ${MAX_RESTARTS}/hr)" \
         --agent "shml-watchdog" \
-        --outcome "Restart issued. Health validation in 15s."
-    audit "RESTART" "$container" "Reason=${reason} Attempt=$((count+1))/${MAX_RESTARTS}"
+        --outcome "Restart issued. Post-restart health check in 15s."
+    audit "RESTART" "$container" "Reason=${reason} ExitCode=${exit_code} Uptime=${uptime_str} DockerRestarts=${restart_doc_count} Attempt=$((count+1))/${MAX_RESTARTS}"
 
     if docker restart "$container" --timeout 30 2>/dev/null; then
         increment_restart_count "$container"
@@ -1407,11 +1583,11 @@ GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption
                 --container "${container}" \
                 --severity "ok" \
                 --event "container_recovered" \
-                --problem "Container was restarted due to: ${reason}" \
-                --action "docker restart --timeout 30 (attempt $((count+1))/${MAX_RESTARTS})" \
+                --problem "Container was restarted due to: <b>${reason}</b> (exit code: <code>${exit_code}</code>, uptime before failure: ${uptime_str})" \
+                --action "<code>docker restart --timeout 30</code> (watchdog attempt $((count+1))/${MAX_RESTARTS})" \
                 --agent "shml-watchdog" \
                 --outcome "✅ Passed post-restart health check. Container is running and healthy." \
-                --learning "Restart resolved the issue. Monitoring at ${CHECK_INTERVAL}s intervals. Pattern logged to audit trail."
+                --learning "Restart resolved the issue. Monitoring at ${CHECK_INTERVAL}s intervals. Exit code ${exit_code} on reason '${reason}' may indicate transient failure — check audit log if this recurs."
             audit "RECOVERED" "$container" "Healthy after restart"
             local _recovery_comment="Container ${container} recovered after restart (reason: ${reason}). Passed post-restart health check at $(date -u '+%Y-%m-%d %H:%M UTC')."
             case "$reason" in
@@ -1426,24 +1602,50 @@ GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption
             esac
         else
             log "WARN: ${container} still unhealthy"
-            audit "STILL_UNHEALTHY" "$container" "Post-restart failed"
+            local post_logs
+            post_logs=$(docker logs --tail=8 "${container}" 2>&1 | tail -8 | sed 's/</\&lt;/g; s/>/\&gt;/g' || echo "(logs unavailable)")
+            send_alert_card \
+                --container "${container}" \
+                --severity "critical" \
+                --event "still_unhealthy_post_restart" \
+                --problem "Container failed post-restart health check. Original failure reason: <b>${reason}</b> (exit code: <code>${exit_code}</code>)
+Restart attempt: $((count+1))/${MAX_RESTARTS}
+<b>Post-restart logs:</b>
+<pre>${post_logs}</pre>" \
+                --action "Restart was issued but container is still unhealthy. Next watchdog cycle will re-check." \
+                --agent "shml-watchdog" \
+                --outcome "⚠️ Container in unknown/unhealthy state after restart. Manual inspection recommended." \
+                --learning "Post-restart failure: investigate root cause. Check logs above and <code>docker inspect ${container}</code>."
+            create_gitlab_issue \
+                "Container Still Unhealthy After Restart: ${container}" \
+                "Container \`${container}\` failed its post-restart health check.\n\nOriginal reason: ${reason}\nExit code: ${exit_code}\nUptime before failure: ${uptime_str}\nRestart attempt: $((count+1))/${MAX_RESTARTS}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                "type::bug,priority::high,status::todo,source::watchdog,component::infra"
+            audit "STILL_UNHEALTHY" "$container" "Post-restart failed Reason=${reason} ExitCode=${exit_code}"
         fi
     else
         log "ERROR: Failed to restart ${container}"
+        local fail_logs
+        fail_logs=$(docker logs --tail=10 "${container}" 2>&1 | tail -10 | sed 's/</\&lt;/g; s/>/\&gt;/g' || echo "(logs unavailable)")
         send_alert_card \
             --container "${container}" \
             --severity "critical" \
             --event "restart_failed" \
-            --problem "docker restart --timeout 30 returned non-zero exit code. Reason: ${reason}. Container is unresponsive to standard restart." \
-            --action "Automated restart attempted and failed. Automated remediation exhausted for this cycle." \
+            --problem "<code>docker restart --timeout 30</code> returned non-zero exit code.
+• Failure reason: <b>${reason}</b>
+• Exit code before restart: <code>${exit_code}</code>
+• Container uptime before failure: ${uptime_str}
+• Docker restart count: ${restart_doc_count}
+<b>Last 10 log lines:</b>
+<pre>${fail_logs}</pre>" \
+            --action "Automated restart attempted and failed. Automated remediation exhausted for this cycle. GitLab issue created." \
             --agent "shml-watchdog" \
-            --outcome "❌ Container in unknown/failed state. Manual intervention required." \
+            --outcome "❌ Container in unknown/failed state. Manual intervention required: <code>docker start ${container}</code> or <code>docker compose ... up -d ${container}</code>" \
             --gitlab "Issue created — type::bug priority::critical source::watchdog" \
-            --learning "Restart failure logged to audit trail. Next watchdog cycle will re-assess container state."
-        audit "RESTART_FAILED" "$container" "Docker restart failed"
+            --learning "docker restart failure is unusual — check daemon health, cgroup limits, and whether the image is still valid."
+        audit "RESTART_FAILED" "$container" "Docker restart failed Reason=${reason} ExitCode=${exit_code} DockerRestarts=${restart_doc_count}"
         create_gitlab_issue \
             "Restart Failed: ${container}" \
-            "Docker restart command failed for \`${container}\`.\nReason: ${reason}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "Docker restart command failed for \`${container}\`.\n\nReason: ${reason}\nExit code: ${exit_code}\nUptime before failure: ${uptime_str}\nDocker restart count: ${restart_doc_count}\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
             "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
     fi
 }
@@ -1636,6 +1838,12 @@ while true; do
     # --- GPU thermal (every 5 cycles) ---
     if (( cycle % 5 == 0 )); then
         check_gpu_health || true
+    fi
+
+    # --- Host process: llama.cpp coding server (every 3 cycles ≈ 3 min) ---
+    if (( cycle % 3 == 0 )); then
+        check_llama_server || true
+        check_cline_slot_availability || true
     fi
 
     # --- Memory leak detection (every 10 cycles ≈ 10 min) ---

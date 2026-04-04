@@ -485,7 +485,7 @@ def reclaim_gpu_after_training(
             print(f"✅ GPU {gpu_id} released, inference services notified")
         else:
             print(f"⚠️ Could not notify inference services")
-            print(f"   To restart manually: docker start nemotron-coding")
+            print(f"   To restart manually: docker start qwopus-coding")
 
     return success
 

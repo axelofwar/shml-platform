@@ -17,7 +17,7 @@ docker compose up -d
 curl http://localhost:8010/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "nemotron-coding",
+    "model": "qwopus-coding",
     "messages": [{"role": "user", "content": "Write a Python hello world"}],
     "temperature": 0.6
   }'
@@ -79,7 +79,7 @@ baseURL = "http://localhost:8010/v1"
 
 Update `inference/coding-model/app/model_manager_simple.py`:
 ```python
-CODING_MODEL_ENDPOINT = "http://nemotron-coding:8010/v1"
+CODING_MODEL_ENDPOINT = "http://qwopus-coding:8010/v1"
 ```
 
 ## Performance

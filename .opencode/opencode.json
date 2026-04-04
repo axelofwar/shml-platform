@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "nemotron/nemotron-coding",
+  "model": "nemotron/qwopus-coding",
   "provider": {
     "nemotron": {
       "npm": "@ai-sdk/openai-compatible",
@@ -9,7 +9,7 @@
         "baseURL": "http://localhost:8099/v1"
       },
       "models": {
-        "nemotron-coding": {
+        "qwopus-coding": {
           "name": "Qwopus-27B Q4_K_M (Local)",
           "tool_call": true,
           "reasoning": true,

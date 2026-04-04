@@ -165,19 +165,21 @@ alias loop-stop='_loop_call stop'
 alias looplogs='docker logs shml-agent-service -f --tail=100 2>&1 | grep -E "agent.loop|AgentLoop|LoopState|issue #"'
 
 # Show open issues on the agent queue (requires python3 + GITLAB_API_TOKEN)
-alias aqueue='python3 -c "
+aqueue() {
+    python3 -c "
 import os, urllib.request, json
-token = os.environ[\"GITLAB_API_TOKEN\"]
-url = os.environ.get(\"GITLAB_BASE_URL\", \"http://172.30.0.40:8929/gitlab\")
-pid = os.environ.get(\"GITLAB_PROJECT_ID\", \"2\")
+token = os.environ['GITLAB_API_TOKEN']
+url = os.environ.get('GITLAB_BASE_URL', 'http://172.30.0.40:8929/gitlab')
+pid = os.environ.get('GITLAB_PROJECT_ID', '2')
 req = urllib.request.Request(
     f\"{url}/api/v4/projects/{pid}/issues?state=opened&labels=status::ready&per_page=20\",
-    headers={\"PRIVATE-TOKEN\": token}
+    headers={'PRIVATE-TOKEN': token}
 )
 issues = json.loads(urllib.request.urlopen(req, timeout=10).read())
 for i in issues:
-    print(f\"  #{i[\'iid\']} [{i.get(\'labels\', [])}] {i[\'title\']}\")
-" 2>/dev/null || echo "Set GITLAB_API_TOKEN to use aqueue"'
+    print(f\"  #{i['iid']} [{i.get('labels', [])}] {i['title']}\")
+" 2>/dev/null || echo "Set GITLAB_API_TOKEN to use aqueue"
+}
 
 # === Connection Map ===
 

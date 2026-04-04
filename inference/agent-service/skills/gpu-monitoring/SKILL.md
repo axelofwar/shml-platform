@@ -83,7 +83,7 @@ Return GPU information in this structured format:
 If nvidia-smi fails:
 1. Check if NVIDIA drivers are installed: `which nvidia-smi`
 2. If not found, PROMPT USER: "nvidia-smi not found. Would you like me to help install NVIDIA drivers?"
-3. Check docker access: `docker exec nemotron-coding nvidia-smi`
+3. Check docker access: `docker exec qwopus-coding nvidia-smi`
 4. If container doesn't have GPU: suggest container with `--gpus all`
 
 ## Platform-Specific GPU Allocation

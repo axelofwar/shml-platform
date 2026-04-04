@@ -1903,10 +1903,9 @@ async def check_nemotron_health() -> bool:
     """Check if Nemotron coding model is healthy and available."""
     import httpx
 
-    # Internal Docker network uses port 8000, external is 8010
+    # Internal Docker network — qwopus-coding service
     nemotron_urls = [
-        "http://nemotron-coding:8000/health",  # Internal Docker network
-        "http://localhost:8010/health",  # External host access
+        "http://qwopus-coding:8000/health",  # Internal Docker network
     ]
 
     async with httpx.AsyncClient(timeout=3.0) as client:
@@ -1914,13 +1913,13 @@ async def check_nemotron_health() -> bool:
             try:
                 response = await client.get(url)
                 if response.status_code == 200:
-                    logger.info(f"Nemotron healthy at {url}")
+                    logger.info(f"Qwopus healthy at {url}")
                     return True
             except Exception as e:
-                logger.debug(f"Nemotron not reachable at {url}: {e}")
+                logger.debug(f"Qwopus not reachable at {url}: {e}")
                 continue
 
-    logger.warning("Nemotron not available at any endpoint")
+    logger.warning("Qwopus not available at any endpoint")
     return False
 
 
@@ -1939,20 +1938,11 @@ async def coding_status():
 
     if nemotron_available:
         return {
-            "nemotron_available": True,
+            "qwopus_available": True,
             "pii_models_loaded": pii_loaded,
-            "recommended_action": "use_nemotron",
-            "coding_endpoint": "http://nemotron-coding:8000/v1",  # Internal Docker port
-            "external_endpoint": "http://localhost:8010/v1",  # External host port
-            "message": "Primary Nemotron model available on RTX 3090",
-        }
-    elif pii_loaded:
-        return {
-            "nemotron_available": False,
-            "pii_models_loaded": pii_loaded,
-            "recommended_action": "use_nemotron",
-            "coding_endpoint": "http://nemotron-coding:8010/v1",
-            "message": "Primary Nemotron model available on RTX 3090",
+            "recommended_action": "use_qwopus",
+            "coding_endpoint": "http://qwopus-coding:8000/v1",
+            "message": "Primary Qwopus model available on RTX 3090",
         }
     elif pii_loaded:
         return {

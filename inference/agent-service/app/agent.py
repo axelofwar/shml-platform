@@ -369,7 +369,7 @@ async def call_coding_model(
             model_name = "qwen2.5-coder-3b"
         else:
             endpoint = f"{primary_url}/v1/chat/completions"
-            model_name = os.getenv("CODING_MODEL_ALIAS", "nemotron-coding")
+            model_name = os.getenv("CODING_MODEL_ALIAS", "qwopus-coding")
 
         # Step 3: Make the inference request
         try:

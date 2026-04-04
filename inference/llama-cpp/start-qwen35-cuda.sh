@@ -113,6 +113,8 @@ start_server() {
         --cache-type-k    "${KV_CACHE_TYPE}" \
         --cache-type-v    "${KV_CACHE_TYPE}" \
         --api-key         none \
+        --embeddings \
+        --pooling         last \
         --log-file        "${LOG_FILE}" \
         --alias           "Qwen3.5-27B-Q4_K_M" \
         &

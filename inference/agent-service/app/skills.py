@@ -246,7 +246,7 @@ Returns detailed nvidia-smi output:
             ):
                 # Method 2: Query via docker exec to a GPU container
                 # Try multiple containers that might have nvidia-smi
-                docker_cmd = "docker exec nemotron-coding nvidia-smi 2>/dev/null || docker exec qwen3-vl-api nvidia-smi 2>/dev/null || docker exec ray-head nvidia-smi 2>/dev/null"
+                docker_cmd = "docker exec qwopus-coding nvidia-smi 2>/dev/null || docker exec qwen3-vl-api nvidia-smi 2>/dev/null || docker exec ray-head nvidia-smi 2>/dev/null"
                 result = await cls._run_command(docker_cmd, timeout=20)
 
                 if result.get("exit_code") != 0:
@@ -290,7 +290,7 @@ Returns detailed nvidia-smi output:
                             # GPU 1: Nemotron (RTX 3090)
                             try:
                                 resp = await client.get(
-                                    "http://nemotron-coding:8000/health"
+                                    "http://qwopus-coding:8000/health"
                                 )
                                 if resp.status_code == 200:
                                     health = resp.json()
@@ -298,7 +298,7 @@ Returns detailed nvidia-smi output:
                                         {
                                             "index": 1,
                                             "name": "NVIDIA GeForce RTX 3090 Ti",
-                                            "service": "nemotron-coding",
+                                            "service": "qwopus-coding",
                                             "status": health.get("status", "unknown"),
                                             "model": health.get("model", "unknown"),
                                             "vram_total_gb": health.get(
@@ -312,7 +312,7 @@ Returns detailed nvidia-smi output:
                                     {
                                         "index": 1,
                                         "name": "NVIDIA GeForce RTX 3090 Ti",
-                                        "service": "nemotron-coding",
+                                        "service": "qwopus-coding",
                                         "status": "unreachable",
                                     }
                                 )
@@ -507,7 +507,7 @@ Use Ray Dashboard at http://localhost:8265 for live metrics.""",
                 "message": "nvidia-smi failed - GPU may not be accessible.",
                 "suggestion": "Try: docker exec <gpu-container> nvidia-smi",
                 "prompt": "Would you like me to check GPU status via a container?",
-                "auto_command": "docker exec nemotron-coding nvidia-smi 2>/dev/null || docker exec qwen3-vl-api nvidia-smi 2>/dev/null",
+                "auto_command": "docker exec qwopus-coding nvidia-smi 2>/dev/null || docker exec qwen3-vl-api nvidia-smi 2>/dev/null",
             }
 
         # Docker not running

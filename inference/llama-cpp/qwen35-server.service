@@ -16,6 +16,9 @@ WorkingDirectory=/home/axelofwar/Projects/shml-platform/inference/llama-cpp
 Environment="LD_LIBRARY_PATH=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373-cuda"
 Environment="CUDA_VISIBLE_DEVICES=0"
 
+# Block start if GPU 0 is occupied by an active training job
+ExecStartPre=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/training-guard.sh
+
 ExecStart=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373-cuda/llama-server \
     --model /home/axelofwar/Projects/shml-platform/inference/llama-cpp/models/Qwen3.5-27B-Q4_K_M.gguf \
     --host 0.0.0.0 \
@@ -30,6 +33,8 @@ ExecStart=/home/axelofwar/Projects/shml-platform/inference/llama-cpp/llama-b8373
     --batch-size 512 \
     --ubatch-size 512 \
     --api-key none \
+    --embeddings \
+    --pooling last \
     --alias Qwen3.5-27B-Q4_K_M
 
 Restart=on-failure

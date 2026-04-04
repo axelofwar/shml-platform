@@ -29,7 +29,7 @@ def get_gpu_status() -> dict:
                 [
                     "docker",
                     "exec",
-                    "nemotron-coding",
+                    "qwopus-coding",
                     "nvidia-smi",
                     "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
                     "--format=csv,noheader,nounits",

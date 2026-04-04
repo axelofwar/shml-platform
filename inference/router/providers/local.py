@@ -26,7 +26,7 @@ from ..base import (
 logger = logging.getLogger(__name__)
 
 # Coding model identity — override via env vars for easy model swaps
-_CODING_MODEL_ID = os.getenv("CODING_MODEL_ALIAS", "nemotron-coding")
+_CODING_MODEL_ID = os.getenv("CODING_MODEL_ALIAS", "qwopus-coding")
 _CODING_MODEL_DISPLAY = os.getenv("CODING_MODEL_DISPLAY_NAME", "Qwopus-27B (Local)")
 _CODING_MODEL_CTX = int(os.getenv("CODING_MODEL_CTX", "65536"))
 
@@ -36,7 +36,7 @@ class LocalProvider(BaseProvider):
     Local GPU Model Provider
 
     Routes to local inference services:
-    - Qwopus/nemotron-coding (RTX 3090, coding, ctx=65536)
+    - Qwopus/qwopus-coding (RTX 3090, coding, ctx=65536)
     - Qwen3-VL-8B (RTX 2070, vision + chat)
 
     Uses OpenAI-compatible API format.
@@ -47,7 +47,7 @@ class LocalProvider(BaseProvider):
 
     def __init__(
         self,
-        nemotron_url: str = os.getenv("CODING_MODEL_URL", "http://nemotron-coding:8000"),
+        nemotron_url: str = os.getenv("CODING_MODEL_URL", "http://qwopus-coding:8000"),
         qwen_url: str = "http://localhost/api/llm",  # Via Traefik (needs auth) or docker network
     ):
         self.nemotron_url = nemotron_url

@@ -53,15 +53,15 @@ for i in {1..30}; do
         echo "🧪 Test inference:"
         echo "   curl http://localhost:8010/v1/chat/completions \\"
         echo "     -H 'Content-Type: application/json' \\"
-        echo "     -d '{\"model\":\"nemotron-coding\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
+        echo "     -d '{\"model\":\"qwopus-coding\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
         echo ""
         echo "📝 Logs:"
-        echo "   docker logs nemotron-coding -f"
+        echo "   docker logs qwopus-coding -f"
         exit 0
     fi
     sleep 2
 done
 
 echo "❌ Service did not become ready in time"
-echo "   Check logs: docker logs nemotron-coding"
+echo "   Check logs: docker logs qwopus-coding"
 exit 1

@@ -32,6 +32,27 @@ if [ "$1" = "--backup" ]; then
     fi
 fi
 
+echo -e "${CYAN}━━━ Phase 0: Qwen3.5 Coding Server (llama.cpp host process) ━━━${NC}"
+LLAMA_PID_FILE="${SCRIPT_DIR}/../../inference/llama-cpp/qwen35-server.pid"
+if [ -f "$LLAMA_PID_FILE" ]; then
+    LLAMA_PID=$(cat "$LLAMA_PID_FILE")
+    if kill -0 "$LLAMA_PID" 2>/dev/null; then
+        echo "Stopping llama.cpp server (PID ${LLAMA_PID})..."
+        kill "$LLAMA_PID" 2>/dev/null && sleep 2
+        # Force-kill if still running after 5s
+        if kill -0 "$LLAMA_PID" 2>/dev/null; then
+            kill -9 "$LLAMA_PID" 2>/dev/null || true
+        fi
+        echo -e "${GREEN}✓ Qwen3.5 coding server stopped${NC}"
+    else
+        echo "llama.cpp server not running (stale PID file)"
+    fi
+    rm -f "$LLAMA_PID_FILE"
+else
+    echo "llama.cpp server not running"
+fi
+echo ""
+
 # Stop services in reverse order
 echo -e "${CYAN}━━━ Phase 1: GPU Monitoring ━━━${NC}"
 if sudo docker compose -f monitoring/dcgm-exporter/deploy/compose/docker-compose.yml ps | grep -q "dcgm-exporter"; then

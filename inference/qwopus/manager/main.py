@@ -1,14 +1,14 @@
 """
-Nemotron Lifecycle Manager - GPU Yield API for Training Integration
+Qwopus Lifecycle Manager - GPU Yield API for Training Integration
 
 Provides API endpoints that Ray training jobs can call to request GPU resources.
-Manages the nemotron-coding container lifecycle (stop/start) to yield/reclaim GPU.
+Manages the qwopus-coding container lifecycle (stop/start) to yield/reclaim GPU.
 
 Endpoints:
-- POST /training/start - Stop Nemotron to free RTX 3090 Ti for training
-- POST /training/end - Restart Nemotron after training completes
-- GET /health - Manager health with Nemotron container status
-- GET /status - Detailed status of Nemotron and GPU
+- POST /training/start - Stop Qwopus to free RTX 3090 Ti for training
+- POST /training/end - Restart Qwopus after training completes
+- GET /health - Manager health with Qwopus container status container status
+- GET /status - Detailed status of Qwopus and GPU
 
 This service runs on the host network to access Docker socket.
 """
@@ -29,13 +29,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-NEMOTRON_CONTAINER = os.getenv("NEMOTRON_CONTAINER", "nemotron-coding")
+NEMOTRON_CONTAINER = os.getenv("NEMOTRON_CONTAINER", "qwopus-coding")
 GPU_INDEX = int(os.getenv("GPU_INDEX", "0"))  # RTX 3090 Ti
 YIELD_WAIT_SECONDS = int(os.getenv("YIELD_WAIT_SECONDS", "5"))
 
 app = FastAPI(
-    title="Nemotron Manager",
-    description="Lifecycle manager for Nemotron-3 coding model - enables GPU yield for training",
+    title="Qwopus Manager",
+    description="Lifecycle manager for Qwopus coding model - enables GPU yield for training",
     version="1.0.0",
 )
 
@@ -173,7 +173,7 @@ def check_training_active(gpu_index: int = 0) -> bool:
 @app.post("/training/start", response_model=TrainingStartResponse)
 async def start_training(request: TrainingStartRequest):
     """
-    Stop Nemotron to free GPU for training.
+    Stop Qwopus to free GPU for training.
 
     Called by Ray training jobs before GPU allocation.
     Blocks until GPU memory is freed or timeout.
@@ -209,7 +209,7 @@ async def start_training(request: TrainingStartRequest):
                             status="ready",
                             model_yielded=True,
                             job_id=request.job_id,
-                            message=f"Nemotron stopped, {memory_before - memory_after}MB freed",
+                            message=f"Qwopus stopped, {memory_before - memory_after}MB freed",
                             gpu_memory_before_mb=memory_before,
                             gpu_memory_after_mb=memory_after,
                             timestamp=datetime.now().isoformat(),
@@ -234,7 +234,7 @@ async def start_training(request: TrainingStartRequest):
                 status="ready",
                 model_yielded=True,
                 job_id=request.job_id,
-                message="Nemotron stopped",
+                message="Qwopus stopped",
                 gpu_memory_before_mb=memory_before,
                 gpu_memory_after_mb=gpu_after.get("memory_used_mb"),
                 timestamp=datetime.now().isoformat(),
@@ -267,7 +267,7 @@ async def start_training(request: TrainingStartRequest):
             timestamp=datetime.now().isoformat(),
         )
     except Exception as e:
-        logger.error(f"Failed to stop Nemotron: {e}")
+        logger.error(f"Failed to stop Qwopus: {e}")
         return TrainingStartResponse(
             status="error",
             model_yielded=False,
@@ -282,7 +282,7 @@ async def start_training(request: TrainingStartRequest):
 @app.post("/training/end", response_model=TrainingEndResponse)
 async def end_training(request: TrainingEndRequest):
     """
-    Restart Nemotron after training completes.
+    Restart Qwopus after training completes.
 
     Called by Ray training jobs after completion to restore coding model.
     """
@@ -311,7 +311,7 @@ async def end_training(request: TrainingEndRequest):
                         return TrainingEndResponse(
                             status="started",
                             job_id=request.job_id,
-                            message="Nemotron restarted and healthy",
+                            message="Qwopus restarted and healthy",
                             timestamp=datetime.now().isoformat(),
                         )
 
@@ -337,7 +337,7 @@ async def end_training(request: TrainingEndRequest):
             timestamp=datetime.now().isoformat(),
         )
     except Exception as e:
-        logger.error(f"Failed to restart Nemotron: {e}")
+        logger.error(f"Failed to restart Qwopus: {e}")
         return TrainingEndResponse(
             status="error",
             job_id=request.job_id,
@@ -348,7 +348,7 @@ async def end_training(request: TrainingEndRequest):
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check with Nemotron container status."""
+    """Health check with Qwopus container status."""
     client = get_docker_client()
 
     try:
@@ -370,7 +370,7 @@ async def health():
 
 @app.get("/status", response_model=StatusResponse)
 async def status():
-    """Detailed status of Nemotron and GPU."""
+    """Detailed status of Qwopus and GPU."""
     client = get_docker_client()
 
     try:
@@ -426,14 +426,14 @@ async def get_coding_route() -> CodingRouteResponse:
     Get the best available coding model endpoint.
 
     Priority:
-    1. Nemotron on RTX 3090 Ti (primary, best quality)
+    1. Qwopus on RTX 3090 Ti (primary, best quality)
     2. coding-model-fallback on RTX 2070 (after yielding pii-blur if needed)
 
     This endpoint checks availability and yields resources if needed.
     """
     import httpx
 
-    # 1. Check if Nemotron is available (primary)
+    # 1. Check if Qwopus is available (primary)
     client = get_docker_client()
     try:
         container = client.containers.get(NEMOTRON_CONTAINER)
@@ -441,10 +441,10 @@ async def get_coding_route() -> CodingRouteResponse:
             # Verify it's actually healthy - internal Docker port is 8000
             async with httpx.AsyncClient(timeout=3.0) as http_client:
                 try:
-                    resp = await http_client.get("http://nemotron-coding:8000/health")
+                    resp = await http_client.get("http://qwopus-coding:8000/health")
                     if resp.status_code == 200:
                         return CodingRouteResponse(
-                            endpoint="http://nemotron-coding:8000/v1",  # Internal Docker port
+                            endpoint="http://qwopus-coding:8000/v1",  # Internal Docker port
                             model_name=os.getenv("CODING_MODEL_DISPLAY_NAME", "Qwopus-27B"),
                             gpu="RTX 3090 Ti (cuda:0)",
                             message="Primary coding model available",
@@ -454,10 +454,10 @@ async def get_coding_route() -> CodingRouteResponse:
     except docker.errors.NotFound:
         pass
     except Exception as e:
-        logger.warning(f"Error checking Nemotron: {e}")
+        logger.warning(f"Error checking Qwopus: {e}")
 
-    # 2. Nemotron unavailable - try to use fallback on RTX 2070
-    logger.info("Nemotron unavailable - checking RTX 2070 for coding fallback")
+    # 2. Qwopus unavailable - try to use fallback on RTX 2070
+    logger.info("Qwopus unavailable - checking RTX 2070 for coding fallback")
 
     # Use unified yield endpoint with coding reason
     async with httpx.AsyncClient(timeout=5.0) as http_client:
@@ -491,7 +491,7 @@ async def get_coding_route() -> CodingRouteResponse:
                     message="Using fallback coding model (RTX 2070 already available)",
                 )
             else:
-                # Unexpected - yield said not_needed but Nemotron was unavailable
+                # Unexpected - yield said not_needed but Qwopus was unavailable
                 logger.warning(f"Unexpected yield status: {yield_status}")
                 return CodingRouteResponse(
                     endpoint=f"{CODING_FALLBACK_URL}/v1",
@@ -561,7 +561,7 @@ async def unified_yield_orchestration(
     - Coding model needs (reason=coding)
 
     For GPU 0 (RTX 3090 Ti):
-    - Stops Nemotron container if running
+    - Stops Qwopus container if running
 
     For GPU 1 (RTX 2070):
     - Tells pii-blur to yield (unload models)
@@ -574,26 +574,26 @@ async def unified_yield_orchestration(
     memory_before = gpu_before.get("memory_used_mb", 0)
 
     if request.gpu_index == 0:
-        # RTX 3090 Ti - yield Nemotron
+        # RTX 3090 Ti - yield Qwopus
         client = get_docker_client()
         try:
             container = client.containers.get(NEMOTRON_CONTAINER)
             if container.status == "running":
                 logger.info(f"Stopping {NEMOTRON_CONTAINER} for {request.reason}...")
                 container.stop(timeout=30)
-                yielded_services.append("nemotron-coding")
+                yielded_services.append("qwopus-coding")
 
                 # Wait for memory to free
                 await asyncio.sleep(5)
         except docker.errors.NotFound:
-            logger.info("Nemotron container not found - GPU 0 available")
+            logger.info("Qwopus container not found - GPU 0 available")
         except Exception as e:
-            logger.error(f"Error yielding Nemotron: {e}")
+            logger.error(f"Error yielding Qwopus: {e}")
             return UnifiedYieldResponse(
                 status="error",
                 yielded_services=yielded_services,
                 gpu_index=request.gpu_index,
-                message=f"Error stopping Nemotron: {e}",
+                message=f"Error stopping Qwopus: {e}",
             )
 
     elif request.gpu_index == 1:

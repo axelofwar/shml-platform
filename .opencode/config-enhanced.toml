@@ -12,7 +12,7 @@ type = "openai"
 baseURL = "http://localhost:8010/v1"
 
 [[providers.local-coding.models]]
-id = "nemotron-coding"
+id = "qwopus-coding"
 name = "Nemotron-3-Nano-30B-A3B (Primary)"
 maxTokens = 32768
 contextWindow = 131072  # 128K effective, 1M total capable
@@ -55,7 +55,7 @@ description = "Multi-modal vision + text analysis"
 
 [agent]
 # Default models
-model = "local-coding:nemotron-coding"          # Primary coding
+model = "local-coding:qwopus-coding"          # Primary coding
 visionModel = "local-vision:qwen3-vl"           # Vision analysis
 fallbackModel = "local-fallback:qwen-coder-3b"  # Fallback if primary busy
 

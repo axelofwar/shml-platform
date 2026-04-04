@@ -443,7 +443,7 @@ Provide a complete solution."""
         execution_response = await self.complete(
             CompletionRequest(
                 messages=[Message(role="user", content=execution_prompt)],
-                model=execution_model or os.getenv("CODING_MODEL_ALIAS", "nemotron-coding"),
+                model=execution_model or os.getenv("CODING_MODEL_ALIAS", "qwopus-coding"),
                 temperature=0.7,
                 max_tokens=4096,
             ),

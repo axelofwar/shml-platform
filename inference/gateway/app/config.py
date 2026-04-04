@@ -10,7 +10,7 @@ PORT = int(os.getenv("PORT", "8000"))
 # Backend services - LLM/Vision
 QWEN3_VL_URL = os.getenv("QWEN3_VL_URL", "http://qwen3-vl-api:8000")
 Z_IMAGE_URL = os.getenv("Z_IMAGE_URL", "http://z-image-api:8000")
-CODING_MODEL_URL = os.getenv("CODING_MODEL_URL", "http://nemotron-coding:8000")
+CODING_MODEL_URL = os.getenv("CODING_MODEL_URL", "http://qwopus-coding:8000")
 
 # Backend services - Audio (DMCA workflow)
 SAM_AUDIO_URL = os.getenv("SAM_AUDIO_URL", "http://sam-audio:8000")

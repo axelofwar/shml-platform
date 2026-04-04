@@ -12,8 +12,8 @@
 
 <!-- Definition of Done — what must be true for this issue to close? -->
 
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
 - [ ] Tests updated / added
 
 ## Scope estimate

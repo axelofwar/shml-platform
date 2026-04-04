@@ -82,7 +82,12 @@ def _env(key: str, default: str = "") -> str:
 
 
 def _base_url() -> str:
-    return (_env("GITLAB_BASE_URL") or resolve_gitlab_base_url()).rstrip("/")
+    # os.environ takes top priority (explicit override); otherwise use auto-discovery
+    # (docker inspect) which handles container IP changes. Avoid reading GITLAB_BASE_URL
+    # from .env since that value can become stale when containers restart.
+    if "GITLAB_BASE_URL" in os.environ:
+        return os.environ["GITLAB_BASE_URL"].rstrip("/")
+    return resolve_gitlab_base_url().rstrip("/")
 
 
 def _project_id() -> str:

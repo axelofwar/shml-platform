@@ -10,9 +10,9 @@
 
 ## Affected areas
 
-- Services: 
-- Files: 
-- Networks / volumes: 
+- Services:
+- Files:
+- Networks / volumes:
 
 ## Validation
 
@@ -21,7 +21,7 @@
 - [ ] Service restarts cleanly
 - [ ] No regressions in `./start_all_safe.sh status`
 - [ ] CI passes
-- [ ] 
+- [ ]
 
 ## Agent suitability
 

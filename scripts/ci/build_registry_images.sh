@@ -69,7 +69,7 @@ IMAGES=(
     "gpu-manager|inference/gpu-manager|Dockerfile"
     "embedding-service|inference/embedding-service|Dockerfile"
     "coding-model-fallback|inference/coding-model|Dockerfile"
-    "nemotron-coding|inference/nemotron|Dockerfile"
+    "qwopus-coding|inference/qwopus|Dockerfile"
 )
 
 # =============================================================================

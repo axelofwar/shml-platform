@@ -8,8 +8,8 @@ set -e
 echo "[$(date)] Yield-to-training: Stopping Nemotron coding model..."
 
 # Check if Nemotron is running
-if docker ps | grep -q nemotron-coding; then
-    docker stop nemotron-coding || true
+if docker ps | grep -q qwopus-coding; then
+    docker stop qwopus-coding || true
     echo "[$(date)] ✓ Nemotron stopped - RTX 3090 Ti (cuda:0) available for training"
 else
     echo "[$(date)] ℹ Nemotron not running - RTX 3090 Ti already available"

@@ -40,7 +40,7 @@ Usage:
   python eval_coding_model.py --dry-run
 
 References:
-  - Nemotron config:  inference/nemotron/docker-compose.yml
+  - Nemotron config:  inference/qwopus/docker-compose.yml
   - Qwen config:      inference/qwen/docker-compose.yml
   - Agent service:    inference/agent-service/app/agent.py (ACE pattern)
   - Skills:           inference/agent-service/app/skills.py (ShellSkill, etc.)

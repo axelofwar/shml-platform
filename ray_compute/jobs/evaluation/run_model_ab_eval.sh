@@ -42,7 +42,7 @@ PLATFORM_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RESULTS_DIR="$PLATFORM_ROOT/ray_compute/jobs/evaluation/results"
 EVAL_SCRIPT="$PLATFORM_ROOT/ray_compute/jobs/evaluation/eval_coding_model.py"
 
-NEMOTRON_COMPOSE="$PLATFORM_ROOT/inference/nemotron/docker-compose.yml"
+NEMOTRON_COMPOSE="$PLATFORM_ROOT/inference/qwopus/docker-compose.yml"
 QWEN_COMPOSE="$PLATFORM_ROOT/inference/qwen/docker-compose.yml"
 
 # Nemotron uses Traefik (no direct port), so we expose it temporarily
@@ -141,7 +141,7 @@ start_model_for_eval() {
     if [[ "$name" == "nemotron" ]]; then
         # Nemotron doesn't expose ports directly; access via container network
         # We'll use docker exec to check health, then use a temp port forward
-        local container="nemotron-coding"
+        local container="qwopus-coding"
         # Start a port forward in the background
         docker run -d --name "nemotron-eval-proxy" \
             --network shml-platform \
@@ -377,7 +377,7 @@ cleanup() {
     cleanup_nemotron_proxy
     echo ""
     warn "Evaluation interrupted. GPU may still have a model loaded."
-    warn "Run: docker compose -f inference/nemotron/docker-compose.yml down"
+    warn "Run: docker compose -f inference/qwopus/docker-compose.yml down"
     warn "Run: docker compose -f inference/qwen/docker-compose.yml down"
 }
 trap cleanup EXIT

@@ -29,7 +29,7 @@
 services:
   # ===========================================================================
   # Primary Model: DEPRECATED - Replaced by Nemotron-3-Nano-30B-A3B
-  # See: inference/nemotron/docker-compose.yml
+  # See: inference/qwopus/docker-compose.yml
   # Nemotron provides 95% Claude Sonnet quality vs 90% for Qwen2.5-Coder-32B
   # ===========================================================================
   # coding-model-primary:

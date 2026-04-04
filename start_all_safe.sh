@@ -812,13 +812,20 @@ start_all_services() {
     wait_for_health "${PLATFORM_PREFIX:-shml}-pushgateway" $DEFAULT_TIMEOUT || log_warn "Pushgateway may still be starting"
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT || log_warn "Grafana may still be initializing"
 
+    # Alertmanager (routing + Telegram notifications)
+    echo "Starting: Alertmanager, Alertmanager-Telegram..."
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
+        alertmanager alertmanager-telegram 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-alertmanager" $DEFAULT_TIMEOUT || log_warn "Alertmanager may still be starting"
+    wait_for_health "${PLATFORM_PREFIX:-shml}-alertmanager-telegram" $DEFAULT_TIMEOUT || log_warn "Alertmanager-Telegram may still be starting"
+
     # ML SLO Exporter (depends on MLflow/Ray APIs existing on network)
     echo "Starting: ML SLO Exporter..."
     docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
         ml-slo-exporter 2>&1 | grep -v "orphan" || true
     wait_for_health "${PLATFORM_PREFIX:-shml}-ml-slo-exporter" $DEFAULT_TIMEOUT || log_warn "ML SLO Exporter may still be starting"
 
-    log_success "Monitoring ready (Prometheus, Pushgateway, Grafana, SLO Exporter)"
+    log_success "Monitoring ready (Prometheus, Pushgateway, Grafana, Alertmanager, SLO Exporter)"
     echo ""
 
     # =========================================================================
@@ -883,15 +890,44 @@ start_all_services() {
     echo ""
 
     # =========================================================================
-    # Phase 8: GPU Monitoring (Optional)
+    # Phase 8: GPU Monitoring + Logging + Tracing Observability Stacks
+    # NOTE: Each sub-stack uses a SEPARATE docker-compose project name to
+    # prevent --remove-orphans from killing containers started by other stacks.
     # =========================================================================
-    log_info "━━━ Phase 8: GPU Monitoring ━━━"
+    log_info "━━━ Phase 8: GPU Monitoring + Logging + Tracing ━━━"
+
+    # DCGM GPU exporter (separate project to avoid orphan-kill)
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter..."
-        docker compose -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
-        log_success "GPU monitoring started"
+        docker compose -p "${COMPOSE_PROJECT_NAME:-shml-platform}-dcgm" --env-file .env \
+            -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
+        log_success "GPU monitoring started (dcgm-exporter)"
     else
         log_warn "DCGM configuration not found - skipping GPU monitoring"
+    fi
+
+    # Logging stack: Loki + Promtail (separate project to avoid orphan-kill)
+    if [ -f "deploy/compose/docker-compose.logging.yml" ]; then
+        echo "Starting: Loki (log aggregation), Promtail (log shipping)..."
+        docker compose -p "${COMPOSE_PROJECT_NAME:-shml-platform}-logging" --env-file .env \
+            -f deploy/compose/docker-compose.logging.yml up -d --remove-orphans 2>&1 | grep -v "^Network\|^Volume" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-loki" $DEFAULT_TIMEOUT || log_warn "Loki may still be starting"
+        wait_for_health "${PLATFORM_PREFIX:-shml}-promtail" $DEFAULT_TIMEOUT || log_warn "Promtail may still be starting"
+        log_success "Logging stack ready (Loki, Promtail)"
+    else
+        log_warn "Logging compose not found - skipping Loki/Promtail"
+    fi
+
+    # Tracing stack: Tempo + OpenTelemetry Collector (separate project to avoid orphan-kill)
+    if [ -f "deploy/compose/docker-compose.tracing.yml" ]; then
+        echo "Starting: Tempo (distributed tracing), OpenTelemetry Collector..."
+        docker compose -p "${COMPOSE_PROJECT_NAME:-shml-platform}-tracing" --env-file .env \
+            -f deploy/compose/docker-compose.tracing.yml up -d --remove-orphans 2>&1 | grep -v "^Network\|^Volume" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-tempo" $DEFAULT_TIMEOUT || log_warn "Tempo may still be starting"
+        wait_for_health "${PLATFORM_PREFIX:-shml}-otel-collector" $DEFAULT_TIMEOUT || log_warn "OpenTelemetry Collector may still be starting"
+        log_success "Tracing stack ready (Tempo, OpenTelemetry Collector)"
+    else
+        log_warn "Tracing compose not found - skipping Tempo/OTEL"
     fi
     echo ""
 
@@ -962,7 +998,7 @@ start_all_services() {
     log_info "━━━ Phase 9a: Coding Model Services (Developer+ Access) ━━━"
     if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
         log_warn "Boot-safe mode active — skipping coding model services on startup"
-    elif [ -f "inference/nemotron/docker-compose.yml" ] || [ -f "inference/coding-model/docker-compose.yml" ]; then
+    elif [ -f "inference/qwopus/docker-compose.yml" ] || [ -f "inference/coding-model/docker-compose.yml" ]; then
         echo "Starting: Coding Models (Primary: 30B on 3090Ti, Fallback: 3B on 2070)..."
         # Ensure network exists before starting (compose file uses external: true)
         ensure_network
@@ -970,10 +1006,10 @@ start_all_services() {
         # Model loading takes time, use extended timeout
         CODING_MODEL_TIMEOUT=${CODING_MODEL_TIMEOUT:-300}
 
-        if [ -f "inference/nemotron/docker-compose.yml" ]; then
-            dc_up inference/nemotron/docker-compose.yml --force-recreate
+        if [ -f "inference/qwopus/docker-compose.yml" ]; then
+            dc_up inference/qwopus/docker-compose.yml --force-recreate
             echo "  Waiting for Nemotron primary model (30B on RTX 3090Ti)..."
-            wait_for_health "nemotron-coding" $CODING_MODEL_TIMEOUT || log_warn "Nemotron may still be loading (this can take 2-5 minutes)"
+            wait_for_health "qwopus-coding" $CODING_MODEL_TIMEOUT || log_warn "Nemotron may still be loading (this can take 2-5 minutes)"
         else
             log_warn "Nemotron configuration not found - skipping primary coding model"
         fi
@@ -1077,6 +1113,42 @@ start_all_services() {
     echo ""
 
     # =========================================================================
+    # Phase 9f: Qwen3.5-27B llama.cpp Coding Server (host process, GPU 0)
+    # Serves OpenAI-compatible API on host:8000 for Continue.dev / Cline
+    # Skipped when: boot-safe mode, GPU 0 in use for training, already running
+    # =========================================================================
+    log_info "━━━ Phase 9f: Qwen3.5 Coding Server (llama.cpp / host process) ━━━"
+    LLAMA_SCRIPT="${SCRIPT_DIR}/inference/llama-cpp/start-qwen35-cuda.sh"
+    LLAMA_PID_FILE="${SCRIPT_DIR}/inference/llama-cpp/qwen35-server.pid"
+    if [ "$OPTIONAL_AI_STACK_ENABLED" != "true" ]; then
+        log_warn "Boot-safe mode — skipping llama.cpp coding server"
+    elif [ ! -f "$LLAMA_SCRIPT" ]; then
+        log_warn "llama.cpp start script not found — skipping"
+    elif [ -f "$LLAMA_PID_FILE" ] && kill -0 "$(cat "$LLAMA_PID_FILE")" 2>/dev/null; then
+        log_success "Qwen3.5 coding server already running (PID $(cat "$LLAMA_PID_FILE"))"
+    elif nvidia-smi --id=0 --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q "[0-9]"; then
+        log_warn "GPU 0 busy (training active) — skipping llama.cpp server to avoid VRAM contention"
+    else
+        echo "  Starting Qwen3.5-27B-Q4_K_M (CUDA / RTX 3090 Ti, ~60s load time)..."
+        bash "$LLAMA_SCRIPT" &
+        LLAMA_LOADER_PID=$!
+        # Wait up to 180s for /health to respond
+        for _i in $(seq 1 90); do
+            sleep 2
+            if python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health',timeout=3)" &>/dev/null; then
+                log_success "Qwen3.5 coding server ready (http://localhost:8000/v1)"
+                break
+            fi
+            if ! kill -0 $LLAMA_LOADER_PID 2>/dev/null && [ ! -f "$LLAMA_PID_FILE" ]; then
+                log_warn "llama.cpp startup process ended — server may have failed"
+                break
+            fi
+            (( _i % 15 == 0 )) && echo "    Still loading... (${_i}×2s)"
+        done
+    fi
+    echo ""
+
+    # =========================================================================
     # Phase 10: Observability Services
     # =========================================================================
     log_info "━━━ Phase 10: Observability & Landing Page ━━━"
@@ -1104,6 +1176,21 @@ start_all_services() {
     fi
 
     log_success "Observability services ready"
+    echo ""
+
+    # =========================================================================
+    # Phase 10.2: SBA Resource Portal (Gemini AI-assisted grant search)
+    # =========================================================================
+    log_info "━━━ Phase 10.2: SBA Resource Portal ━━━"
+    echo "Starting: SBA Resource Portal (Gemini AI grant search, developer+ only)..."
+    docker compose --env-file .env -f deploy/compose/docker-compose.infra.yml up -d --force-recreate \
+        sba-resource-portal 2>&1 | grep -v "orphan" || true
+    wait_for_health "${PLATFORM_PREFIX:-shml}-sba-resource-portal" ${SBA_PORTAL_TIMEOUT:-60} || log_warn "SBA Portal may still be starting"
+    if docker ps --format '{{.Names}}' | grep -q "^${PLATFORM_PREFIX:-shml}-sba-resource-portal$"; then
+        log_success "SBA Resource Portal started (accessible at /sba-portal/ — developer+ only)"
+    else
+        log_warn "SBA Resource Portal did not start — check build logs"
+    fi
     echo ""
 
     # =========================================================================
@@ -1691,10 +1778,10 @@ start_inference() {
 
     # Nemotron coding model (PRIMARY - RTX 3090 Ti)
     # Replaces Qwen2.5-Coder-32B with superior quality (95% vs 90% Claude Sonnet)
-    if [ -f "inference/nemotron/docker-compose.yml" ]; then
+    if [ -f "inference/qwopus/docker-compose.yml" ]; then
         echo "Starting Nemotron-3-Nano-30B primary coding model (RTX 3090 Ti)..."
-        dc_up inference/nemotron/docker-compose.yml --force-recreate
-        wait_for_health "nemotron-coding" ${NEMOTRON_TIMEOUT:-300} || log_warn "Nemotron may still be loading (22GB model)"
+        dc_up inference/qwopus/docker-compose.yml --force-recreate
+        wait_for_health "qwopus-coding" ${NEMOTRON_TIMEOUT:-300} || log_warn "Nemotron may still be loading (22GB model)"
     fi
 
     # Coding model fallback (FALLBACK - RTX 2070)
@@ -1733,27 +1820,36 @@ start_monitoring() {
     wait_for_health "unified-grafana" $GRAFANA_TIMEOUT
 
     # DCGM exporter for GPU metrics (optional — requires NVIDIA drivers)
+    # Uses a separate compose project to prevent --remove-orphans from killing monitoring containers
     if [ -f "monitoring/dcgm-exporter/docker-compose.yml" ] && \
        docker compose -f monitoring/dcgm-exporter/docker-compose.yml config >/dev/null 2>&1; then
         echo "Starting: DCGM Exporter (GPU metrics)..."
-        dc_up monitoring/dcgm-exporter/docker-compose.yml
+        docker compose -p "${COMPOSE_PROJECT_NAME}-dcgm" --env-file .env \
+            -f monitoring/dcgm-exporter/docker-compose.yml up -d --force-recreate \
+            --pull "${SHML_IMAGE_PULL_POLICY:-missing}" 2>&1 | grep -v "orphan" || true
         log_success "DCGM exporter started"
     fi
 
     # Loki + Promtail (log aggregation)
+    # Uses a separate compose project to prevent --remove-orphans from killing monitoring containers
     if [ -f "deploy/compose/docker-compose.logging.yml" ]; then
         echo "Starting: Loki + Promtail (log aggregation)..."
-        dc_up deploy/compose/docker-compose.logging.yml
-        wait_for_health "loki" ${LOKI_TIMEOUT:-60} || log_warn "Loki may still be starting"
-        wait_for_health "promtail" ${PROMTAIL_TIMEOUT:-30} || log_warn "Promtail may still be starting"
+        docker compose -p "${COMPOSE_PROJECT_NAME}-logging" --env-file .env \
+            -f deploy/compose/docker-compose.logging.yml up -d --remove-orphans \
+            --pull "${SHML_IMAGE_PULL_POLICY:-missing}" 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-loki" ${LOKI_TIMEOUT:-60} || log_warn "Loki may still be starting"
+        wait_for_health "${PLATFORM_PREFIX:-shml}-promtail" ${PROMTAIL_TIMEOUT:-30} || log_warn "Promtail may still be starting"
     fi
 
     # Tempo + OpenTelemetry (distributed tracing)
+    # Uses a separate compose project to prevent --remove-orphans from killing monitoring containers
     if [ -f "deploy/compose/docker-compose.tracing.yml" ]; then
         echo "Starting: Tempo + OpenTelemetry (distributed tracing)..."
-        dc_up deploy/compose/docker-compose.tracing.yml
-        wait_for_health "tempo" ${TEMPO_TIMEOUT:-60} || log_warn "Tempo may still be starting"
-        wait_for_health "otel-collector" ${OTEL_TIMEOUT:-30} || log_warn "OTel Collector may still be starting"
+        docker compose -p "${COMPOSE_PROJECT_NAME}-tracing" --env-file .env \
+            -f deploy/compose/docker-compose.tracing.yml up -d --remove-orphans \
+            --pull "${SHML_IMAGE_PULL_POLICY:-missing}" 2>&1 | grep -v "orphan" || true
+        wait_for_health "${PLATFORM_PREFIX:-shml}-tempo" ${TEMPO_TIMEOUT:-60} || log_warn "Tempo may still be starting"
+        wait_for_health "${PLATFORM_PREFIX:-shml}-otel-collector" ${OTEL_TIMEOUT:-30} || log_warn "OTel Collector may still be starting"
     fi
 
     update_container_mapping
@@ -1800,7 +1896,7 @@ start_agent() {
         start_infra
     fi
 
-    if ! docker ps --format '{{.Names}}' | grep -Eq "^(nemotron-coding|coding-model-fallback)$"; then
+    if ! docker ps --format '{{.Names}}' | grep -Eq "^(qwopus-coding|coding-model-fallback)$"; then
         log_warn "Coding models not running - agent service requires them"
         log_warn "Start inference services first: ./start_all_safe.sh start inference"
     fi
@@ -1901,7 +1997,7 @@ stop_inference() {
     dc_stop inference/gpu-manager/docker-compose.yml
     dc_stop inference/embedding-service/docker-compose.yml
     dc_stop inference/coding-model/docker-compose.yml
-    dc_stop inference/nemotron/docker-compose.yml
+    dc_stop inference/qwopus/docker-compose.yml
     dc_stop inference/chat-api/docker-compose.yml
     dc_stop inference/agent-service/docker-compose.yml
     dc_stop chat-ui-v2/docker-compose.yml
@@ -1914,7 +2010,7 @@ down_inference() {
     dc_down inference/gpu-manager/docker-compose.yml
     dc_down inference/embedding-service/docker-compose.yml
     dc_down inference/coding-model/docker-compose.yml
-    dc_down inference/nemotron/docker-compose.yml
+    dc_down inference/qwopus/docker-compose.yml
     dc_down inference/chat-api/docker-compose.yml
     dc_down inference/agent-service/docker-compose.yml
     dc_down chat-ui-v2/docker-compose.yml
@@ -2170,7 +2266,7 @@ case "${1:-restart}" in
                 dc_pull inference/gpu-manager/docker-compose.yml
                 dc_pull inference/embedding-service/docker-compose.yml
                 dc_pull inference/coding-model/docker-compose.yml
-                dc_pull inference/nemotron/docker-compose.yml
+                dc_pull inference/qwopus/docker-compose.yml
                 dc_pull inference/chat-api/docker-compose.yml
                 ;;
             monitoring|mon)         dc_pull deploy/compose/docker-compose.monitoring.yml ;;

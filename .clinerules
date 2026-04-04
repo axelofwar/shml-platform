@@ -1,7 +1,5 @@
 # .clinerules — SHML Platform
 
-<!-- GENERATED FILE — edit sources in .agent/rules/, run scripts/generate-ide-configs.sh to update -->
-
 ## Platform
 
 This is a unified ML platform (MLflow + Ray + Traefik + Inference). See `.agent/rules/` for complete rules.
@@ -13,6 +11,50 @@ This is a unified ML platform (MLflow + Ray + Traefik + Inference). See `.agent/
 3. **Never hardcode secrets** — use environment variables or Docker secrets
 4. **Traefik routers need priority 2147483647** to override internal API
 5. **GPU allocation**: cuda:0=RTX 3090 (training/image), cuda:1=RTX 2070 (Qwen3-VL, always loaded)
+
+## Cline Priority & Model Routing
+
+- **Cline takes precedence** over chat-ui-v2 and other local interaction points for deep reasoning tasks
+- **Local LLM**: `http://127.0.0.1:8000/v1`, model `Qwen3.5-27B-Q4_K_M`, API key `none`
+- **4 inference slots** available (--parallel 4 on qwen35-server.service)
+- If you receive a timeout, the server may be saturated by Continue.dev indexing — retry in 30s
+
+## MCP Tools (via shml-platform server)
+
+Cline has access to platform tools via the MCP bridge (`scripts/continue_mcp_bridge.py`):
+
+| Tool | Description | Safe during training? |
+|------|-------------|----------------------|
+| `training_status` | Ray job status, MLflow metrics, GPU usage | Yes |
+| `gpu_status` | GPU VRAM, temperature, utilization | Yes |
+| `mlflow_query` | Query experiments and runs | Yes |
+| `vision_analyze` | Analyze images with Qwen3-VL (RTX 2070) | Yes |
+| `vision_then_code` | Vision → code generation pipeline | Only if RTX 3090 free |
+
+## Agent Service & Memory (Hermes/ACE Integration)
+
+The platform has a persistent **agent-service** at `http://127.0.0.1:8099` providing:
+
+- **Memory store** (`app/memory_store.py`): Key-value persistent context across sessions → use for "North Star" / session state
+- **Conversation history** (`app/conversation_history.py`): Full dialogue persistence in PostgreSQL
+- **Hybrid router** (`app/hybrid_router.py`): Intent detection → routes to local Qwen, vision, code, or training tools
+- **Subagent executor** (`app/subagent.py`): Isolated context windows for sub-tasks
+- **Hermes self-evolution** (`libs/hermes-self-evolution/`): Skill and pattern evolution — review for iterative improvement opportunities
+
+### Session Lifecycle Patterns (from obsidian-mind)
+
+Apply these patterns for long-running tasks:
+1. **Session start**: Load relevant context from `memory_store` before beginning
+2. **North Star**: Keep a persistent `memory_store` entry named `"north_star"` with the high-level goal
+3. **Scratchpad → promotion**: Use temporary notes during task, promote decisions to persistent memory on completion
+4. **Sub-task isolation**: Use agent-service subagent endpoint for parallel or isolated sub-tasks
+
+```python
+# Load session context
+import urllib.request, json
+r = urllib.request.urlopen("http://127.0.0.1:8099/memory/north_star", timeout=5)
+context = json.loads(r.read())
+```
 
 ## Full Rule Sources
 

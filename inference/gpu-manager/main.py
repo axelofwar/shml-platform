@@ -55,7 +55,7 @@ PLATFORM_PREFIX = os.getenv("PLATFORM_PREFIX", "shml")
 
 # Services by GPU - order matters for stop/start
 RTX_3090_SERVICES = [
-    "nemotron-coding",  # Primary coding model (GPU 0)
+    "qwopus-coding",  # Primary coding model (GPU 0)
 ]
 
 RTX_2070_SHARED_SERVICES = [
@@ -320,7 +320,7 @@ def get_container_status(container_name: str) -> ServiceInfo:
 
     # VRAM estimates
     vram_estimates = {
-        "nemotron-coding": 16.5,  # Qwopus Q4_K_M (Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled)
+        "qwopus-coding": 16.5,  # Qwopus Q4_K_M (Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled)
         "qwen3-vl-api": 8.0,
         "z-image-api": 12.0,
         "coding-model-fallback": 6.0,

@@ -2,7 +2,7 @@
 name: coding-assistant
 description: "Expert coding assistance using Qwopus (Qwen3.5-27B reasoning distill) with native thinking mode. Use when the user asks for code generation, debugging, code review, refactoring, algorithm design, test creation, or any software engineering task. Preferred for all coding requests that benefit from deep reasoning."
 license: MIT
-compatibility: Requires nemotron-coding service (Qwopus Q4_K_M) running at CODING_MODEL_URL with --reasoning-format auto
+compatibility: Requires qwopus-coding service (Qwopus Q4_K_M) running at CODING_MODEL_URL with --reasoning-format auto
 metadata:
   author: shml-platform
   version: "1.1"
@@ -104,7 +104,7 @@ async def completions(request: CompletionRequest) -> StreamingResponse:
             async with client.stream(
                 "POST",
                 f"{settings.GATEWAY_URL}/v1/chat/completions",
-                json={"model": "nemotron-coding", "messages": request.messages, "stream": True},
+                json={"model": "qwopus-coding", "messages": request.messages, "stream": True},
             ) as resp:
                 async for chunk in resp.aiter_text():
                     yield chunk

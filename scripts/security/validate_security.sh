@@ -299,7 +299,7 @@ else
 fi
 
 # Check that nemotron has no direct port
-NEMOTRON_PORTS=$(docker port nemotron-coding 2>/dev/null || echo "none")
+NEMOTRON_PORTS=$(docker port qwopus-coding 2>/dev/null || echo "none")
 if [[ "$NEMOTRON_PORTS" == "none" || -z "$NEMOTRON_PORTS" ]]; then
     pass "Nemotron: no direct port exposure"
 else

@@ -35,14 +35,14 @@ type = "openai"
 baseURL = "http://localhost:8010/v1"
 
 [[providers.local-coding.models]]
-id = "nemotron-coding"
+id = "qwopus-coding"
 name = "Nemotron-3-Nano-30B-A3B (Local)"
 maxTokens = 32768
 contextWindow = 131072
 ```
 
 **Endpoint:** http://localhost:8010/v1  
-**Requires:** `docker compose up -d` in `inference/nemotron/`
+**Requires:** `docker compose up -d` in `inference/qwopus/`
 
 ### Vision Model (Qwen3-VL)
 
@@ -161,7 +161,7 @@ console.log(result)
 
 Nemotron service not running:
 ```bash
-cd inference/nemotron
+cd inference/qwopus
 docker compose up -d
 ```
 

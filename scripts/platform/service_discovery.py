@@ -57,6 +57,10 @@ def resolve_host(*candidates: str) -> str | None:
 def resolve_gitlab_base_url() -> str:
     if os.getenv("GITLAB_BASE_URL"):
         return os.environ["GITLAB_BASE_URL"].rstrip("/")
+    # Prefer docker inspect (authoritative) over DNS/hosts which may be stale
+    ip = container_ip("shml-gitlab", "gitlab")
+    if ip:
+        return f"http://{ip}:8929/gitlab"
     host = resolve_host("shml-gitlab", "gitlab")
     if host:
         return f"http://{host}:8929/gitlab"

@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 _QWEN_URL = os.getenv("GATEWAY_URL", "http://qwen-coding:8000")
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
+# llama.cpp coding server — host process on GPU 0, reachable via Docker bridge gateway
+_LLAMA_HEALTH_URL = os.getenv("LLAMA_SERVER_HEALTH_URL", "http://host-gateway:8000/health")
+_RAY_HEAD_URL = os.getenv("RAY_HEAD_URL", "http://ray-head:8265")
 _DIARY_DIR = Path(__file__).parent.parent / "data" / "diary"
 _DIARY_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -46,27 +49,35 @@ _OBSIDIAN_WATCHER_DEBOUNCE: float = float(
 # ── Job definition ────────────────────────────────────────────────────────────
 
 class ScheduledJob:
-    """A single recurring async job."""
+    """A single recurring async job — supports daily time-of-day OR fixed interval."""
 
     def __init__(
         self,
         name: str,
         coro_factory: Callable[[], Coroutine],
-        hour: int,
+        hour: int = 0,
         minute: int = 0,
         day_of_week: Optional[int] = None,  # 0=Mon … 6=Sun, None = every day
+        interval_minutes: Optional[int] = None,  # If set, fire every N minutes instead of at a fixed time
     ):
         self.name = name
         self.coro_factory = coro_factory
         self.hour = hour
         self.minute = minute
         self.day_of_week = day_of_week
+        self.interval_minutes = interval_minutes
         self.last_run: Optional[datetime] = None
         self.run_count = 0
         self.last_error: Optional[str] = None
 
     def is_due(self, now: datetime) -> bool:
         """Return True if the job should fire at this moment (checked every minute)."""
+        if self.interval_minutes is not None:
+            # Interval-based: fire every N minutes regardless of time-of-day
+            if self.last_run is None:
+                return True
+            return (now - self.last_run) >= timedelta(minutes=self.interval_minutes)
+        # Time-of-day-based (original behaviour)
         if now.hour != self.hour or now.minute != self.minute:
             return False
         if self.day_of_week is not None and now.weekday() != self.day_of_week:
@@ -158,6 +169,64 @@ async def _job_obsidian_connection_map_nightly() -> None:
     logger.info("[Scheduler/ConnectionMap] Connection map updated in Obsidian vault")
 
 
+async def _job_llama_server_watchdog() -> None:
+    """
+    Every-5-minute health probe for the Qwen3.5-27B llama.cpp coding server.
+
+    The server runs as a bare HOST process on port 8000 (not a Docker container).
+    It is accessed from the agent-service container via the Docker bridge gateway.
+    Restart is handled by the systemd qwen35-server.service (Restart=on-failure).
+    This job provides early alerting when the server is down without active training.
+    """
+    import httpx
+
+    # Probe the server health endpoint
+    is_healthy = False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(_LLAMA_HEALTH_URL)
+            if resp.status_code == 200:
+                logger.debug("[Scheduler/Llama] Server healthy")
+                is_healthy = True
+    except Exception as e:
+        logger.debug(f"[Scheduler/Llama] Health probe exception: {e}")
+
+    if is_healthy:
+        return
+
+    logger.warning(f"[Scheduler/Llama] Server unreachable at {_LLAMA_HEALTH_URL}")
+
+    # Check if training is active (Ray jobs API) before escalating
+    training_active = False
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            jobs_resp = await client.get(f"{_RAY_HEAD_URL}/api/jobs/")
+            if jobs_resp.status_code == 200:
+                active = [
+                    j for j in jobs_resp.json()
+                    if j.get("status") in ("RUNNING", "PENDING")
+                ]
+                if active:
+                    training_active = True
+                    logger.info(
+                        f"[Scheduler/Llama] {len(active)} Ray job(s) active — "
+                        "llama-server down is expected during training"
+                    )
+    except Exception:
+        pass  # Ray head may not be running — don't escalate on Ray unavailability
+
+    if training_active:
+        return
+
+    # Server is down and no training is running — this is unexpected
+    logger.error(
+        "[Scheduler/Llama] Qwen3.5 coding server unreachable and GPU 0 is idle. "
+        "Continue.dev requests will fail. "
+        "If qwen35-server.service is enabled, systemd will attempt auto-restart. "
+        "Manual: bash inference/llama-cpp/start-qwen35-cuda.sh"
+    )
+
+
 async def _job_session_diary_export() -> None:
     """
     Daily session diary export.
@@ -216,14 +285,23 @@ class AgentScheduler:
             coro_factory=_job_obsidian_connection_map_nightly,
             hour=0, minute=30,  # 00:30 UTC — before GEPA at 02:00
         ))
+        self.register(ScheduledJob(
+            name="llama_server_watchdog",
+            coro_factory=_job_llama_server_watchdog,
+            interval_minutes=5,  # every 5 minutes regardless of time-of-day
+        ))
 
     def register(self, job: ScheduledJob) -> None:
         self._jobs.append(job)
-        logger.info(
-            f"[Scheduler] Registered: {job.name} @ "
-            f"{job.hour:02d}:{job.minute:02d} UTC"
-            + (f" (day_of_week={job.day_of_week})" if job.day_of_week is not None else "")
+        schedule_desc = (
+            f"every {job.interval_minutes}min"
+            if job.interval_minutes is not None
+            else (
+                f"{job.hour:02d}:{job.minute:02d} UTC"
+                + (f" (day_of_week={job.day_of_week})" if job.day_of_week is not None else "")
+            )
         )
+        logger.info(f"[Scheduler] Registered: {job.name} @ {schedule_desc}")
 
     def _start_obsidian_watcher(self) -> None:
         """Start the Obsidian research watcher in a daemon thread."""

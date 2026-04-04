@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR"
 
 echo "🛑 Stopping Nemotron-3-Nano coding model..."
 
-if docker ps | grep -q nemotron-coding; then
+if docker ps | grep -q qwopus-coding; then
     docker compose down
     echo "✅ Nemotron-3-Nano stopped"
 

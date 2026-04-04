@@ -55,7 +55,7 @@ check_prerequisites() {
     fi
 
     # Check if nemotron is running
-    if ! docker ps --format '{{.Names}}' | grep -q "nemotron-coding"; then
+    if ! docker ps --format '{{.Names}}' | grep -q "qwopus-coding"; then
         log_error "Nemotron coding model not running! Start with: ./start_all_safe.sh start inference"
         exit 1
     fi
