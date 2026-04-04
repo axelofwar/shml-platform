@@ -1,19 +1,19 @@
 ---
 name: coding-assistant
-description: "Expert coding assistance using Qwen3.5-35B-A3B with native thinking mode. Use when the user asks for code generation, debugging, code review, refactoring, algorithm design, test creation, or any software engineering task. Preferred for all coding requests that benefit from deep reasoning."
+description: "Expert coding assistance using Qwopus (Qwen3.5-27B reasoning distill) with native thinking mode. Use when the user asks for code generation, debugging, code review, refactoring, algorithm design, test creation, or any software engineering task. Preferred for all coding requests that benefit from deep reasoning."
 license: MIT
-compatibility: Requires Qwen3.5-35B-A3B running at GATEWAY_URL with --reasoning-budget -1
+compatibility: Requires nemotron-coding service (Qwopus Q4_K_M) running at CODING_MODEL_URL with --reasoning-format auto
 metadata:
   author: shml-platform
-  version: "1.0"
-  model: Qwen3.5-35B-A3B-Q4_K_M
-  context_window: 131072
+  version: "1.1"
+  model: Qwopus-Qwen3.5-27B-Q4_K_M
+  context_window: 65536
   thinking_enabled: true
   eval_score: "93.8% (vs 79.0% Nemotron baseline)"
 allowed-tools: Bash(python3:*) Bash(node:*) Bash(git:*) Bash(pytest:*) Bash(cargo:*) Bash(go:*)
 ---
 
-# Coding Assistant Skill (Qwen3.5 Optimized)
+# Coding Assistant Skill (Qwopus Optimized)
 
 ## When to use this skill
 
@@ -32,7 +32,7 @@ Activate for any task involving:
 ## How to apply this skill
 
 ### 1. Leverage Thinking Mode
-Qwen3.5 internally reasons through the problem before producing output. **Do not**
+Qwopus (Qwen3.5-27B reasoning distill) internally reasons before producing output. **Do not**
 include "think step by step" instructions — they are redundant and consume context.
 Let the model think; focus the prompt on *what* is needed.
 
@@ -104,7 +104,7 @@ async def completions(request: CompletionRequest) -> StreamingResponse:
             async with client.stream(
                 "POST",
                 f"{settings.GATEWAY_URL}/v1/chat/completions",
-                json={"model": "qwen-coding", "messages": request.messages, "stream": True},
+                json={"model": "nemotron-coding", "messages": request.messages, "stream": True},
             ) as resp:
                 async for chunk in resp.aiter_text():
                     yield chunk

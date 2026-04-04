@@ -10,6 +10,7 @@ Routes requests to the best available provider based on:
 
 import asyncio
 import logging
+import os
 from typing import List, Optional, Dict, Any, Tuple, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -442,7 +443,7 @@ Provide a complete solution."""
         execution_response = await self.complete(
             CompletionRequest(
                 messages=[Message(role="user", content=execution_prompt)],
-                model=execution_model or "nemotron-mini-4b",
+                model=execution_model or os.getenv("CODING_MODEL_ALIAS", "nemotron-coding"),
                 temperature=0.7,
                 max_tokens=4096,
             ),

@@ -40,7 +40,7 @@ class ModelSelector(Static):
     """Widget for selecting reasoning and execution models"""
 
     reasoning_model = reactive("gemini-2.0-flash-exp")
-    execution_model = reactive("nemotron-mini-4b")
+    execution_model = reactive("nemotron-coding")
 
     def compose(self) -> ComposeResult:
         yield Label("🧠 Reasoning Model:", classes="label")
@@ -58,11 +58,11 @@ class ModelSelector(Static):
         yield Label("⚡ Execution Model:", classes="label")
         yield Select(
             [
-                ("Nemotron-4B (Local)", "nemotron-mini-4b"),
+                ("Qwopus-27B (Local)", "nemotron-coding"),
                 ("Qwen3-VL-8B (Local)", "qwen3-vl-8b"),
                 ("Same as Reasoning", "same"),
             ],
-            value="nemotron-mini-4b",
+            value="nemotron-coding",
             id="execution-select",
         )
 
@@ -88,7 +88,7 @@ class GPUStatus(Static):
         gpu1 = self.query_one("#gpu-1")
 
         gpu0.update("RTX 2070: [green]2.1[/green]/8GB | Qwen-VL")
-        gpu1.update("RTX 3090: [yellow]18.4[/yellow]/24GB | Nemotron")
+        gpu1.update("RTX 3090: [yellow]16.5[/yellow]/24GB | Qwopus")
 
 
 class JobTracker(Static):

@@ -445,7 +445,7 @@ async def get_coding_route() -> CodingRouteResponse:
                     if resp.status_code == 200:
                         return CodingRouteResponse(
                             endpoint="http://nemotron-coding:8000/v1",  # Internal Docker port
-                            model_name="Nemotron-3-Nano-30B",
+                            model_name=os.getenv("CODING_MODEL_DISPLAY_NAME", "Qwopus-27B"),
                             gpu="RTX 3090 Ti (cuda:0)",
                             message="Primary coding model available",
                         )

@@ -25,13 +25,18 @@ from ..base import (
 
 logger = logging.getLogger(__name__)
 
+# Coding model identity — override via env vars for easy model swaps
+_CODING_MODEL_ID = os.getenv("CODING_MODEL_ALIAS", "nemotron-coding")
+_CODING_MODEL_DISPLAY = os.getenv("CODING_MODEL_DISPLAY_NAME", "Qwopus-27B (Local)")
+_CODING_MODEL_CTX = int(os.getenv("CODING_MODEL_CTX", "65536"))
+
 
 class LocalProvider(BaseProvider):
     """
     Local GPU Model Provider
 
     Routes to local inference services:
-    - Nemotron-Mini-4B (RTX 3090, coding)
+    - Qwopus/nemotron-coding (RTX 3090, coding, ctx=65536)
     - Qwen3-VL-8B (RTX 2070, vision + chat)
 
     Uses OpenAI-compatible API format.
@@ -42,7 +47,7 @@ class LocalProvider(BaseProvider):
 
     def __init__(
         self,
-        nemotron_url: str = "http://localhost:8010",
+        nemotron_url: str = os.getenv("CODING_MODEL_URL", "http://nemotron-coding:8000"),
         qwen_url: str = "http://localhost/api/llm",  # Via Traefik (needs auth) or docker network
     ):
         self.nemotron_url = nemotron_url
@@ -51,18 +56,18 @@ class LocalProvider(BaseProvider):
 
         # Model catalog
         self.MODELS = {
-            "nemotron-mini-4b": ModelInfo(
-                id="nemotron-mini-4b",
-                name="Nemotron-Mini-4B (Local)",
+            _CODING_MODEL_ID: ModelInfo(
+                id=_CODING_MODEL_ID,
+                name=_CODING_MODEL_DISPLAY,
                 provider="local",
                 capabilities=[ModelCapability.CODING],
                 provider_type=ProviderType.LOCAL_GPU,
-                context_window=8192,
+                context_window=_CODING_MODEL_CTX,
                 cost_per_1k_input=0.0,
                 cost_per_1k_output=0.0,
                 supports_streaming=True,
-                supports_tools=False,
-                max_output_tokens=4096,
+                supports_tools=True,
+                max_output_tokens=16384,
             ),
             "qwen3-vl-8b": ModelInfo(
                 id="qwen3-vl-8b",
@@ -125,7 +130,7 @@ class LocalProvider(BaseProvider):
             if ModelCapability.VISION in request.required_capabilities:
                 model_id = "qwen3-vl-8b"
             else:
-                model_id = "nemotron-mini-4b"
+                model_id = _CODING_MODEL_ID
 
         # Check if any message has images
         has_images = any(msg.images for msg in request.messages)
@@ -135,7 +140,7 @@ class LocalProvider(BaseProvider):
 
         model_info = self.get_model(model_id)
         if not model_info:
-            model_id = "nemotron-mini-4b"
+            model_id = _CODING_MODEL_ID
             model_info = self.MODELS[model_id]
 
         url = self._get_url_for_model(model_id)
@@ -189,13 +194,13 @@ class LocalProvider(BaseProvider):
         self, request: CompletionRequest
     ) -> AsyncIterator[CompletionResponse]:
         """Stream completion from local model"""
-        model_id = request.model or "nemotron-mini-4b"
+        model_id = request.model or _CODING_MODEL_ID
 
         has_images = any(msg.images for msg in request.messages)
         if has_images:
             model_id = "qwen3-vl-8b"
 
-        model_info = self.get_model(model_id) or self.MODELS["nemotron-mini-4b"]
+        model_info = self.get_model(model_id) or self.MODELS[_CODING_MODEL_ID]
         url = self._get_url_for_model(model_id)
         client = await self._get_client()
 

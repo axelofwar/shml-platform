@@ -17,15 +17,15 @@ services:
 
     command:
       - --model
-      - /models/Qwen3.5-27B.Q4_K_M.gguf
+      - /models/${CODING_MODEL_GGUF:-Qwen3.5-27B.Q4_K_M.gguf}
       - --alias
-      - nemotron-coding
+      - ${CODING_MODEL_ALIAS:-nemotron-coding}
       - --threads
       - "-1"
       - --n-gpu-layers
       - "999"
       - --ctx-size
-      - "65536"
+      - "${CODING_MODEL_CTX:-65536}"
       # KV cache quantization
       # Architecture: Qwen3.5-27B — pure transformer, all ~36 attention layers have KV.
       #   GQA: n_kv_heads ≈ 8, head_dim=128. Very different from Nemotron (only 6 attn layers).

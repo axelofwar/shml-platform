@@ -17,6 +17,7 @@ from datetime import datetime
 import logging
 import httpx
 import json
+import os
 
 from .context import AgentPlaybook, ContextBullet
 from .diary import create_session_diary, ReflectionEngine
@@ -368,7 +369,7 @@ async def call_coding_model(
             model_name = "qwen2.5-coder-3b"
         else:
             endpoint = f"{primary_url}/v1/chat/completions"
-            model_name = "qwen-coding"  # Qwen3.5-35B-A3B (alias set in docker-compose)
+            model_name = os.getenv("CODING_MODEL_ALIAS", "nemotron-coding")
 
         # Step 3: Make the inference request
         try:
