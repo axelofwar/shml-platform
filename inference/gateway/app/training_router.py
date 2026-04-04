@@ -36,7 +36,15 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Platform root - avoid hardcoded paths
-PLATFORM_ROOT = os.environ.get("PLATFORM_ROOT", str(Path(__file__).resolve().parents[3]))
+# parents[3] resolves correctly from the dev workspace tree
+# (inference/gateway/app/training_router.py → 4 levels to platform root).
+# In the container the tree is shallower (/app/app/training_router.py),
+# so we clamp to the deepest available parent rather than crashing.
+_file_parents = Path(__file__).resolve().parents
+PLATFORM_ROOT = os.environ.get(
+    "PLATFORM_ROOT",
+    str(_file_parents[min(3, len(_file_parents) - 1)])
+)
 
 # Configuration
 TRAINING_ROOT = Path(
