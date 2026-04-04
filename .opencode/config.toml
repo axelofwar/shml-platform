@@ -4,16 +4,17 @@
 # Default model for coding tasks
 defaultModel = "local-coding/nemotron-coding"
 
-# Nemotron-3-Nano-30B-A3B (Local Coding Model)
+# Agent-service exposes OpenAI-compatible /v1/chat/completions at port 8099.
+# nemotron-coding (llama-server) is Docker-internal only — no direct host port.
 [providers.local-coding]
 type = "openai"
-baseURL = "http://localhost:8010/v1"
+baseURL = "http://localhost:8099/v1"
 
 [[providers.local-coding.models]]
 id = "nemotron-coding"
-name = "Nemotron-3-Nano-30B-A3B (Local)"
-maxTokens = 32768
-contextWindow = 131072
+name = "Qwopus-27B (Local via agent-service)"
+maxTokens = 16384
+contextWindow = 65536
 
 # Qwen3-VL-8B (Local Vision Model)
 [providers.local-vision]

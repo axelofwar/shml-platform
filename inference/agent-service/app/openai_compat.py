@@ -268,7 +268,8 @@ class OpenAICompatibilityLayer:
             # Map model_type to endpoint
             model_type = selection.model_type.value
             endpoint_map = {
-                "qwen-coder": "http://nemotron-coding:8000/v1/chat/completions",
+                "nemotron-coding": "http://nemotron-coding:8000/v1/chat/completions",
+                "qwen-coder": "http://nemotron-coding:8000/v1/chat/completions",  # legacy alias
                 "qwen3-vl": "http://qwen3-vl-api:8000/v1/chat/completions",
                 "z-image": "http://z-image-api:8000/v1/images/generations",
             }

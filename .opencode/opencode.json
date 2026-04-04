@@ -4,19 +4,19 @@
   "provider": {
     "nemotron": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Nemotron (local)",
+      "name": "Qwopus (local via agent-service)",
       "options": {
-        "baseURL": "http://localhost:8010/v1"
+        "baseURL": "http://localhost:8099/v1"
       },
       "models": {
         "nemotron-coding": {
-          "name": "Nemotron-3-Nano-30B-A3B (Local)",
+          "name": "Qwopus-27B Q4_K_M (Local)",
           "tool_call": true,
-          "reasoning": false,
+          "reasoning": true,
           "attachment": false,
           "limit": {
             "context": 65536,
-            "output": 32768
+            "output": 16384
           }
         }
       }
