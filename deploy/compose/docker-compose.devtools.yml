@@ -212,7 +212,7 @@ services:
   # ==========================================================================
   sba-resource-portal:
     build:
-      context: ../../sba-resource-portal
+      context: ${SBA_SOURCE_PATH:-/home/axelofwar/Projects/shml-sba}
       dockerfile: Dockerfile
       args:
         GEMINI_API_KEY: ${BNCCYBERSPACE_GOOGLE_API_KEY:-}

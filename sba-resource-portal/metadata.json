@@ -1,7 +1,0 @@
-{
-  "name": "SBA Resource Portal",
-  "description": "A voice-enabled interactive portal allowing users to upload PDF and MP3 resources and ask questions to receive AI-generated answers.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}
