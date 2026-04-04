@@ -35,10 +35,10 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingStatus:
-    """Check training status from qwen-manager (GPU yield lifecycle)"""
+    """Check training status from coding-model-manager (GPU yield lifecycle)"""
 
     QWEN_MANAGER_URLS = [
-        "http://nemotron-manager:8000/status",
+        os.getenv("CODING_MANAGER_URL", "http://nemotron-manager:8000/status"),
         "http://localhost:8021/status",
     ]
     # Legacy alias kept for backwards compatibility
