@@ -163,14 +163,23 @@ def clean_output(text: str) -> str:
 
 
 def extract_json_payload(text: str) -> dict[str, Any]:
-    """Extract the first valid JSON object from Hermes output."""
+    """Extract the LAST valid JSON object from Hermes output.
+
+    Scans in reverse so that Hermes' response JSON (at the end of the
+    transcript) takes precedence over any template JSON embedded in the
+    prompt (which appears earlier in the transcript).
+    """
     decoder = json.JSONDecoder()
     cleaned = clean_output(text)
     for marker in ("```json", "```"):
         cleaned = cleaned.replace(marker, "")
-    for index, char in enumerate(cleaned):
-        if char != "{":
-            continue
+    # Collapse terminal-box line wrapping: "trailing spaces\n   next line" → space
+    # Hermes' box UI wraps long strings across lines with padding, producing invalid JSON
+    cleaned = re.sub(r"[ \t]{2,}\n[ \t]+", " ", cleaned)
+
+    # Collect all positions of '{' and scan from last to first
+    brace_positions = [i for i, ch in enumerate(cleaned) if ch == "{"]
+    for index in reversed(brace_positions):
         try:
             payload, _ = decoder.raw_decode(cleaned[index:])
         except json.JSONDecodeError:
@@ -549,15 +558,24 @@ def dispatch(
 
     gitlab_iid = None
     if update_issue:
-        gitlab_iid = update_gitlab_issue(
-            task, result, close_on_complete=close_on_complete,
-        )
+        try:
+            gitlab_iid = update_gitlab_issue(
+                task, result, close_on_complete=close_on_complete,
+            )
+        except Exception as exc:
+            logger.warning("GitLab issue update failed (non-fatal): %s", exc)
 
     if notify_telegram:
-        send_telegram_summary(task, result, gitlab_issue_iid=gitlab_iid)
+        try:
+            send_telegram_summary(task, result, gitlab_issue_iid=gitlab_iid)
+        except Exception as exc:
+            logger.warning("Telegram notification failed (non-fatal): %s", exc)
 
     if sync_vault:
-        sync_to_obsidian(task, result, gitlab_issue_iid=gitlab_iid)
+        try:
+            sync_to_obsidian(task, result, gitlab_issue_iid=gitlab_iid)
+        except Exception as exc:
+            logger.warning("Obsidian vault sync failed (non-fatal): %s", exc)
 
     logger.info(
         "Dispatch complete: success=%s duration=%.1fs",
