@@ -711,6 +711,45 @@ is_training_active() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# GPU manager state — authoritative source for GPU 0/1 lifecycle
+# ---------------------------------------------------------------------------
+# Cache vars (module-scope, refreshed each call)
+_GPU_MANAGER_TRAINING_ACTIVE="false"
+_GPU_MANAGER_GPU0_STATE="unknown"
+_GPU_MANAGER_GPU1_STATE="unknown"
+_GPU_MANAGER_PII_ACTIVE="false"
+
+get_gpu_manager_state() {
+    local health_json
+    health_json=$(curl -sf --max-time 3 "http://gpu-manager:8000/health" 2>/dev/null) || {
+        # gpu-manager unreachable — fall back to nvidia-smi heuristic
+        if is_training_active; then
+            _GPU_MANAGER_TRAINING_ACTIVE="true"
+        else
+            _GPU_MANAGER_TRAINING_ACTIVE="false"
+        fi
+        _GPU_MANAGER_GPU0_STATE="unknown"
+        _GPU_MANAGER_GPU1_STATE="unknown"
+        _GPU_MANAGER_PII_ACTIVE="false"
+        log "WARN: gpu-manager unreachable — falling back to nvidia-smi for GPU state"
+        return 0
+    }
+    _GPU_MANAGER_TRAINING_ACTIVE=$(echo "$health_json" | jq -r '.training_active // false' 2>/dev/null || echo "false")
+    _GPU_MANAGER_GPU0_STATE=$(echo "$health_json"    | jq -r '.gpu_0_state     // "unknown"' 2>/dev/null || echo "unknown")
+    _GPU_MANAGER_GPU1_STATE=$(echo "$health_json"    | jq -r '.gpu_1_state     // "unknown"' 2>/dev/null || echo "unknown")
+    _GPU_MANAGER_PII_ACTIVE=$(echo "$health_json"    | jq -r '.pii_active      // false'     2>/dev/null || echo "false")
+}
+
+# Returns 0 (true) when GPU manager has intentionally idle'd GPU 0 services.
+# Use this to suppress false alerts on qwopus-coding being down by design.
+is_gpu_managed_idle() {
+    get_gpu_manager_state
+    [[ "$_GPU_MANAGER_TRAINING_ACTIVE" == "true" ]] && return 0
+    echo "$_GPU_MANAGER_GPU0_STATE" | grep -qi "training\|transitioning" && return 0
+    return 1
+}
+
 is_training_sensitive_container() {
     local container="$1"
     local short_name="${container#${PLATFORM_PREFIX}-}"
@@ -912,18 +951,12 @@ check_llama_server() {
 
     log "ALERT: qwopus-coding unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
 
-    if is_training_active; then
-        # Training is running — server stopped intentionally to free GPU 0
-        log "INFO: qwopus-coding down AND training active — GPU 0 in use, no action needed"
-        send_alert_card \
-            --container "qwopus-coding" \
-            --severity "info" \
-            --event "llama_down_training" \
-            --problem "qwopus-coding is unreachable (HTTP ${http_code}). This is expected while training occupies GPU 0." \
-            --action "No restart attempted — training has exclusive GPU 0 access. Container will be restarted when training completes." \
-            --agent "shml-watchdog" \
-            --outcome "Continue.dev unavailable during training. Will auto-recover when training completes."
-        audit "LLAMA_DOWN_TRAINING" "qwopus-coding" "Training active — no action"
+    if is_gpu_managed_idle; then
+        # GPU manager has intentionally paused qwopus-coding — silently skip, reset counter
+        LLAMA_DOWN_CYCLES=0
+        echo "$(date +%s) gpu-manager-idle" > "$LLAMA_STATE_FILE"
+        log "INFO: qwopus-coding paused by gpu-manager (state=${_GPU_MANAGER_GPU0_STATE} training=${_GPU_MANAGER_TRAINING_ACTIVE}) — no alert"
+        audit "LLAMA_GPU_MANAGER_IDLE" "qwopus-coding" "GMState=${_GPU_MANAGER_GPU0_STATE} Training=${_GPU_MANAGER_TRAINING_ACTIVE}"
         return 0
     fi
 
@@ -962,11 +995,10 @@ CLINE_SATURATION_STATE_FILE="${STATE_DIR}/cline_saturation"
     CLINE_SATURATION_CYCLES=$(awk '{print $2}' "$CLINE_SATURATION_STATE_FILE" 2>/dev/null || echo 0)
 
 check_cline_slot_availability() {
-    local host_ip
-    host_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
-    [[ -z "$host_ip" ]] && return 0
+    # Skip if GPU manager has qwopus-coding intentionally stopped
+    is_gpu_managed_idle && return 0
 
-    local slots_url="http://${host_ip}:${LLAMA_SERVER_PORT:-8000}/slots"
+    local slots_url="http://qwopus-coding:8000/slots"
     local slots_json
     slots_json=$(curl -sf --max-time 3 "$slots_url" 2>/dev/null) || return 0  # skip if unreachable
 
@@ -985,14 +1017,14 @@ check_cline_slot_availability() {
         # Alert only after sustained saturation (5+ cycles = ~5 minutes)
         if (( CLINE_SATURATION_CYCLES == 5 )); then
             send_alert_card \
-                --container "qwen35-server (host)" \
+                --container "qwopus-coding" \
                 --severity "warning" \
                 --event "cline_slots_saturated" \
                 --problem "All ${total_slots} inference slots have been busy for ${CLINE_SATURATION_CYCLES} consecutive watchdog cycles. Cline tasks are likely timing out." \
                 --action "Cause: Continue.dev indexing may be saturating all slots. No automatic action — increase --parallel slots or pause Continue indexing if needed." \
                 --agent "shml-watchdog" \
-                --outcome "Monitor. If persistent, consider: systemctl restart qwen35-server (reloads with current --parallel setting)"
-            audit "CLINE_SATURATED" "qwen35-server" "Slots=${busy_slots}/${total_slots} Cycles=${CLINE_SATURATION_CYCLES}"
+                --outcome "Monitor. If persistent, consider: docker compose -f inference/qwopus/docker-compose.yml restart qwopus-coding"
+            audit "CLINE_SATURATED" "qwopus-coding" "Slots=${busy_slots}/${total_slots} Cycles=${CLINE_SATURATION_CYCLES}"
         fi
     else
         if [[ "${CLINE_SATURATION_CYCLES}" -gt 0 ]]; then
