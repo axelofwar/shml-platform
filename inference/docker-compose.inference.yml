@@ -1,7 +1,7 @@
 # Inference Stack - Qwen3-VL + Z-Image + Gateway
 # Integrates with existing shml-platform network
-# RTX 3090 Ti (GPU 0) = Nemotron-3-Nano-30B (primary, ~22.7GB) - RESERVED
-# RTX 2070 (GPU 1)   = Qwen3-VL + Z-Image + PII-Blur (shared, yields)
+# RTX 3090 Ti (GPU 0) = Qwopus-Coding (primary, ~21GB) - RESERVED
+# RTX 2070 (GPU 1)   = Qwen3-VL + Z-Image + Watchdog-LLM (shared, yields)
 # NOTE: Uses shml-postgres from main deploy/compose/docker-compose.yml (database: inference)
 
 services:
@@ -13,7 +13,7 @@ services:
   # ==========================================================================
   # Qwen3-VL - LLM for Planning/Architecture (RTX 2070 - 8GB)
   # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
-  # MOVED TO RTX 2070 to free RTX 3090 for Nemotron (primary coding LLM)
+  # MOVED TO RTX 2070 to free RTX 3090 for Qwopus (primary coding LLM)
   # INT4 quantized 8B model fits within 2070's 8GB VRAM
   # ==========================================================================
   qwen3-vl-api:
@@ -76,7 +76,7 @@ services:
     # ==========================================================================
     # Z-Image - Image Generation (RTX 2070 - On-Demand, Yields to Nemotron)
     # GPU Order: 0=RTX 3090 Ti (24GB), 1=RTX 2070 (8GB)
-    # Moved to RTX 2070 to keep 3090 reserved for Nemotron
+    # Moved to RTX 2070 to keep 3090 reserved for Qwopus
     # If model is too large, will stay unloaded until explicitly requested
     # ==========================================================================
   z-image-api:
@@ -117,7 +117,7 @@ services:
           memory: 8G
           devices:
             - driver: nvidia
-              device_ids: [ "1" ] # RTX 2070 (8GB) - freed 3090 for Nemotron
+              device_ids: [ "1" ] # RTX 2070 (8GB) - freed 3090 for Qwopus
               capabilities: [ gpu ]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
@@ -173,6 +173,7 @@ services:
       - ./logs/gateway:/app/logs
     networks:
       - shml-platform
+      - shml-core-net
     expose:
       - "8000"
     secrets:
@@ -207,128 +208,10 @@ services:
         condition: service_started
 
   # ==========================================================================
-  # PII Face Blurring - SOTA Models (Jan 2026)
-  # YOLOv11m-Face + SegFormer/YOLOv8-seg + BoxMOT/BoT-SORT
-  # Dynamic GPU: RTX 3090 (when not training) or RTX 2070 (fallback)
+  # PII Face Blurring — DECOMMISSIONED (April 2026)
+  # Removed to free RTX 2070 VRAM for watchdog-llm service.
+  # Source code archived in inference/pii-blur/ and inference/pii-ui/
   # ==========================================================================
-  pii-blur-api:
-    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/pii-blur-api:${SHML_IMAGE_TAG:-latest}
-    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
-    build:
-      context: ./pii-blur
-      dockerfile: Dockerfile
-    container_name: pii-blur-api
-    restart: unless-stopped
-    environment:
-      # Pinned to RTX 2070 (GPU 1) to keep 3090 free for Nemotron
-      - DEVICE=cuda:0
-      - PRIMARY_GPU=cuda:0
-      - FALLBACK_GPU=cuda:0
-      - PREFER_3090=false
-      - MAX_MEMORY_GB=6.0
-      - UNLOAD_TIMEOUT_SECONDS=300
-      # SOTA Face Detection: YOLOv11m-Face (~97% mAP vs Phase 5: 85.9%)
-      - YOLO_FACE_MODEL=/models/yolo-face/yolov11m-face.pt
-      # Segmentation: SegFormer (quality) or YOLO (speed)
-      - SEGMENTATION_MODE=yolo
-      - SEGFORMER_MODEL=jonathandinu/face-parsing
-      - YOLO_SEG_MODEL=/models/yolo-seg/face_yolov8n-seg2_60.pt
-      # Tracking: BoT-SORT (accuracy) or ByteTrack (speed)
-      - TRACKING_MODE=botsort
-      - REID_WEIGHTS=/models/reid/osnet_x0_25_msmt17.pt
-      # RF-DETR Ensemble for hard cases
-      - ENABLE_RFDETR_FALLBACK=true
-      - RFDETR_CONFIDENCE_THRESHOLD=0.40
-      - RFDETR_MODEL_SIZE=medium
-      # License Plate Detection
-      - ENABLE_LICENSE_PLATE_DETECTION=true
-      - LICENSE_PLATE_CONF_THRESHOLD=0.30
-      # Auto-calculate concurrent jobs based on GPU memory
-      - MAX_CONCURRENT_JOBS=0
-      - HF_HOME=/models
-      - TORCH_HOME=/models/torch
-      - POSTGRES_HOST=shml-postgres
-      - POSTGRES_DB=inference
-      - POSTGRES_USER=inference
-      - POSTGRES_PASSWORD_FILE=/run/secrets/shared_db_password
-      - REDIS_HOST=shml-redis
-      - REDIS_PORT=6379
-      - REDIS_DB=3
-    volumes:
-      - model-cache:/models
-      - pii-blur-outputs:/outputs
-      - ./logs/pii-blur:/app/logs
-    networks:
-      - shml-platform
-    expose:
-      - "8000"
-    secrets:
-      - shared_db_password
-    deploy:
-      resources:
-        limits:
-          cpus: "4.0"
-          memory: 16G
-        reservations:
-          cpus: "2.0"
-          memory: 8G
-          devices:
-            # Pinned to RTX 2070 (GPU 1) - 3090 reserved for Nemotron
-            - driver: nvidia
-              device_ids: [ "1" ]
-              capabilities: [ gpu ]
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 300s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.pii-blur.rule=PathPrefix(`/api/pii`)"
-      - "traefik.http.routers.pii-blur.priority=2147483647"
-      - "traefik.http.routers.pii-blur.entrypoints=web,websecure"
-      - "traefik.http.services.pii-blur.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.pii-blur-strip.stripprefix.prefixes=/api/pii"
-      - "traefik.http.routers.pii-blur.middlewares=oauth2-errors,oauth2-auth,pii-blur-strip"
-
-  # ==========================================================================
-  # PII Blur POC UI (React/Vite - Nginx production server)
-  # ==========================================================================
-  pii-ui:
-    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/pii-ui:${SHML_IMAGE_TAG:-latest}
-    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
-    build:
-      context: ./pii-ui
-      dockerfile: Dockerfile
-    container_name: pii-ui
-    restart: unless-stopped
-    networks:
-      - shml-platform
-    expose:
-      - "80"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:80/" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.pii-ui.rule=PathPrefix(`/pii`)"
-      - "traefik.http.routers.pii-ui.priority=2147483647"
-      - "traefik.http.routers.pii-ui.entrypoints=web,websecure"
-      - "traefik.http.services.pii-ui.loadbalancer.server.port=80"
-      - "traefik.http.middlewares.pii-ui-strip.stripprefix.prefixes=/pii"
-      - "traefik.http.routers.pii-ui.middlewares=oauth2-errors,oauth2-auth,pii-ui-strip"
 
   # ==========================================================================
   # Audio Copyright Detection & AI Replacement (CPU - No GPU needed)
@@ -385,10 +268,85 @@ services:
       - "traefik.http.routers.audio-copyright.middlewares=oauth2-errors,oauth2-auth,audio-copyright-strip"
 
   # ==========================================================================
-  # shl-nano — Tier-0 domain nano-model (T8.4)
-  # RTX 2070 (GPU 1) — ~2 GB VRAM inference, port 8021
-  # Only started after base pretrain + SFT are complete.
-  # Set NANO_SERVICE_URL=http://shl-nano:8021 in agent-service env to activate.
+  # Watchdog LLM — Always-on triage model for platform self-healing
+  # RTX 2070 (GPU 1) — Qwen3-4B Q4_K_M (~3 GB VRAM), port 8021
+  # Provides fast JSON diagnosis for watchdog alerts (< 2s inference).
+  # Complex/large-context tasks are escalated to qwopus-coding (GPU 0)
+  # via the agent-service.
+  # ==========================================================================
+  watchdog-llm:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/qwopus-coding:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
+    build:
+      context: ../inference/qwopus
+      dockerfile: Dockerfile
+    container_name: watchdog-llm
+    restart: unless-stopped
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1 # RTX 2070 only
+      - CUDA_VISIBLE_DEVICES=0 # Container sees one GPU
+    volumes:
+      - ../data/models/watchdog-llm:/models:ro
+    command:
+      - --model
+      - /models/${WATCHDOG_MODEL_GGUF:-Qwen3-4B-Q4_K_M.gguf}
+      - --alias
+      - watchdog-llm
+      - --threads
+      - "4"
+      - --n-gpu-layers
+      - "999"
+      - --ctx-size
+      - "8192"
+      - --cache-type-k
+      - q4_0
+      - --cache-type-v
+      - q4_0
+      - --port
+      - "8021"
+      - --host
+      - 0.0.0.0
+      - --jinja
+      - --flash-attn
+      - "on"
+      - --batch-size
+      - "512"
+      - --ubatch-size
+      - "256"
+      - --temp
+      - "0.1"
+      - --top-p
+      - "0.9"
+    networks:
+      - shml-platform
+    ports:
+      - "8021:8021" # Host-accessible for watchdog.sh (runs via systemd)
+    expose:
+      - "8021"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 6G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+          devices:
+            - driver: nvidia
+              device_ids: [ "1" ] # RTX 2070 (8GB)
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8021/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=false" # Internal only — watchdog access only
+
+  # ==========================================================================
+  # shl-nano — Tier-0 domain nano-model (T8.4) — DEPRECATED
+  # Replaced by watchdog-llm (Qwen3-4B). Kept for reference.
   # ==========================================================================
   shl-nano:
     build:
@@ -440,8 +398,6 @@ volumes:
     name: hf-model-cache
   z-image-outputs:
     name: z-image-outputs
-  pii-blur-outputs:
-    name: pii-blur-outputs
   shl-nano-runs:
     name: shl-nano-runs
   audio-outputs:
@@ -449,6 +405,8 @@ volumes:
 
 networks:
   shml-platform:
+    external: true
+  shml-core-net:
     external: true
 
 secrets:
