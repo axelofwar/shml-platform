@@ -49,6 +49,8 @@ services:
       WATCHDOG_DATA_VOLUME: "${PLATFORM_PREFIX:-shml}-watchdog-data"
       WATCHDOG_BROWSER_LOG_DIRS: "${WATCHDOG_BROWSER_LOG_DIRS:-}"
       HERMES_BIN: "${HERMES_BIN:-/home/axelofwar/.hermes/hermes-agent/venv/bin/hermes}"
+      # watchdog-llm fast diagnosis (Qwen3-4B on RTX 2070)
+      NANO_SERVICE_URL: "http://watchdog-llm:8021"
       # llama.cpp coding server (host process, port 8000)
       LLAMA_SERVER_PORT: "${LLAMA_SERVER_PORT:-8000}"
     deploy:

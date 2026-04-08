@@ -55,7 +55,7 @@ WATCHDOG_DATA_VOLUME="${WATCHDOG_DATA_VOLUME:-${PLATFORM_PREFIX}-watchdog-data}"
 WATCHDOG_BROWSER_LOG_DIRS="${WATCHDOG_BROWSER_LOG_DIRS:-}"
 HERMES_BIN="${HERMES_BIN:-${WATCHDOG_HOST_HERMES_HOME}/hermes-agent/venv/bin/hermes}"
 # Watchdog LLM fast diagnosis endpoint (Qwen3-4B on RTX 2070, always-on)
-NANO_SERVICE_URL="${NANO_SERVICE_URL:-http://localhost:8021}"
+NANO_SERVICE_URL="${NANO_SERVICE_URL:-http://watchdog-llm:8021}"
 GITLAB_INTERNAL_HEALTH_URL="${GITLAB_INTERNAL_HEALTH_URL:-http://gitlab:8929/gitlab/users/sign_in}"
 GITLAB_UNHEALTHY_REASON=""
 
@@ -621,6 +621,20 @@ dispatch_hermes_resolution() {
 
     # Run Hermes dispatch inside the helper container.
     # Uses dispatch.py (unified library) which handles Telegram + Obsidian sync.
+    #
+    # --network host: Hermes binary connects to localhost:8099 (agent-service
+    # published port). Docker DNS names don't work with --network host, so we 
+    # resolve GitLab's bridge IP here (inside the watchdog which is on Docker
+    # DNS) and pass that as GITLAB_BASE_URL to the helper container.
+    local resolved_gitlab_url="${GITLAB_BASE_URL:-}"
+    local gitlab_container="${PLATFORM_PREFIX:-shml}-gitlab"
+    local gitlab_ip
+    gitlab_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$gitlab_container" 2>/dev/null | grep -oE '172\.[0-9]+\.[0-9]+\.[0-9]+' | head -1) || gitlab_ip=""
+    if [[ -n "$gitlab_ip" ]]; then
+        resolved_gitlab_url="http://${gitlab_ip}:8929/gitlab"
+        log "HERMES: Resolved GitLab at ${resolved_gitlab_url} for helper container"
+    fi
+
     docker run --rm \
         --network host \
         -v "${WATCHDOG_HOST_PLATFORM_ROOT}:${WATCHDOG_HOST_PLATFORM_ROOT}" \
@@ -633,7 +647,7 @@ dispatch_hermes_resolution() {
         -e TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}" \
         -e TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}" \
         -e GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-}" \
-        -e GITLAB_BASE_URL="${GITLAB_BASE_URL:-}" \
+        -e GITLAB_BASE_URL="${resolved_gitlab_url}" \
         -e GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}" \
         "${WATCHDOG_HERMES_HELPER_IMAGE}" \
         python3 "${WATCHDOG_HOST_PLATFORM_ROOT}/scripts/hermes/dispatch_incident.py" \
