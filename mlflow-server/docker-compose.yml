@@ -19,6 +19,7 @@ services:
       dockerfile: Dockerfile
     container_name: mlflow-server
     restart: unless-stopped
+    mem_swappiness: 10
     deploy:
       resources:
         limits:
@@ -157,6 +158,7 @@ services:
       dockerfile: Dockerfile
     container_name: mlflow-api
     restart: unless-stopped
+    mem_swappiness: 10
     deploy:
       resources:
         limits:

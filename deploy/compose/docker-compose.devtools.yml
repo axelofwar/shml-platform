@@ -32,7 +32,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -51,6 +51,7 @@ services:
     image: codercom/code-server:latest
     container_name: ${PLATFORM_PREFIX:-shml}-code-server
     restart: unless-stopped
+    mem_swappiness: 5
     user: "${UID:-1000}:${GID:-1000}"
     command:
       - --auth=none
@@ -78,7 +79,7 @@ services:
       - platform
     working_dir: /home/coder/project
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/healthz" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -120,7 +121,7 @@ services:
       - platform
       - core
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      test: [ "CMD", "curl", "-f", "http://localhost:19120/api/v2/config" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -156,7 +157,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -166,7 +167,8 @@ services:
     image: voxel51/fiftyone:latest
     container_name: ${PLATFORM_PREFIX:-shml}-fiftyone
     restart: unless-stopped
-    command: ["python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1"]
+    mem_swappiness: 10
+    command: [ "python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1" ]
     deploy:
       resources:
         limits:
@@ -193,7 +195,7 @@ services:
       fiftyone-mongodb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -230,7 +232,7 @@ services:
     expose:
       - "80"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -247,6 +249,29 @@ services:
   # ==========================================================================
   # GITLAB CE - Self-Hosted Git + Container Registry
   # ==========================================================================
+  gitlab-postgres:
+    image: postgres:16-alpine
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitlab
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - gitlab-postgres-data:/var/lib/postgresql/data
+    secrets:
+      - shared_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitlab -d gitlab"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - core
+    expose:
+      - "5432"
+
   gitlab:
     image: gitlab/gitlab-ce:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab
@@ -273,7 +298,7 @@ services:
         gitlab_rails['gitlab_default_can_create_group'] = false
         gitlab_rails['db_adapter'] = 'postgresql'
         gitlab_rails['db_encoding'] = 'unicode'
-        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_host'] = 'gitlab-postgres'
         gitlab_rails['db_port'] = 5432
         gitlab_rails['db_database'] = 'gitlab'
         gitlab_rails['db_username'] = 'gitlab'
@@ -340,8 +365,11 @@ services:
       - "9168"
     ports:
       - "127.0.0.1:5050:5050"
+    depends_on:
+      gitlab-postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in" ]
       interval: 60s
       timeout: 15s
       retries: 5
@@ -360,59 +388,72 @@ services:
       - "traefik.http.services.gitlab.loadbalancer.server.port=8929"
       - "traefik.http.routers.gitlab.middlewares=oauth2-errors,oauth2-auth,role-auth-developer"
 
-  gitlab-runner:
+  gitlab-runner-platform:
     image: gitlab/gitlab-runner:latest
-    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-platform
     restart: unless-stopped
-    entrypoint:
-      - /bin/sh
-      - -lc
-      - |
-        set -eu
-        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
-          if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
-            echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2
-            exit 1
-          fi
-          gitlab-runner register --non-interactive \
-            --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}" \
-            --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}" \
-            --executor "docker" \
-            --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}" \
-            --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}" \
-            --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}" \
-            --run-untagged="true" \
-            --locked="false"
-        fi
-        if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^  limit = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  name =/a\  limit = 1' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^  request_concurrency = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  limit =/a\  request_concurrency = 1' /etc/gitlab-runner/config.toml
-        fi
-        if grep -q '^concurrent = ' /etc/gitlab-runner/config.toml; then
-          sed -i 's/^concurrent = .*/concurrent = 1/' /etc/gitlab-runner/config.toml
-        else
-          sed -i '1i concurrent = 1' /etc/gitlab-runner/config.toml
-        fi
-        exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
-      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_RUNNER_REGISTRATION_TOKEN:-}
-      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}
-      GITLAB_RUNNER_TAGS: ${GITLAB_RUNNER_TAGS:-docker,shml}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_PLATFORM_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_PLATFORM_RUNNER_DESCRIPTION:-shml-platform-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_PLATFORM_RUNNER_TAGS:-docker,shml,platform}
       GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
       GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_PLATFORM_RUNNER_RUN_UNTAGGED:-true}
     volumes:
+      - ../../scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - gitlab-runner-config:/etc/gitlab-runner
+      - gitlab-runner-platform-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  gitlab-runner-robotics:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-robotics
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_ROBOTICS_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_ROBOTICS_RUNNER_DESCRIPTION:-shml-robotics-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_ROBOTICS_RUNNER_TAGS:-docker,shml,robotics}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_ROBOTICS_RUNNER_RUN_UNTAGGED:-true}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-robotics-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  gitlab-runner-training:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-training
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_TRAINING_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_TRAINING_RUNNER_DESCRIPTION:-shml-training-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_TRAINING_RUNNER_TAGS:-docker,shml,training}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_TRAINING_RUNNER_RUN_UNTAGGED:-true}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-training-config:/etc/gitlab-runner
     networks:
       - platform
     depends_on:
@@ -436,7 +477,7 @@ services:
           memory: 64M
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api,gitlab
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
       POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
@@ -454,7 +495,46 @@ services:
     networks:
       - core
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  gitlab-postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    container_name: gitlab-postgres-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-0.5}'
+          memory: ${BACKUP_MEM_LIMIT:-256M}
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    environment:
+      POSTGRES_HOST: gitlab-postgres
+      POSTGRES_DB: gitlab
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
+      SCHEDULE: "${GITLAB_BACKUP_SCHEDULE:-${BACKUP_SCHEDULE:-0 */6 * * *}}"
+      BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
+      BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
+      BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
+      HEALTHCHECK_PORT: 8080
+      WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
+    volumes:
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    networks:
+      - core
+    depends_on:
+      gitlab-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -474,7 +554,7 @@ services:
         reservations:
           cpus: '0.05'
           memory: 64M
-    command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
+    command: [ "-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook" ]
     environment:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
       FUSIONAUTH_WEBHOOK_SECRET: "${FUSIONAUTH_WEBHOOK_SECRET:-}"
@@ -489,7 +569,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: [ "CMD-SHELL", "kill -0 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -519,8 +599,14 @@ volumes:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
   gitlab-data:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-data
-  gitlab-runner-config:
-    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-config
+  gitlab-postgres-data:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-postgres-data
+  gitlab-runner-platform-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-platform-config
+  gitlab-runner-robotics-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-robotics-config
+  gitlab-runner-training-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-training-config
 
 networks:
   platform:

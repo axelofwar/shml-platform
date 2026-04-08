@@ -165,11 +165,12 @@ services:
       - FUSIONAUTH_URL=${FUSIONAUTH_URL:-http://fusionauth:9011}
       - FUSIONAUTH_CLIENT_ID=${FUSIONAUTH_RAY_CLIENT_ID}
       - FUSIONAUTH_CLIENT_SECRET=${FUSIONAUTH_RAY_CLIENT_SECRET}
-      # API Keys for CI/CD access (bypasses OAuth) - loaded from local .env
-      - CICD_ADMIN_KEY=${CICD_ADMIN_KEY}
-      - CICD_DEVELOPER_KEY=${CICD_DEVELOPER_KEY}
-      - CICD_ELEVATED_DEVELOPER_KEY=${CICD_ELEVATED_DEVELOPER_KEY}
-      - CICD_VIEWER_KEY=${CICD_VIEWER_KEY}
+      # API Keys for CI/CD access (bypasses OAuth)
+      # Source the canonical FusionAuth-backed keys from the root .env.
+      - CICD_ADMIN_KEY=${FUSIONAUTH_CICD_SUPER_KEY}
+      - CICD_DEVELOPER_KEY=${FUSIONAUTH_CICD_DEVELOPER_KEY}
+      - CICD_ELEVATED_DEVELOPER_KEY=${FUSIONAUTH_CICD_ELEVATED_DEVELOPER_KEY}
+      - CICD_VIEWER_KEY=${FUSIONAUTH_CICD_VIEWER_KEY}
       - API_KEY_ENABLED=false
       # Observability
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
@@ -281,15 +282,16 @@ services:
       # The frontend uses relative URLs to avoid mixed content errors
     image: ${PLATFORM_PREFIX:-shml}-ray-compute-ui:latest
     container_name: ray-compute-ui
+    mem_swappiness: 10
     restart: unless-stopped
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 512M
+          memory: 768M
         reservations:
           cpus: '0.25'
-          memory: 256M
+          memory: 384M
     environment:
       # CRITICAL: Do NOT set NEXT_PUBLIC_API_URL - it causes mixed content errors
       # The frontend uses relative URLs (/api/ray) which work with both HTTP and HTTPS
@@ -345,8 +347,10 @@ volumes:
   # Named volumes for K8s portability (replaces bind mounts)
   ray-data:
     name: ${PLATFORM_PREFIX:-shml}-ray-data
+    external: true
   job-workspaces:
     name: ${PLATFORM_PREFIX:-shml}-job-workspaces
+    external: true
   ray-api-logs:
     name: ${PLATFORM_PREFIX:-shml}-ray-api-logs
   ray-artifacts:

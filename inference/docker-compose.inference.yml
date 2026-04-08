@@ -24,6 +24,7 @@ services:
       dockerfile: Dockerfile
     container_name: qwen3-vl-api
     restart: unless-stopped
+    mem_swappiness: 0
     environment:
       - MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
       - QUANTIZATION=int4
@@ -87,6 +88,7 @@ services:
       dockerfile: Dockerfile
     container_name: z-image-api
     restart: unless-stopped
+    mem_swappiness: 0
     environment:
       - MODEL_ID=Tongyi-MAI/Z-Image-Turbo
       # IMPORTANT: Use cuda:0 because container only sees one GPU via CUDA_VISIBLE_DEVICES
