@@ -864,41 +864,36 @@ check_display_gpu_pressure() {
 }
 
 # ---------------------------------------------------------------------------
-# Host process monitor — Qwen3.5-27B llama.cpp coding server
-# The llama-server is a bare host process (not a Docker container).
-# We probe it via HTTP from within Docker using the Docker bridge gateway IP.
+# Docker container monitor — Qwen3.5-27B coding server (qwopus-coding)
+# The coding server runs as a Docker container on the shml-platform network.
+# We probe it via Docker DNS: http://qwopus-coding:8000/health
 # If unhealthy AND training is not active → alert + escalate.
-# Restart is handled by the systemd service (qwen35-server.service).
+# Restart: docker compose -f inference/qwopus/docker-compose.yml up -d
 # ---------------------------------------------------------------------------
 LLAMA_STATE_FILE="${STATE_DIR}/llama-server.state"
 LLAMA_DOWN_CYCLES=0
 
 check_llama_server() {
-    # Resolve Docker bridge gateway to reach host from within the container
-    local host_ip
-    host_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
-    [[ -z "$host_ip" ]] && return 0  # Can't determine host IP — skip silently
+    local health_url="http://qwopus-coding:8000/health"
 
-    local health_url="http://${host_ip}:${LLAMA_SERVER_PORT:-8000}/health"
-
-    # Probe the health endpoint (3s timeout)
+    # Probe the health endpoint (3s timeout) via Docker DNS
     local http_code
     http_code=$(curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$health_url" 2>/dev/null) || http_code="000"
 
     if [[ "$http_code" == "200" ]]; then
         # Server is healthy — clear failure counter
         if [[ "${LLAMA_DOWN_CYCLES}" -gt 0 ]]; then
-            log "OK: llama-server recovered (was down for ${LLAMA_DOWN_CYCLES} cycles)"
+            log "OK: qwopus-coding recovered (was down for ${LLAMA_DOWN_CYCLES} cycles)"
             send_alert_card \
-                --container "qwen35-server (host)" \
+                --container "qwopus-coding" \
                 --severity "ok" \
                 --event "llama_server_recovered" \
-                --problem "llama-server was unreachable for ${LLAMA_DOWN_CYCLES} watchdog cycles" \
+                --problem "qwopus-coding was unreachable for ${LLAMA_DOWN_CYCLES} watchdog cycles" \
                 --action "Health check now passing at ${health_url}" \
                 --agent "shml-watchdog" \
-                --outcome "✅ llama-server is healthy — Continue.dev and Cline are operational."
+                --outcome "✅ qwopus-coding is healthy — Continue.dev and Cline are operational."
             close_gitlab_incident "llama-server Unreachable" "Recovered at $(date -u '+%Y-%m-%d %H:%M UTC')"
-            audit "LLAMA_RECOVERED" "qwen35-server" "Cycles down=${LLAMA_DOWN_CYCLES}"
+            audit "LLAMA_RECOVERED" "qwopus-coding" "Cycles down=${LLAMA_DOWN_CYCLES}"
         fi
         LLAMA_DOWN_CYCLES=0
         echo "$(date +%s) healthy" > "$LLAMA_STATE_FILE"
@@ -911,49 +906,49 @@ check_llama_server() {
 
     # Only alert after 2 consecutive failures (avoids transient hiccup noise)
     if (( LLAMA_DOWN_CYCLES < 2 )); then
-        log "WARN: llama-server returned HTTP ${http_code} (cycle ${LLAMA_DOWN_CYCLES}/2 before alert)"
+        log "WARN: qwopus-coding returned HTTP ${http_code} (cycle ${LLAMA_DOWN_CYCLES}/2 before alert)"
         return 0
     fi
 
-    log "ALERT: llama-server unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
+    log "ALERT: qwopus-coding unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
 
     if is_training_active; then
         # Training is running — server stopped intentionally to free GPU 0
-        log "INFO: llama-server down AND training active — GPU 0 in use, no action needed"
+        log "INFO: qwopus-coding down AND training active — GPU 0 in use, no action needed"
         send_alert_card \
-            --container "qwen35-server (host)" \
+            --container "qwopus-coding" \
             --severity "info" \
             --event "llama_down_training" \
-            --problem "llama-server is unreachable (HTTP ${http_code}). This is expected while training occupies GPU 0." \
-            --action "No restart attempted — training has exclusive GPU 0 access. systemd service will start the server automatically when GPU is free." \
+            --problem "qwopus-coding is unreachable (HTTP ${http_code}). This is expected while training occupies GPU 0." \
+            --action "No restart attempted — training has exclusive GPU 0 access. Container will be restarted when training completes." \
             --agent "shml-watchdog" \
             --outcome "Continue.dev unavailable during training. Will auto-recover when training completes."
-        audit "LLAMA_DOWN_TRAINING" "qwen35-server" "Training active — no action"
+        audit "LLAMA_DOWN_TRAINING" "qwopus-coding" "Training active — no action"
         return 0
     fi
 
-    # No training active AND server is down — alert and request systemd restart via agent
+    # No training active AND server is down — alert and request Docker restart via agent
     send_alert_card \
-        --container "qwen35-server (host)" \
+        --container "qwopus-coding" \
         --severity "critical" \
         --event "llama_server_down" \
-        --problem "llama-server unreachable for ${LLAMA_DOWN_CYCLES} cycles (HTTP ${http_code}). GPU 0 is idle. Continue.dev and Cline requests are timing out." \
-        --action "Creating GitLab incident. systemd service (qwen35-server.service) should auto-restart within 30s. If systemd is not enabled, run: bash inference/llama-cpp/start-qwen35-cuda.sh" \
+        --problem "qwopus-coding unreachable for ${LLAMA_DOWN_CYCLES} cycles (HTTP ${http_code}). GPU 0 is idle. Continue.dev and Cline requests are timing out." \
+        --action "Creating GitLab incident. Restart with: docker compose -f inference/qwopus/docker-compose.yml up -d" \
         --agent "shml-watchdog" \
         --outcome "Monitoring for recovery. Next check in ${CHECK_INTERVAL}s." \
         --gitlab "Incident created — type::bug priority::critical source::watchdog component::infra"
-    audit "LLAMA_DOWN" "qwen35-server" "HTTP=${http_code} Cycles=${LLAMA_DOWN_CYCLES}"
+    audit "LLAMA_DOWN" "qwopus-coding" "HTTP=${http_code} Cycles=${LLAMA_DOWN_CYCLES}"
     create_gitlab_issue \
         "llama-server Unreachable" \
-        "The Qwen3.5-27B llama.cpp coding server is not responding at \`${health_url}\`.\n\nHTTP status: ${http_code}\nDown cycles: ${LLAMA_DOWN_CYCLES}\nTraining active: false\n\nThe systemd service \`qwen35-server.service\` should attempt an automatic restart (Restart=on-failure, RestartSec=30). If the service is not enabled, start manually:\n\`\`\`bash\nbash inference/llama-cpp/start-qwen35-cuda.sh\n\`\`\`\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+        "The Qwen3.5-27B coding server container (qwopus-coding) is not responding at \`${health_url}\`.\n\nHTTP status: ${http_code}\nDown cycles: ${LLAMA_DOWN_CYCLES}\nTraining active: false\n\nRestart with:\n\`\`\`bash\ndocker compose -f inference/qwopus/docker-compose.yml up -d\n\`\`\`\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
         "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
 
-    # Request agent resolution (will attempt restart via systemd API if configured)
+    # Request agent resolution (will attempt Docker restart if configured)
     if (( IS_PAUSED == 0 )) && [[ -n "${AGENT_SERVICE_URL:-}" ]]; then
         request_agent_resolution \
             "llama_server_down" \
-            "qwen35-server (host process) unreachable at ${health_url} for ${LLAMA_DOWN_CYCLES} cycles. GPU 0 is idle. Restart via systemd: systemctl restart qwen35-server.service" \
-            "qwen35-server" || log "WARN: Agent escalation unavailable for llama-server"
+            "qwopus-coding (Docker container) unreachable at ${health_url} for ${LLAMA_DOWN_CYCLES} cycles. GPU 0 is idle. Restart: docker compose -f inference/qwopus/docker-compose.yml up -d" \
+            "qwopus-coding" || log "WARN: Agent escalation unavailable for qwopus-coding"
     fi
 }
 
