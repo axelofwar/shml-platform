@@ -380,7 +380,15 @@ ${div}
 # GitLab issue creation (idempotent — won't duplicate issues for same alert)
 # ---------------------------------------------------------------------------
 GITLAB_UTIL="${PLATFORM_DIR}/scripts/platform/gitlab_utils.py"
+# Fall back to the scripts/ mount path if PLATFORM_DIR is empty (container context)
+[[ -z "${GITLAB_UTIL_PATH:-}" ]] && GITLAB_UTIL_PATH="/scripts/platform/gitlab_utils.py"
+[[ -f "${GITLAB_UTIL:-}" ]] || GITLAB_UTIL="${GITLAB_UTIL_PATH}"
 GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}"
+# Auto-populate GITLAB_BASE_URL if not set — use the GitLab container hostname on shml-platform network
+if [[ -z "${GITLAB_BASE_URL:-}" ]]; then
+    GITLAB_BASE_URL="http://shml-gitlab:8929/gitlab"
+    export GITLAB_BASE_URL
+fi
 GITLAB_LAST_ISSUE_IID=""
 
 has_gitlab_event_support() {
@@ -1817,7 +1825,15 @@ safe_restart_managed_stack() {
     local stack="$1"
     local trigger_container="$2"
     local reason="$3"
-    local restart_script="${SCRIPT_DIR}/../deploy/start_all_safe.sh"
+    # Use the full host path so BASH_SOURCE[0] resolves correctly inside the container.
+    # ${SCRIPT_DIR} inside the watchdog container resolves to /scripts/self-healing, which
+    # would make PROJECT_ROOT=/ and cause docker compose to look for /.env.
+    local restart_script
+    if [[ -n "${WATCHDOG_HOST_PLATFORM_ROOT:-}" ]]; then
+        restart_script="${WATCHDOG_HOST_PLATFORM_ROOT}/scripts/deploy/start_all_safe.sh"
+    else
+        restart_script="${SCRIPT_DIR}/../deploy/start_all_safe.sh"
+    fi
     local stamp_file="${STATE_DIR}/stack-${stack}.last_restart"
     local output=""
     local status=0

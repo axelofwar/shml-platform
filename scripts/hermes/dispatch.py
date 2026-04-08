@@ -99,12 +99,14 @@ Return JSON only:
   "diagnosis": "short diagnosis",
   "root_cause": "most likely root cause",
   "severity": "critical|warning|info",
-  "actions_taken": ["action1", "action2"],
-  "restart_order": ["container-a", "container-b"],
+  "actions_taken": [],
+  "restart_order": [],
   "gpu_yield_needed": false,
   "vault_summary": "2-3 sentence summary",
   "operator_notes": "notes for human review"
-}}"""
+}}
+
+Do not use placeholder names — populate restart_order with real container names from the incident context above."""
 
 
 def _build_issue_prompt(task: DispatchTask) -> str:
