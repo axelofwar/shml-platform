@@ -1,0 +1,11 @@
+[Unit]
+Description=SHML Hermes Issue Poller Timer — poll assignee::agent issues every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+Persistent=false
+
+[Install]
+WantedBy=timers.target

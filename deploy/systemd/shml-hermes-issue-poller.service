@@ -1,0 +1,15 @@
+[Unit]
+Description=SHML Hermes Issue Poller — dispatch assignee::agent issues
+
+[Service]
+Type=oneshot
+User=axelofwar
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+ExecStart=/usr/bin/python3 /home/axelofwar/Projects/shml-platform/scripts/hermes/poll_agent_issues.py \
+    --project-id 2 \
+    --max-issues 5 \
+    --once
+Environment=HOME=/home/axelofwar
+EnvironmentFile=-/home/axelofwar/Projects/shml-platform/.env
+StandardOutput=journal
+StandardError=journal

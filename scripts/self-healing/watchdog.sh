@@ -46,9 +46,18 @@ COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-900}"
 PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://global-prometheus:9090}"
 AGENT_SERVICE_URL="${AGENT_SERVICE_URL:-http://agent-service:8000}"
-# shl-nano Phase-1 fast diagnosis endpoint (T8.5) — leave empty to disable
-NANO_SERVICE_URL="${NANO_SERVICE_URL:-}"
+WATCHDOG_PLATFORM_ROOT="${WATCHDOG_PLATFORM_ROOT:-/home/axelofwar/Projects/shml-platform}"
+WATCHDOG_HOST_PLATFORM_ROOT="${WATCHDOG_HOST_PLATFORM_ROOT:-${WATCHDOG_PLATFORM_ROOT}}"
+WATCHDOG_HOST_HERMES_HOME="${WATCHDOG_HOST_HERMES_HOME:-/home/axelofwar/.hermes}"
+WATCHDOG_HOST_UV_PYTHON_ROOT="${WATCHDOG_HOST_UV_PYTHON_ROOT:-/home/axelofwar/.local/share/uv}"
+WATCHDOG_HERMES_HELPER_IMAGE="${WATCHDOG_HERMES_HELPER_IMAGE:-python:3.12-slim}"
+WATCHDOG_DATA_VOLUME="${WATCHDOG_DATA_VOLUME:-${PLATFORM_PREFIX}-watchdog-data}"
+WATCHDOG_BROWSER_LOG_DIRS="${WATCHDOG_BROWSER_LOG_DIRS:-}"
+HERMES_BIN="${HERMES_BIN:-${WATCHDOG_HOST_HERMES_HOME}/hermes-agent/venv/bin/hermes}"
+# Watchdog LLM fast diagnosis endpoint (Qwen3-4B on RTX 2070, always-on)
+NANO_SERVICE_URL="${NANO_SERVICE_URL:-http://localhost:8021}"
 GITLAB_INTERNAL_HEALTH_URL="${GITLAB_INTERNAL_HEALTH_URL:-http://gitlab:8929/gitlab/users/sign_in}"
+GITLAB_UNHEALTHY_REASON=""
 
 # GPU isolation — NEVER touch the training GPU
 TRAINING_GPU="${TRAINING_GPU:-0}"       # RTX 3090 Ti — hands off
@@ -75,8 +84,11 @@ RESOURCE_LOG="${LOG_DIR}/resource.log"
 STATE_DIR="/var/lib/watchdog"
 MEMORY_DIR="${STATE_DIR}/memory"
 DISCOVERY_FILE="${STATE_DIR}/platform_state.json"
+INCIDENTS_DIR="${STATE_DIR}/incidents"
+HERMES_DISPATCH_SCRIPT="/scripts/self-healing/dispatch_watchdog_hermes.py"
+WATCHDOG_VAULT_SYNC_SCRIPT="/scripts/self-healing/sync_watchdog_incident_to_obsidian.py"
 
-mkdir -p "$LOG_DIR" "$STATE_DIR" "$MEMORY_DIR"
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$MEMORY_DIR" "$INCIDENTS_DIR"
 
 # ---------------------------------------------------------------------------
 # Metrics counters (reset on restart, pushed to Pushgateway each cycle)
@@ -148,6 +160,7 @@ STANDARD_CONTAINERS=(
     "${PLATFORM_PREFIX}-node-exporter"      # Host metrics exporter
     "dcgm-exporter"                         # GPU metrics exporter
     "postgres-backup"                       # Scheduled DB backup
+    "gitlab-postgres-backup"                # Dedicated GitLab PostgreSQL backup
     "${PLATFORM_PREFIX}-otel-collector"     # OpenTelemetry collector
     "${PLATFORM_PREFIX}-tempo"              # Distributed tracing backend
 )
@@ -460,6 +473,199 @@ close_gitlab_incident() {
     fi
 
     return 0
+}
+
+safe_name() {
+    printf '%s' "$1" | tr '/: ' '___' | tr -cd 'A-Za-z0-9_.-'
+}
+
+capture_http_probe_snapshot() {
+    local restart_target="$1"
+    local probe_url="$2"
+    local label="$3"
+    local output_prefix="$4"
+    local probe_host probe_port resolved_ip http_code
+
+    probe_host=$(echo "$probe_url" | sed -E 's|https?://([^:/]+).*|\1|')
+    probe_port=$(echo "$probe_url" | sed -E 's|https?://[^:/]+:([0-9]+).*|\1|')
+    resolved_ip=$(getent hosts "$probe_host" 2>/dev/null | awk '{print $1; exit}')
+    if [[ -z "$resolved_ip" ]]; then
+        http_code="000"
+    else
+        http_code=$(curl -s --max-time 8 --resolve "${probe_host}:${probe_port}:${resolved_ip}" -D "${output_prefix}.headers" -o "${output_prefix}.body" -w "%{http_code}" "$probe_url" 2>/dev/null) || http_code="000"
+    fi
+
+    cat > "${output_prefix}.meta" <<EOF
+restart_target=${restart_target}
+label=${label}
+url=${probe_url}
+resolved_ip=${resolved_ip:-unresolved}
+http_code=${http_code}
+captured_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+EOF
+}
+
+collect_browser_artifacts() {
+    local output_dir="$1"
+    local raw_dir=""
+
+    [[ -z "$WATCHDOG_BROWSER_LOG_DIRS" ]] && return 0
+    mkdir -p "$output_dir"
+
+    IFS=',' read -ra browser_dirs <<< "$WATCHDOG_BROWSER_LOG_DIRS"
+    for raw_dir in "${browser_dirs[@]}"; do
+        local trimmed_dir
+        trimmed_dir=$(echo "$raw_dir" | xargs)
+        [[ -z "$trimmed_dir" || ! -d "$trimmed_dir" ]] && continue
+
+        while IFS= read -r artifact; do
+            local artifact_name
+            artifact_name=$(safe_name "$(basename "$artifact")")
+            [[ -z "$artifact_name" ]] && artifact_name="browser-artifact"
+            cp "$artifact" "$output_dir/${artifact_name}" 2>/dev/null || true
+        done < <(find "$trimmed_dir" -maxdepth 2 -type f | sort | tail -n 5)
+    done
+}
+
+collect_incident_evidence() {
+    local issue_type="$1"
+    local description="$2"
+    local containers_affected="$3"
+    local timestamp slug incident_id evidence_dir container short_name entry restart_target probe_url label
+
+    timestamp=$(date -u +"%Y%m%dT%H%M%SZ")
+    slug=$(printf '%s' "$issue_type" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')
+    incident_id="${timestamp}-${slug}"
+    evidence_dir="${INCIDENTS_DIR}/${incident_id}"
+    mkdir -p "$evidence_dir"
+
+    cat > "${evidence_dir}/summary.txt" <<EOF
+incident_id=${incident_id}
+issue_type=${issue_type}
+containers=${containers_affected}
+captured_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+description=${description}
+gitlab_issue_iid=${GITLAB_LAST_ISSUE_IID:-}
+EOF
+
+    docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' > "${evidence_dir}/docker-ps.txt" 2>&1 || true
+    docker ps -a --format '{{.Names}}|{{.Status}}' > "${evidence_dir}/docker-ps-all.txt" 2>&1 || true
+    docker network inspect "${PLATFORM_PREFIX}-platform" > "${evidence_dir}/platform-network.json" 2>&1 || true
+    docker logs --since 20m "${PLATFORM_PREFIX}-watchdog" > "${evidence_dir}/watchdog.log" 2>&1 || true
+    [[ -f "$DISCOVERY_FILE" ]] && cp "$DISCOVERY_FILE" "${evidence_dir}/platform_state.json" 2>/dev/null || true
+    [[ -f "$AUDIT_LOG" ]] && tail -n 300 "$AUDIT_LOG" > "${evidence_dir}/audit.tail.log" 2>/dev/null || true
+    [[ -f "$RESOURCE_LOG" ]] && tail -n 300 "$RESOURCE_LOG" > "${evidence_dir}/resource.tail.log" 2>/dev/null || true
+
+    if command -v nvidia-smi &>/dev/null; then
+        nvidia-smi > "${evidence_dir}/nvidia-smi.txt" 2>&1 || true
+    fi
+
+    for container in $containers_affected; do
+        short_name=$(safe_name "$container")
+        [[ -z "$short_name" ]] && short_name="container"
+        docker inspect "$container" > "${evidence_dir}/${short_name}.inspect.json" 2>&1 || true
+        docker logs --since 20m "$container" > "${evidence_dir}/${short_name}.logs.txt" 2>&1 || true
+
+        for entry in "${HTTP_SERVICES[@]}"; do
+            IFS='|' read -r restart_target probe_url label <<< "$entry"
+            if [[ "$restart_target" == "$container" ]]; then
+                capture_http_probe_snapshot "$restart_target" "$probe_url" "$label" "${evidence_dir}/${short_name}.health"
+            fi
+        done
+    done
+
+    collect_browser_artifacts "${evidence_dir}/browser"
+    printf '%s\n' "$evidence_dir"
+}
+
+dispatch_hermes_resolution() {
+    local issue_type="$1"
+    local description="$2"
+    local containers_affected="$3"
+    local evidence_dir="$4"
+    local output_json="${evidence_dir}/hermes-response.json"
+    local transcript_path="${evidence_dir}/hermes-transcript.txt"
+
+    if [[ ! -f "$HERMES_DISPATCH_SCRIPT" ]]; then
+        log "WARN: Hermes dispatch helper missing at ${HERMES_DISPATCH_SCRIPT}"
+        return 1
+    fi
+
+    if [[ ! -d "$WATCHDOG_HOST_PLATFORM_ROOT" ]]; then
+        log "WARN: Host platform root is not mounted: ${WATCHDOG_HOST_PLATFORM_ROOT}"
+        return 1
+    fi
+
+    if [[ ! -d "$WATCHDOG_HOST_HERMES_HOME" ]]; then
+        log "WARN: Hermes home is not mounted: ${WATCHDOG_HOST_HERMES_HOME}"
+        return 1
+    fi
+
+    if [[ ! -d "$WATCHDOG_HOST_UV_PYTHON_ROOT" ]]; then
+        log "WARN: uv Python runtime root is not mounted: ${WATCHDOG_HOST_UV_PYTHON_ROOT}"
+        return 1
+    fi
+
+    if [[ ! -x "$HERMES_BIN" ]]; then
+        log "WARN: Hermes binary is not executable: ${HERMES_BIN}"
+        return 1
+    fi
+
+    # Run Hermes dispatch inside the helper container.
+    # Uses dispatch.py (unified library) which handles Telegram + Obsidian sync.
+    docker run --rm \
+        --network host \
+        -v "${WATCHDOG_HOST_PLATFORM_ROOT}:${WATCHDOG_HOST_PLATFORM_ROOT}" \
+        -v "${WATCHDOG_HOST_HERMES_HOME}:${WATCHDOG_HOST_HERMES_HOME}" \
+        -v "${WATCHDOG_HOST_UV_PYTHON_ROOT}:${WATCHDOG_HOST_UV_PYTHON_ROOT}:ro" \
+        -v "${WATCHDOG_DATA_VOLUME}:${STATE_DIR}" \
+        -w "${WATCHDOG_HOST_PLATFORM_ROOT}" \
+        -e HERMES_BIN="${HERMES_BIN}" \
+        -e WATCHDOG_PLATFORM_ROOT="${WATCHDOG_HOST_PLATFORM_ROOT}" \
+        -e TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}" \
+        -e TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}" \
+        -e GITLAB_API_TOKEN="${GITLAB_API_TOKEN:-}" \
+        -e GITLAB_BASE_URL="${GITLAB_BASE_URL:-}" \
+        -e GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-2}" \
+        "${WATCHDOG_HERMES_HELPER_IMAGE}" \
+        python3 "${WATCHDOG_HOST_PLATFORM_ROOT}/scripts/hermes/dispatch_incident.py" \
+            --issue-type "$issue_type" \
+            --description "$description" \
+            --containers "$containers_affected" \
+            --evidence-dir "$evidence_dir" \
+            --output-json "$output_json" \
+            --transcript-path "$transcript_path"
+}
+
+sync_watchdog_incident() {
+    local incident_id="$1"
+    local issue_type="$2"
+    local severity="$3"
+    local summary="$4"
+    local root_cause="$5"
+    local restart_order="$6"
+    local evidence_dir="$7"
+    local transcript_path="$8"
+    local containers_affected="$9"
+
+    if [[ ! -f "$WATCHDOG_VAULT_SYNC_SCRIPT" ]]; then
+        log "WARN: Watchdog vault sync helper missing at ${WATCHDOG_VAULT_SYNC_SCRIPT}"
+        return 0
+    fi
+
+    WATCHDOG_PLATFORM_ROOT="$WATCHDOG_PLATFORM_ROOT" \
+        python3 "$WATCHDOG_VAULT_SYNC_SCRIPT" \
+            --incident-id "$incident_id" \
+            --issue-type "$issue_type" \
+            --severity "$severity" \
+            --summary "$summary" \
+            --root-cause "$root_cause" \
+            --containers "$containers_affected" \
+            --restart-order "$restart_order" \
+            --evidence-dir "$evidence_dir" \
+            --transcript-path "$transcript_path" \
+            --gitlab-issue "${GITLAB_LAST_ISSUE_IID:-}" >/dev/null 2>&1 || \
+        log "WARN: Failed to sync watchdog incident ${incident_id} to Obsidian"
 }
 
 is_excluded() {
@@ -1099,10 +1305,30 @@ check_prometheus() {
 }
 
 check_gitlab_application_health() {
+    GITLAB_UNHEALTHY_REASON=""
+
     if curl -fsS --max-time 8 "${GITLAB_INTERNAL_HEALTH_URL}" > /dev/null 2>&1; then
         return 0
     fi
 
+    if docker logs --tail 120 "${PLATFORM_PREFIX}-gitlab" 2>&1 | grep -Fq "requires PostgreSQL >= 16"; then
+        GITLAB_UNHEALTHY_REASON="postgres-version-mismatch"
+        log "ALERT: GitLab is blocked by a PostgreSQL major-version mismatch"
+        send_telegram_event \
+            "GitLab blocked by PostgreSQL major-version mismatch" \
+            "Stop futile restart loops and escalate a configuration incident" \
+            "gitlab, gitlab-postgres, watchdog" \
+            "GitLab logs report that PostgreSQL 16 or newer is required." \
+            "Watchdog will suppress automatic restarts until the database target is corrected"
+        audit "GITLAB_APP_UNHEALTHY" "${PLATFORM_PREFIX}-gitlab" "Reason=postgres-version-mismatch URL=${GITLAB_INTERNAL_HEALTH_URL}"
+        create_gitlab_issue \
+            "GitLab PostgreSQL Version Mismatch" \
+            "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is down because the GitLab logs report an unsupported PostgreSQL major version.\n\nWatchdog detected the log signature \`requires PostgreSQL >= 16\` and suppressed automatic restarts because a restart cannot fix this configuration failure.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,status::blocked,source::watchdog,component::infra"
+        return 1
+    fi
+
+    GITLAB_UNHEALTHY_REASON="endpoint-unhealthy"
     log "ALERT: GitLab application endpoint unhealthy at ${GITLAB_INTERNAL_HEALTH_URL}"
     send_telegram_event \
         "GitLab application health failed" \
@@ -1115,6 +1341,23 @@ check_gitlab_application_health() {
         "GitLab Application Health Check Failed" \
         "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is not responding.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
         "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
+    return 1
+}
+
+prefer_managed_stack_restart() {
+    local container="$1"
+    local reason="$2"
+
+    case "$container" in
+        "${PLATFORM_PREFIX}-code-server"|"${PLATFORM_PREFIX}-gitlab"|"${PLATFORM_PREFIX}-gitlab-runner"|"${PLATFORM_PREFIX}-sba-resource-portal")
+            case "$reason" in
+                unhealthy|gitlab-app-health|http-probe-*|cascading-*|agent-directed-*|nano-directed-*)
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
+
     return 1
 }
 
@@ -1172,7 +1415,13 @@ check_http_services() {
                     "HTTP ${http_code} from ${probe_url}. Restart target: ${restart_target}" \
                     "Watchdog is issuing a single controlled restart"
                 audit "HTTP_PROBE_FAIL" "$restart_target" "Code=${http_code} URL=${probe_url}"
-                restart_container "$restart_target" "http-probe-${http_code}" || true
+                local managed_stack=""
+                managed_stack=$(stack_for_container "$restart_target" 2>/dev/null || true)
+                if [[ -n "$managed_stack" ]] && prefer_managed_stack_restart "$restart_target" "http-probe-${http_code}"; then
+                    safe_restart_managed_stack "$managed_stack" "$restart_target" "http-probe-${http_code}" || true
+                else
+                    restart_container "$restart_target" "http-probe-${http_code}" || true
+                fi
             fi
         fi
     done
@@ -1226,11 +1475,13 @@ request_agent_resolution() {
     local issue_type="$1"
     local description="$2"
     local containers_affected="$3"
+    local evidence_dir=""
+    local incident_id=""
 
     log "AGENT: Requesting autonomous resolution for ${issue_type}"
 
-    # ── Phase 1: Try shl-nano fast diagnosis (T8.5) ───────────────────────
-    # shl-nano is a small domain model running on GPU 1 at port 8021.
+    # ── Phase 1: Try watchdog-llm fast diagnosis (Qwen3-4B) ─────────────
+    # watchdog-llm is a small model running on GPU 1 at port 8021.
     # It provides a fast JSON diagnosis in < 2s without triggering the full
     # ACE agent workflow. Only escalate to Phase 2 if requires_escalation=true.
     if [[ -n "${NANO_SERVICE_URL:-}" ]]; then
@@ -1238,7 +1489,7 @@ request_agent_resolution() {
         local nano_response
         nano_response=$(curl -sf -X POST "${NANO_SERVICE_URL}/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "{\"model\":\"shl-nano\",\"messages\":[{\"role\":\"user\",\"content\":$(printf '%s' "$nano_prompt" | jq -Rs '.' 2>/dev/null || echo '\"watchdog alert\"')}],\"max_tokens\":256,\"temperature\":0.1}" \
+            -d "{\"model\":\"watchdog-llm\",\"messages\":[{\"role\":\"user\",\"content\":$(printf '%s' "$nano_prompt" | jq -Rs '.' 2>/dev/null || echo '\"watchdog alert\"')}],\"max_tokens\":256,\"temperature\":0.1}" \
             --max-time 5 2>/dev/null) || nano_response=""
 
         if [[ -n "$nano_response" ]]; then
@@ -1264,9 +1515,9 @@ request_agent_resolution() {
                     --event "nano_diagnosis" \
                     --problem "Cross-service issue detected: ${issue_type}" \
                     --action "${nano_action:-See audit log for nano-directed resolution}" \
-                    --agent "shl-nano (T8.5 fast domain model — GPU ${WATCHDOG_GPU}, sub-2s inference)" \
-                    --outcome "Resolved by shl-nano without full agent escalation. Severity: ${nano_severity}." \
-                    --learning "shl-nano decision logged to audit trail. Pattern contributes to next T8 training cycle."
+                    --agent "watchdog-llm (Qwen3-4B Q4_K_M — GPU ${WATCHDOG_GPU}, sub-2s inference)" \
+                    --outcome "Resolved by watchdog-llm without full agent escalation. Severity: ${nano_severity}." \
+                    --learning "watchdog-llm decision logged to audit trail."
                 if [[ -n "$nano_restart" ]]; then
                     log "NANO: Restart order: ${nano_restart}"
                     for container in $nano_restart; do
@@ -1282,7 +1533,69 @@ request_agent_resolution() {
         fi
     fi
 
-    # ── Phase 2: Full agent-service resolution (original behavior) ────────
+    evidence_dir=$(collect_incident_evidence "$issue_type" "$description" "$containers_affected")
+    incident_id=$(basename "$evidence_dir")
+    audit "INCIDENT_EVIDENCE" "$issue_type" "Dir=${evidence_dir}"
+
+    # ── Phase 2: Hermes local incident responder ──────────────────────────
+    if dispatch_hermes_resolution "$issue_type" "$description" "$containers_affected" "$evidence_dir"; then
+        local hermes_json hermes_severity hermes_restart hermes_summary hermes_root_cause hermes_requires_agent hermes_gpu_yield transcript_path
+        hermes_json="${evidence_dir}/hermes-response.json"
+        transcript_path="${evidence_dir}/hermes-transcript.txt"
+        hermes_severity=$(jq -r '.severity // "warning"' "$hermes_json" 2>/dev/null) || hermes_severity="warning"
+        hermes_restart=$(jq -r '.restart_order // [] | join(" ")' "$hermes_json" 2>/dev/null) || hermes_restart=""
+        hermes_summary=$(jq -r '.vault_summary // .diagnosis // "Hermes investigated the incident."' "$hermes_json" 2>/dev/null) || hermes_summary="Hermes investigated the incident."
+        hermes_root_cause=$(jq -r '.root_cause // .diagnosis // "Unknown root cause"' "$hermes_json" 2>/dev/null) || hermes_root_cause="Unknown root cause"
+        hermes_requires_agent=$(jq -r '.requires_agent_service // false' "$hermes_json" 2>/dev/null) || hermes_requires_agent="false"
+        hermes_gpu_yield=$(jq -r '.gpu_yield_needed // false' "$hermes_json" 2>/dev/null) || hermes_gpu_yield="false"
+
+        sync_watchdog_incident \
+            "$incident_id" \
+            "$issue_type" \
+            "$hermes_severity" \
+            "$hermes_summary" \
+            "$hermes_root_cause" \
+            "$hermes_restart" \
+            "$evidence_dir" \
+            "$transcript_path" \
+            "$containers_affected"
+
+        send_alert_card \
+            --container "${containers_affected}" \
+            --severity "${hermes_severity}" \
+            --event "hermes_resolution" \
+            --problem "Cross-service issue detected: ${issue_type}" \
+            --action "Hermes diagnosis captured in ${transcript_path}. Restart order: ${hermes_restart:-fallback sequential restart}. GPU yield needed: ${hermes_gpu_yield}." \
+            --agent "Hermes local incident responder" \
+            --outcome "Evidence bundle captured at ${evidence_dir}. Root cause: ${hermes_root_cause}" \
+            --gitlab "#${GITLAB_LAST_ISSUE_IID:-n/a}" \
+            --learning "Watchdog incident synced into the shared vault note."
+
+        audit "HERMES_RESOLUTION" "$issue_type" "Severity=${hermes_severity} RestartOrder=${hermes_restart:-none}"
+
+        if [[ "$hermes_requires_agent" != "true" ]]; then
+            if [[ -n "$hermes_restart" ]]; then
+                log "HERMES: Restart order: ${hermes_restart}"
+                for container in $hermes_restart; do
+                    restart_container "$container" "hermes-directed-${issue_type}" || true
+                    sleep 10
+                done
+                return 0
+            fi
+
+            for container in $containers_affected; do
+                restart_container "$container" "hermes-fallback-${issue_type}" || true
+                sleep 10
+            done
+            return 0
+        fi
+
+        log "AGENT: Hermes requested escalation to agent-service"
+    else
+        log "WARN: Hermes incident responder unavailable — falling back to agent-service"
+    fi
+
+    # ── Phase 3: Full agent-service resolution (fallback) ────────────────
     local task="You are the platform watchdog autonomous agent. A cross-service issue detected.
 
 Issue: ${issue_type}
@@ -1337,6 +1650,19 @@ Respond: {\"diagnosis\": \"...\", \"root_cause\": \"...\", \"restart_order\": [.
             --outcome "Executing agent restart sequence. Services brought up in dependency order." \
             --learning "Agent diagnosis and restart order logged. Cross-service dependency pattern recorded."
         audit "AGENT_RESTART_ORDER" "$issue_type" "Order: ${restart_order}"
+
+        if [[ -n "$incident_id" && -n "$evidence_dir" ]]; then
+            sync_watchdog_incident \
+                "$incident_id" \
+                "$issue_type" \
+                "warning" \
+                "Fallback agent-service orchestration executed after Hermes escalation." \
+                "See agent response and evidence bundle for details." \
+                "$restart_order" \
+                "$evidence_dir" \
+                "${evidence_dir}/hermes-transcript.txt" \
+                "$containers_affected"
+        fi
 
         for container in $restart_order; do
             restart_container "$container" "agent-directed-${issue_type}" || true
@@ -1452,9 +1778,98 @@ discover_platform_state() {
 # ---------------------------------------------------------------------------
 # Remediation
 # ---------------------------------------------------------------------------
+stack_for_container() {
+    local container="$1"
+
+    case "$container" in
+        "${PLATFORM_PREFIX}-sba-resource-portal")
+            echo "sba"
+            ;;
+        homer|"${PLATFORM_PREFIX}-code-server"|"${PLATFORM_PREFIX}-nessie"|"${PLATFORM_PREFIX}-fiftyone-mongodb"|"${PLATFORM_PREFIX}-fiftyone"|"${PLATFORM_PREFIX}-gitlab"|"${PLATFORM_PREFIX}-gitlab-runner"|postgres-backup|gitlab-postgres-backup|webhook-deployer)
+            echo "devtools"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+stack_restart_recently() {
+    local stack="$1"
+    local stamp_file="${STATE_DIR}/stack-${stack}.last_restart"
+    local now
+    local last_restart
+
+    [ -f "$stamp_file" ] || return 1
+
+    now=$(date +%s)
+    last_restart=$(cat "$stamp_file" 2>/dev/null || echo 0)
+    [ -n "$last_restart" ] || return 1
+
+    if (( now - last_restart < COOLDOWN_SECONDS )); then
+        return 0
+    fi
+
+    return 1
+}
+
+safe_restart_managed_stack() {
+    local stack="$1"
+    local trigger_container="$2"
+    local reason="$3"
+    local restart_script="${SCRIPT_DIR}/../deploy/start_all_safe.sh"
+    local stamp_file="${STATE_DIR}/stack-${stack}.last_restart"
+    local output=""
+    local status=0
+
+    if stack_restart_recently "$stack"; then
+        log "STACK COOLDOWN: ${stack} restart suppressed for ${trigger_container} (${reason})"
+        audit "STACK_RESTART_COOLDOWN" "$stack" "Trigger=${trigger_container} Reason=${reason}"
+        return 1
+    fi
+
+    if [[ ! -f "$restart_script" ]]; then
+        log "WARN: Safe restart script unavailable for managed stack ${stack}"
+        audit "STACK_RESTART_MISSING_SCRIPT" "$stack" "Trigger=${trigger_container}"
+        return 1
+    fi
+
+    log "STACK-REMEDIATE: Restarting ${stack} via start_all_safe.sh because ${trigger_container} failed (${reason})"
+    audit "STACK_RESTART" "$stack" "Trigger=${trigger_container} Reason=${reason}"
+
+    if output=$(bash "$restart_script" restart "$stack" 2>&1); then
+        status=0
+    else
+        status=$?
+    fi
+
+    if [[ -n "$output" ]]; then
+        printf '%s\n' "$output" | tail -20 | while IFS= read -r line; do
+            log "STACK-REMEDIATE[${stack}]: ${line}"
+        done
+    fi
+
+    if (( status == 0 )); then
+        date +%s > "$stamp_file"
+        return 0
+    fi
+
+    create_gitlab_issue \
+        "Managed Stack Restart Failed: ${stack}" \
+        "Safe restart of stack \`${stack}\` failed while recovering \`${trigger_container}\`.\n\nReason: ${reason}\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+        "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
+    audit "STACK_RESTART_FAILED" "$stack" "Trigger=${trigger_container} Reason=${reason} Exit=${status}"
+    return 1
+}
+
 restart_container() {
     local container="$1"
     local reason="${2:-unhealthy}"
+    local container_status
+    local managed_stack=""
+
+    container_status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
+    managed_stack=$(stack_for_container "$container" 2>/dev/null || true)
 
     if cooldown_active "$container"; then
         log "COOLDOWN: ${container} still within ${COOLDOWN_SECONDS}s cooldown window"
@@ -1524,6 +1939,16 @@ GPU ${TRAINING_GPU} is actively running a training job. Avoiding VRAM disruption
             "Container \`${container}\` has been restarted ${count}/${MAX_RESTARTS} times in the last hour.\nManual intervention required.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
             "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
         return 1
+    fi
+
+    if [[ -n "$managed_stack" && "$container_status" != "running" ]] || { [[ -n "$managed_stack" ]] && prefer_managed_stack_restart "$container" "$reason"; }; then
+        if safe_restart_managed_stack "$managed_stack" "$container" "$reason"; then
+            increment_restart_count "$container"
+            TOTAL_RESTARTS=$((TOTAL_RESTARTS + 1))
+            log "OK: ${container} recovered through managed stack restart (${managed_stack})"
+            audit "STACK_RECOVERED" "$container" "Stack=${managed_stack} Reason=${reason}"
+            return 0
+        fi
     fi
 
     # #531: LLM diagnosis before the final restart attempt (gives agent context before we exhaust retries)
@@ -1624,6 +2049,15 @@ Restart attempt: $((count+1))/${MAX_RESTARTS}
         fi
     else
         log "ERROR: Failed to restart ${container}"
+        if [[ -n "$managed_stack" ]]; then
+            if safe_restart_managed_stack "$managed_stack" "$container" "${reason}-docker-restart-failed"; then
+                increment_restart_count "$container"
+                TOTAL_RESTARTS=$((TOTAL_RESTARTS + 1))
+                log "OK: ${container} recovered through managed stack restart after docker restart failure"
+                audit "STACK_RECOVERED_AFTER_RESTART_FAIL" "$container" "Stack=${managed_stack} Reason=${reason}"
+                return 0
+            fi
+        fi
         local fail_logs
         fail_logs=$(docker logs --tail=10 "${container}" 2>&1 | tail -10 | sed 's/</\&lt;/g; s/>/\&gt;/g' || echo "(logs unavailable)")
         send_alert_card \
@@ -1816,7 +2250,10 @@ while true; do
             action_count=$((action_count + 1))
         elif (( unhealthy_count > 0 )); then
             for container in $unhealthy_list; do
-                restart_container "$container" "unhealthy" || true
+                request_agent_resolution \
+                    "container_unhealthy" \
+                    "Monitored container ${container} is not running or reports unhealthy state. Diagnose the failure, collect evidence, and perform the safest remediation." \
+                    "$container" || restart_container "$container" "unhealthy" || true
                 action_count=$((action_count + 1))
             done
         fi
@@ -1873,8 +2310,13 @@ while true; do
     if (( cycle % 2 == 0 )); then
         if ! check_gitlab_application_health; then
             if (( IS_PAUSED == 0 )); then
-                restart_container "${PLATFORM_PREFIX}-gitlab" "gitlab-app-health" || true
-                action_count=$((action_count + 1))
+                if [[ "${GITLAB_UNHEALTHY_REASON}" == "postgres-version-mismatch" ]]; then
+                    log "SKIP: GitLab unhealthy due to PostgreSQL version mismatch — restart suppressed"
+                else
+                    safe_restart_managed_stack "devtools" "${PLATFORM_PREFIX}-gitlab" "gitlab-app-health" || \
+                        restart_container "${PLATFORM_PREFIX}-gitlab" "gitlab-app-health" || true
+                    action_count=$((action_count + 1))
+                fi
             else
                 log "PAUSED: GitLab unhealthy but remediation paused by admin"
             fi
@@ -1891,6 +2333,25 @@ while true; do
     # --- Full state discovery (every 30 cycles ≈ 30 min) ---
     if (( cycle % 30 == 0 )); then
         discover_platform_state || true
+    fi
+
+    # --- Connection map drift check (every 60 cycles ≈ 1 hour) ---
+    if (( cycle % 60 == 0 )); then
+        if command -v python3 &>/dev/null; then
+            CONNMAP_SCRIPT="${PLATFORM_DIR}/scripts/generate_connection_map.py"
+            if [[ -f "$CONNMAP_SCRIPT" ]]; then
+                drift_output=$(python3 "$CONNMAP_SCRIPT" --drift 2>&1) || {
+                    log "WARN: Connection map drift detected"
+                    send_alert_card \
+                        "Connection Map Drift" \
+                        "⚠️ Unknown containers running that are not in the connection map" \
+                        "watchdog" \
+                        "warning" \
+                        "drift" \
+                        "$drift_output"
+                }
+            fi
+        fi
     fi
 
     # --- Track totals & push metrics ---

@@ -10,6 +10,7 @@ stages:
   - validate      # compose syntax, secret hygiene  (was folded in lint)
   - test          # platform unit/mocked + training unit
   - security      # secret scan, dep audit
+  - review        # MR hygiene: Danger, GitNexus impact analysis
   - integration   # live tests (runner on Docker network)
   - build         # build + push container images to registry
   - deploy        # deploy to self-hosted production (manual gate)
@@ -268,6 +269,47 @@ hardcoded_secret_scan:
       else
         echo "✓ No obvious hardcoded secrets detected"
       fi
+
+# ===========================================================================
+# STAGE: review  (MR hygiene — Danger + GitNexus impact analysis)
+# ===========================================================================
+
+review:danger:
+  stage: review
+  image: python:3.12-slim
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - pip install --quiet danger-python
+  script:
+    - danger-python ci
+  variables:
+    GITLAB_HOST: $CI_SERVER_URL
+    DANGER_GITLAB_API_TOKEN: $GITLAB_API_TOKEN
+
+review:gitnexus:
+  stage: review
+  image: node:20-slim
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - npm install -g gitnexus --silent
+  script:
+    - |
+      if [ -f ".gitnexus/meta.json" ]; then
+        gitnexus detect-changes --scope compare --base-ref "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" \
+          --output-format json > gitnexus-impact.json 2>&1 || true
+        cat gitnexus-impact.json
+      else
+        echo "GitNexus index not found — skipping impact analysis"
+      fi
+  artifacts:
+    when: always
+    paths:
+      - gitnexus-impact.json
+    expire_in: 7 days
 
 # ===========================================================================
 # STAGE: integration  (live tests — runner is on the Docker network)
@@ -670,7 +712,6 @@ deploy:production:
         embedding-service \
         agent-service \
         coding-model-fallback \
-        nemotron-coding; do
         docker pull "${REGISTRY_PREFIX}/${image}:${CI_COMMIT_SHA}" 2>/dev/null || \
           echo "⚠️ ${image} image not in registry (may not have changed)"
       done
