@@ -94,6 +94,7 @@ services:
       retries: 3
       start_period: 180s # Faster startup for smaller model
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       # Fallback router - lower priority, catches requests when primary unhealthy
       - "traefik.http.routers.coding-model-fallback.rule=PathPrefix(`/api/coding`)"

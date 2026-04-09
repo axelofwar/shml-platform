@@ -8,6 +8,8 @@ services:
       dockerfile: Dockerfile
     container_name: ${PLATFORM_PREFIX:-shml}-agent-service
     restart: unless-stopped
+    env_file:
+      - ../../.env  # Root .env for TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     environment:
       # Database connection (shml-postgres)
       - POSTGRES_HOST=shml-postgres
@@ -87,9 +89,22 @@ services:
       # Git author identity for agent commits
       - AGENT_GIT_AUTHOR_NAME=${AGENT_GIT_AUTHOR_NAME:-Qwopus Agent}
       - AGENT_GIT_AUTHOR_EMAIL=${AGENT_GIT_AUTHOR_EMAIL:-agent@shml-platform.local}
-      # llama.cpp coding server health monitoring (host process on GPU 0)
-      - LLAMA_SERVER_HEALTH_URL=${LLAMA_SERVER_HEALTH_URL:-http://host-gateway:8000/health}
+      # Coding server health monitoring (qwopus-coding container, managed by GPU manager)
+      - LLAMA_SERVER_HEALTH_URL=${LLAMA_SERVER_HEALTH_URL:-http://qwopus-coding:8000/health}
+      - GPU_MANAGER_HEALTH_URL=${GPU_MANAGER_HEALTH_URL:-http://gpu-manager:8000/health}
       - RAY_HEAD_URL=${RAY_HEAD_URL:-http://ray-head:8265}
+
+      # ── MLflow experiment tracking ────────────────────────────────────────
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+
+      # ── OpenTelemetry tracing ─────────────────────────────────────────────
+      - OTEL_SERVICE_NAME=agent-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+      - OTEL_TRACES_SAMPLER_ARG=0.1
+
+      # ── Telegram notifications (from ../../.env via env_file) ─────────────
 
     extra_hosts:
       # host-gateway resolves to the Docker bridge host IP — needed to reach
@@ -99,16 +114,20 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
+      - ./app:/app/app:ro       # Live reload: mount app code read-only
+      - ./skills:/app/skills:ro # Live reload: mount skills read-only
+      - ../../libs:/libs:ro     # Centralized libs (notify.py) for Telegram
       # SECURITY: Docker socket REMOVED (was critical host-escape vector)
       # Agent uses docker-proxy (read-only GET /containers) via DOCKER_HOST env var
       # SandboxSkill and ShellSkill docker commands route through restricted proxy
 
-    # Localhost-only port for IDE tools (Hermes, OpenCode, Cline) - no network exposure
+      # Localhost-only port for IDE tools (Hermes, OpenCode, Cline) - no network exposure
     ports:
       - "127.0.0.1:8099:8000"
 
     networks:
       - shml-platform
+      - shml-core-net
 
     secrets:
       - shared_db_password
@@ -130,6 +149,7 @@ services:
       start_period: 60s
 
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
 
       # Router 1: /api/agent/* - Protected ACE workflow (web UI, requires OAuth)
@@ -188,6 +208,8 @@ services:
 
 networks:
   shml-platform:
+    external: true
+  shml-core-net:
     external: true
 
 secrets:

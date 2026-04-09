@@ -25,20 +25,21 @@ services:
       - --n-gpu-layers
       - "999"
       - --ctx-size
-      - "${CODING_MODEL_CTX:-65536}"
+      - "${CODING_MODEL_CTX:-131072}"
       # KV cache quantization
       # Architecture: Qwen3.5-27B — pure transformer, all ~36 attention layers have KV.
       #   GQA: n_kv_heads ≈ 8, head_dim=128. Very different from Nemotron (only 6 attn layers).
       #
-      # VRAM budget at ctx=65536, 16.5 GB Q4_K_M weights → 7.5 GB headroom on RTX 3090 Ti:
-      #   KV f16 (default): ~9.0 GB → total ~25.5 GB → over 24 GB limit ❌
-      #   KV q8_0 (applied): ~4.5 GB → total ~21.0 GB → 3.0 GB remaining ✅
-      #   KV q4_0 (optional): ~2.25 GB → total ~18.75 GB → 5.25 GB remaining ✅
-      # q8_0 is the sweet spot: 3 GB headroom, negligible quality loss vs f16.
+      # VRAM budget at ctx=131072 (128K), 16.5 GB Q4_K_M weights → 7.5 GB headroom on RTX 3090 Ti:
+      #   KV f16 (default): ~18.0 GB → total ~34.5 GB → over 24 GB limit ❌
+      #   KV q8_0:           ~9.0 GB → total ~25.5 GB → over 24 GB limit ❌
+      #   KV q4_0 (applied): ~4.5 GB → total ~21.0 GB → 3.0 GB remaining ✅
+      # q4_0 is required at 128K context. Quality impact is negligible per TurboQuant paper.
+      # At 65K context, q8_0 was the sweet spot. At 128K, q4_0 is the only option that fits.
       - --cache-type-k
-      - q8_0
+      - q4_0
       - --cache-type-v
-      - q8_0
+      - q4_0
       # To reduce further (still safe): change both to q4_0 (saves 288 MiB vs f16)
       - --port
       - "8000"
@@ -82,12 +83,13 @@ services:
               capabilities: [ gpu ]
 
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
-      - "traefik.http.routers.nemotron.rule=PathPrefix(`/api/coding`)"
-      - "traefik.http.routers.nemotron.priority=2147483647"
-      - "traefik.http.services.nemotron.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.nemotron-strip.stripprefix.prefixes=/api/coding"
-      - "traefik.http.routers.nemotron.middlewares=oauth2-errors,oauth2-auth,nemotron-strip"
+      - "traefik.http.routers.coding-model.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.coding-model.priority=2147483647"
+      - "traefik.http.services.coding-model.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.coding-model-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.coding-model.middlewares=oauth2-errors,oauth2-auth,coding-model-strip"
 
     networks:
       - shml-platform
@@ -100,18 +102,18 @@ services:
       start_period: 60s
 
   # ==========================================================================
-  # Nemotron Manager - GPU Yield API for Training Integration
+  # Coding Manager - GPU Yield API for Training Integration
   # Provides /training/start and /training/end endpoints for Ray jobs
   # ==========================================================================
-  nemotron-manager:
+  coding-manager:
     build:
       context: ./manager
       dockerfile: Dockerfile
-    container_name: nemotron-manager
+    container_name: coding-manager
     restart: unless-stopped
 
     environment:
-      - NEMOTRON_CONTAINER=qwopus-coding
+      - CODING_CONTAINER=qwopus-coding
       - GPU_INDEX=0
       - YIELD_WAIT_SECONDS=5
 
@@ -131,11 +133,11 @@ services:
     labels:
       - "traefik.enable=true"
       # Training yield API - accessible to Ray jobs
-      - "traefik.http.routers.nemotron-manager.rule=PathPrefix(`/api/coding-manager`)"
-      - "traefik.http.routers.nemotron-manager.priority=2147483646"
-      - "traefik.http.services.nemotron-manager.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.nemotron-manager-strip.stripprefix.prefixes=/api/coding-manager"
-      - "traefik.http.routers.nemotron-manager.middlewares=oauth2-errors,oauth2-auth,nemotron-manager-strip"
+      - "traefik.http.routers.coding-manager.rule=PathPrefix(`/api/coding-manager`)"
+      - "traefik.http.routers.coding-manager.priority=2147483646"
+      - "traefik.http.services.coding-manager.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.coding-manager-strip.stripprefix.prefixes=/api/coding-manager"
+      - "traefik.http.routers.coding-manager.middlewares=oauth2-errors,oauth2-auth,coding-manager-strip"
 
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]

@@ -64,6 +64,7 @@ services:
       retries: 3
       start_period: 300s
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       - "traefik.http.routers.qwen3-vl.rule=PathPrefix(`/api/llm`)"
       - "traefik.http.routers.qwen3-vl.priority=2147483647"
@@ -128,6 +129,7 @@ services:
       retries: 3
       start_period: 300s
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       - "traefik.http.routers.z-image.rule=PathPrefix(`/api/image`)"
       - "traefik.http.routers.z-image.priority=2147483647"
@@ -195,6 +197,7 @@ services:
       retries: 3
       start_period: 10s
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       - "traefik.http.routers.inference.rule=PathPrefix(`/inference`)"
       - "traefik.http.routers.inference.priority=2147483647"
@@ -261,6 +264,7 @@ services:
       retries: 3
       start_period: 60s
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       - "traefik.http.routers.audio-copyright.rule=PathPrefix(`/api/audio`)"
       - "traefik.http.routers.audio-copyright.priority=2147483647"

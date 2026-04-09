@@ -45,6 +45,7 @@ services:
       retries: 3
       start_period: 60s # Model loading takes time
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       - "traefik.http.routers.embedding.rule=PathPrefix(`/api/embed`)"
       - "traefik.http.routers.embedding.priority=240"

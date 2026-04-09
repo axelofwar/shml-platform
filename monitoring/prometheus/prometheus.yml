@@ -248,3 +248,87 @@ scrape_configs:
     relabel_configs:
       - target_label: service
         replacement: 'gitlab'
+
+  # ==========================================================================
+  # Agent Service — ACE workflow, skill evolution, WebSocket sessions
+  # ==========================================================================
+  - job_name: "agent-service"
+    static_configs:
+      - targets: ["shml-agent-service:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: "agent-service"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # GPU Manager — GPU yield coordination for training
+  # ==========================================================================
+  - job_name: "gpu-manager"
+    static_configs:
+      - targets: ["gpu-manager:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: "gpu-manager"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # Embedding Service — sentence-transformers embeddings (CPU)
+  # ==========================================================================
+  - job_name: "embedding-service"
+    static_configs:
+      - targets: ["embedding-service:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 60s
+    relabel_configs:
+      - target_label: service
+        replacement: "embedding-service"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # Chat API — OpenAI-compatible endpoint with rate limiting
+  # ==========================================================================
+  - job_name: "chat-api"
+    static_configs:
+      - targets: ["shml-chat-api:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: "chat-api"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # Qwopus Coding — Primary LLM (llama.cpp, RTX 3090 Ti)
+  # ==========================================================================
+  - job_name: "qwopus-coding"
+    static_configs:
+      - targets: ["qwopus-coding:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: "qwopus-coding"
+      - target_label: stack
+        replacement: "inference"
+
+  # ==========================================================================
+  # Coding Model Fallback — RTX 2070 fallback (vLLM)
+  # ==========================================================================
+  - job_name: "coding-model-fallback"
+    static_configs:
+      - targets: ["coding-model-fallback:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: "coding-model-fallback"
+      - target_label: stack
+        replacement: "inference"

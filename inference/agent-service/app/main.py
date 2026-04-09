@@ -238,6 +238,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# OpenTelemetry tracing (auto-instruments FastAPI routes)
+if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        resource = Resource.create({"service.name": os.environ.get("OTEL_SERVICE_NAME", "agent-service")})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("OpenTelemetry tracing enabled (endpoint=%s)", os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"])
+    except ImportError:
+        logger.warning("OpenTelemetry packages not installed — tracing disabled")
+    except Exception as exc:
+        logger.warning("OpenTelemetry init failed: %s", exc)
+
 # Mount Prometheus metrics endpoint (uses default REGISTRY)
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
@@ -252,6 +273,50 @@ async def health_check():
         "version": "0.1.0",
         "model": "Qwen3.5-35B-A3B (thinking enabled)",
         "scheduler": scheduler.status(),
+    }
+
+
+# ── Aggregate platform health ───────────────────────────────────────────
+_PLATFORM_HEALTH_TARGETS = {
+    "mlflow-server": "http://mlflow-server:5000/health",
+    "ray-head": "http://ray-head:8265/api/version",
+    "qwopus-coding": "http://qwopus-coding:8000/health",
+    "coding-model-fallback": "http://coding-model-fallback:8000/health",
+    "inference-gateway": "http://inference-gateway:8000/health",
+    "embedding-service": "http://shml-embedding-service:8000/health",
+    "gpu-manager": "http://gpu-manager:8000/health",
+    "chat-api": "http://shml-chat-api:8000/health",
+    "qwen3-vl-api": "http://qwen3-vl-api:8000/health",
+}
+
+
+@app.get("/health/platform")
+async def platform_health_check():
+    """Aggregate health check — polls all platform services."""
+    import httpx
+
+    results: Dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for name, url in _PLATFORM_HEALTH_TARGETS.items():
+            try:
+                resp = await client.get(url)
+                results[name] = {"status": "healthy" if resp.status_code < 400 else "unhealthy", "code": resp.status_code}
+            except httpx.ConnectError:
+                results[name] = {"status": "unreachable", "code": None}
+            except httpx.TimeoutException:
+                results[name] = {"status": "timeout", "code": None}
+            except Exception as exc:
+                results[name] = {"status": "error", "code": None, "detail": str(exc)}
+
+    healthy_count = sum(1 for r in results.values() if r["status"] == "healthy")
+    total = len(results)
+    overall = "healthy" if healthy_count == total else "degraded" if healthy_count > 0 else "critical"
+
+    return {
+        "status": overall,
+        "healthy": healthy_count,
+        "total": total,
+        "services": results,
     }
 
 
@@ -789,6 +854,7 @@ async def handle_agent_workflow(
                 "current_task": task,
                 "task_category": category,
                 "user_id": user_id,
+                "user_role": "elevated-developer",  # Agent acts with elevated privileges
                 "session_id": request_session_id,
                 "attachments": attachments or [],  # Multi-modal support
                 "vision_context": None,

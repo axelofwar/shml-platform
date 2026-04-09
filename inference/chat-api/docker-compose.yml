@@ -74,6 +74,7 @@ services:
     # Note: coding-model-primary and coding-model-fallback are started separately
     # from inference/coding-model/docker-compose.yml before this service
     labels:
+      - "logging=promtail"
       - "traefik.enable=true"
       # Main route - protected by OAuth2 for browser access
       - "traefik.http.routers.chat-api.rule=PathPrefix(`/chat`)"
