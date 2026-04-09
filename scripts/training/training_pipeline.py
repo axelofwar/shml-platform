@@ -48,6 +48,14 @@ try:
 except ImportError:
     requests = None  # type: ignore[assignment]
 
+# Centralised notification — see libs/notify.py
+try:
+    from notify import send_telegram
+except ImportError:
+    def send_telegram(msg: str, **_kw: Any) -> bool:  # type: ignore[misc]
+        logger.warning("libs/notify.py not available — Telegram disabled")
+        return False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -59,27 +67,8 @@ logger = logging.getLogger("training-pipeline")
 # ---------------------------------------------------------------------------
 RAY_HEAD = os.getenv("RAY_HEAD_ADDRESS", "ray-head:8265")
 MLFLOW_URL = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 PIPELINE_STATE_DIR = os.getenv("PIPELINE_STATE_DIR", "/var/lib/training-pipelines")
 POLL_INTERVAL = int(os.getenv("PIPELINE_POLL_INTERVAL", "60"))
-
-
-# ---------------------------------------------------------------------------
-# Telegram helper
-# ---------------------------------------------------------------------------
-def send_telegram(msg: str) -> None:
-    """Send a Telegram notification (best-effort)."""
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT and requests):
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-    except Exception:
-        logger.warning("Telegram send failed")
 
 
 # ---------------------------------------------------------------------------

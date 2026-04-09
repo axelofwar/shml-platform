@@ -33,6 +33,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Centralised notification — see libs/notify.py
+_libs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "libs")
+if os.path.isdir(_libs_dir) and _libs_dir not in sys.path:
+    sys.path.insert(0, _libs_dir)
+from notify import send_telegram  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -41,8 +47,6 @@ logger = logging.getLogger("skill-updater")
 
 SKILLS_DIR = os.getenv("SKILLS_DIR", "/workspace/inference/agent-service/skills")
 PLATFORM_PREFIX = os.getenv("PLATFORM_PREFIX", "shml")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 
 def run_cmd(cmd: str, timeout: int = 30) -> str:
@@ -55,22 +59,6 @@ def run_cmd(cmd: str, timeout: int = 30) -> str:
     except (subprocess.TimeoutExpired, Exception) as e:
         logger.warning("Command failed: %s — %s", cmd, e)
         return ""
-
-
-def send_telegram(msg: str) -> None:
-    """Best-effort Telegram notification."""
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT):
-        return
-    try:
-        import requests
-
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,49 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # Lint Python code with ruff
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check
+        run: |
+          ruff check \
+            --select E,F,I,N,W,UP \
+            --line-length 100 \
+            --target-version py310 \
+            --extend-exclude "archived,data,logs,backups,site,models,runs,.hermes-home" \
+            libs/ inference/ ray_compute/ scripts/ sdk/
+
+  # Lint Dockerfiles with hadolint
+  dockerfile-lint:
+    name: Lint (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install hadolint
+        run: |
+          wget -q -O /usr/local/bin/hadolint \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Lint Dockerfiles
+        run: |
+          EXIT=0
+          while IFS= read -r df; do
+            echo "Linting: $df"
+            hadolint "$df" || EXIT=1
+          done < <(find . -name "Dockerfile*" -not -path "*/archived/*" -not -path "*/.git/*")
+          exit $EXIT
+
   # Run Python unit tests
   unit-tests:
     name: Unit Tests
@@ -591,7 +634,7 @@ jobs:
             inference/agent-service/docker-compose.yml
             inference/embedding-service/docker-compose.yml
             inference/gpu-manager/docker-compose.yml
-            inference/nemotron/docker-compose.yml
+            inference/qwopus/docker-compose.yml
             chat-ui-v2/docker-compose.yml
             monitoring/dcgm-exporter/docker-compose.yml
           )

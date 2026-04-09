@@ -85,7 +85,6 @@ def download_fallback_model():
 
     try:
         from rfdetr import RFDETRMedium
-        from rfdetr.util.coco_classes import COCO_CLASSES
 
         # Verify RF-DETR is available
         model = RFDETRMedium()

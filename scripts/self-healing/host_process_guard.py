@@ -19,6 +19,15 @@ import sys
 import time
 from pathlib import Path
 
+# Centralised notification — see libs/notify.py
+_libs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "libs")
+if os.path.isdir(_libs_dir) and _libs_dir not in sys.path:
+    sys.path.insert(0, _libs_dir)
+try:
+    from notify import send_telegram as _notify_telegram
+except ImportError:
+    _notify_telegram = None  # type: ignore[assignment]
+
 try:
     import psutil
 except ImportError:
@@ -95,20 +104,10 @@ def gather_process_memory() -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def send_telegram(message: str) -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
+    if _notify_telegram is not None:
+        _notify_telegram(message, parse_mode="HTML")
+    else:
         print(f"TELEGRAM_UNAVAIL: {message[:120]}", file=sys.stderr)
-        return
-    import urllib.request
-    import urllib.parse
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "HTML"}).encode()
-    try:
-        with urllib.request.urlopen(url, data=data, timeout=8):
-            pass
-    except Exception as e:
-        print(f"TELEGRAM_ERR: {e}", file=sys.stderr)
 
 
 def create_gitlab_issue(title: str, body: str) -> None:
