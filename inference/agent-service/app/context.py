@@ -142,19 +142,27 @@ class PlaybookBullet(Base):
     harmful_count = Column(Integer, default=0)
     relevance_score = Column(Float, default=0.0)
 
-    # Rubric scores stored as JSONB; embedding stored as pgvector for ANN queries
+    # Rubric scores stored as JSONB; embedding stored as JSONB (list of floats)
+    # NOTE: Alembic migration to vector(384) has not been run yet.
+    # When migrated, change back to Vector(384) and register pgvector with asyncpg.
     rubric_scores = Column(JSONB)
-    embedding = Column(Vector(384))  # pgvector HNSW index (see Alembic migration)
+    embedding = Column(JSONB)
 
     def to_context_bullet(self) -> ContextBullet:
         """Convert to ContextBullet dataclass."""
+        # asyncpg returns pgvector columns as Python lists; handle both
+        emb = self.embedding
+        if emb is not None:
+            emb = np.array(emb, dtype=np.float32) if isinstance(emb, list) else np.array(emb)
+        else:
+            emb = np.zeros(384, dtype=np.float32)
         return ContextBullet(
             id=self.id,
             content=self.content,
             category=self.category,
             source=self.source,
             timestamp=self.timestamp,
-            embedding=np.array(self.embedding),
+            embedding=emb,
             helpful_count=self.helpful_count,
             harmful_count=self.harmful_count,
             relevance_score=self.relevance_score,

@@ -52,7 +52,8 @@ alias gpuwatch='watch -n 1 nvidia-smi'
 
 # Agent service logs
 alias agentlogs='docker logs agent-service -f --tail=100'
-alias nemlogs='docker logs nemotron-api -f --tail=100'
+alias qwopuslogs='docker logs qwopus-coding -f --tail=100'
+alias watchdoglogs='docker logs watchdog-llm -f --tail=100'
 
 # Platform quick actions
 alias pstart='$SHML_DIR/start_all_safe.sh start'
@@ -81,7 +82,7 @@ mcptool() {
 
 # Tail multiple service logs
 logs() {
-    local services="${@:-agent-service nemotron-api}"
+    local services="${@:-agent-service qwopus-coding watchdog-llm}"
     docker compose -f $SHML_DIR/docker-compose.yml logs -f $services
 }
 

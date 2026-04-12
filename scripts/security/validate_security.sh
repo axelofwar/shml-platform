@@ -84,11 +84,11 @@ else
     pass "gpu-manager: Docker socket removed"
 fi
 
-# Check nemotron-manager has no docker socket
-if docker inspect "nemotron-manager" 2>/dev/null | grep -q '/var/run/docker.sock'; then
-    fail "nemotron-manager still has Docker socket mounted"
+# Check coding-manager has no docker socket
+if docker inspect "coding-manager" 2>/dev/null | grep -q '/var/run/docker.sock'; then
+    fail "coding-manager still has Docker socket mounted"
 else
-    pass "nemotron-manager: Docker socket removed"
+    pass "coding-manager: Docker socket removed"
 fi
 
 # Check docker-proxy is running
@@ -298,12 +298,12 @@ else
     skip "FusionAuth: could not verify port binding"
 fi
 
-# Check that nemotron has no direct port
-NEMOTRON_PORTS=$(docker port qwopus-coding 2>/dev/null || echo "none")
-if [[ "$NEMOTRON_PORTS" == "none" || -z "$NEMOTRON_PORTS" ]]; then
-    pass "Nemotron: no direct port exposure"
+# Check that qwopus-coding has no direct port
+CODING_PORTS=$(docker port qwopus-coding 2>/dev/null || echo "none")
+if [[ "$CODING_PORTS" == "none" || -z "$CODING_PORTS" ]]; then
+    pass "qwopus-coding: no direct port exposure"
 else
-    fail "Nemotron still has direct port: $NEMOTRON_PORTS"
+    fail "qwopus-coding still has direct port: $CODING_PORTS"
 fi
 
 # Check that gpu-manager has no direct port

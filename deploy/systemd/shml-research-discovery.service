@@ -1,0 +1,11 @@
+[Unit]
+Description=SHML Research Discovery (arXiv + HuggingFace scan → Obsidian vault)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=axelofwar
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+ExecStart=/usr/bin/python3 /home/axelofwar/Projects/shml-platform/scripts/knowledge/research_discovery.py
+Environment=HOME=/home/axelofwar

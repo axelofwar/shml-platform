@@ -379,7 +379,7 @@ class ModelRouter:
             task: User's task description
             context: Additional context
             reasoning_model: Override reasoning model (default: gemini-2.0-flash-exp)
-            execution_model: Override execution model (default: nemotron-mini-4b)
+            execution_model: Override execution model (default: qwopus-coding)
 
         Returns:
             Dict with plan and execution results

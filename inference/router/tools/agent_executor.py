@@ -249,7 +249,7 @@ Output ONLY the file content, no explanation or markdown."""
         response = await self.router.complete(
             CompletionRequest(
                 messages=[Message(role="user", content=prompt)],
-                model="nemotron-mini-4b",
+                model="qwopus-coding",
                 temperature=0.7,
                 max_tokens=4096,
             )
@@ -337,7 +337,7 @@ Output ONLY the file content, no explanation."""
         response = await self.router.complete(
             CompletionRequest(
                 messages=[Message(role="user", content=prompt)],
-                model="nemotron-mini-4b",
+                model="qwopus-coding",
                 temperature=0.7,
                 max_tokens=4096,
             )
@@ -398,7 +398,7 @@ Output ONLY the code, no explanation."""
         response = await self.router.complete(
             CompletionRequest(
                 messages=[Message(role="user", content=prompt)],
-                model="nemotron-mini-4b",
+                model="qwopus-coding",
                 temperature=0.5,
                 max_tokens=4096,
             )

@@ -1,0 +1,11 @@
+[Unit]
+Description=SHML Research Discovery Timer (daily arXiv + HuggingFace scan)
+
+[Timer]
+# Run daily at 06:00 (before work starts)
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

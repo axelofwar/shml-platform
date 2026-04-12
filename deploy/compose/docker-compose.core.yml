@@ -57,7 +57,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      test: [ "CMD", "traefik", "healthcheck", "--ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -82,10 +82,34 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 768M
+          memory: ${POSTGRES_MEM_LIMIT:-1536M}
         reservations:
           cpus: '0.5'
-          memory: 384M
+          memory: ${POSTGRES_MEM_RESERVATION:-512M}
+    # Container-aware PG settings — sized relative to POSTGRES_MEM_LIMIT (default 1536M).
+    # Without this, postgres auto-tunes from /proc/meminfo (62GB host), setting
+    # effective_cache_size=4GB on a sub-2GB container causing OOM on query storms.
+    # shared_buffers=384MB (25%), effective_cache_size=1100MB (72%), max_connections=75.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1100MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=75
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - synchronous_commit=off
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -98,7 +122,7 @@ services:
     secrets:
       - shared_db_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -126,7 +150,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5

@@ -4,7 +4,7 @@
 # All traffic enters through Traefik (oauth2-auth + role-auth-elevated-developer).
 # The OpenShell gateway is NEVER exposed directly; all access is proxied.
 #
-# Inference: points at existing nemotron vLLM container (RTX 3090 Ti, GPU 0)
+# Inference: points at qwopus-coding (Qwen3.5-27B Q4_K_M, RTX 3090 Ti, GPU 0)
 # Vision:    points at existing qwen3-vl-api container (RTX 2070, GPU 1)
 #
 # Start: docker compose -f deploy/compose/docker-compose.nemoclaw.yml up -d
@@ -18,7 +18,7 @@ services:
   # ============================================================================
   openshell-gateway:
     build:
-      context: ../../  # project root — uses NemoClaw repo Dockerfile when cloned there
+      context: ../../ # project root — uses NemoClaw repo Dockerfile when cloned there
       dockerfile: nemoclaw/Dockerfile
     image: ${PLATFORM_PREFIX:-shml}-openshell-gateway:latest
     container_name: ${PLATFORM_PREFIX:-shml}-openshell-gateway
@@ -33,13 +33,13 @@ services:
           memory: 512M
     environment:
       # ---- Inference routing ----
-      # Primary: local vLLM (nemotron-3-nano-30b, RTX 3090 Ti)
-      OPENSHELL_INFERENCE_PROVIDER: vllm-local
-      OPENSHELL_INFERENCE_ENDPOINT: http://nemotron:8000/v1
-      OPENSHELL_DEFAULT_MODEL: ${NEMOTRON_MODEL:-nvidia/nemotron-3-nano-30b-a3b}
+      # Primary: local llama.cpp (qwopus-coding Qwen3.5-27B, RTX 3090 Ti)
+      OPENSHELL_INFERENCE_PROVIDER: llama-local
+      OPENSHELL_INFERENCE_ENDPOINT: http://qwopus-coding:8000/v1
+      OPENSHELL_DEFAULT_MODEL: ${CODING_MODEL:-qwopus-coding}
       # Cloud escalation endpoint — NemoClaw routes through this when nimcloud profile selected
       OPENSHELL_CLOUD_ENDPOINT: ${OPENSHELL_CLOUD_ENDPOINT:-https://integrate.api.nvidia.com/v1}
-      OPENSHELL_CLOUD_MODEL: ${OPENSHELL_CLOUD_MODEL:-nvidia/nemotron-3-super-120b-a12b}
+      OPENSHELL_CLOUD_MODEL: ${OPENSHELL_CLOUD_MODEL:-nvidia/llama-3_1-nemotron-ultra-253b-v1}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       # ---- Gateway settings ----
       OPENSHELL_GATEWAY_PORT: "9090"
@@ -67,12 +67,12 @@ services:
       # Runtime socket — used by nemoclaw CLI on host
       - /var/run/openshell:/var/run/openshell
     expose:
-      - "9090"   # Gateway / MCP proxy
-      - "9091"   # Prometheus metrics
+      - "9090" # Gateway / MCP proxy
+      - "9091" # Prometheus metrics
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:9090/health" ]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -133,7 +133,7 @@ services:
       openshell-gateway:
         condition: service_healthy
     labels:
-      - "traefik.enable=false"  # Internal only — accessed via agent-service
+      - "traefik.enable=false" # Internal only — accessed via agent-service
 
 # ============================================================================
 # Volumes
@@ -141,9 +141,9 @@ services:
 volumes:
   openshell-data:
 
-# ============================================================================
-# Secrets
-# ============================================================================
+    # ============================================================================
+    # Secrets
+    # ============================================================================
 secrets:
   postgres_password:
     file: ../../secrets/postgres_password

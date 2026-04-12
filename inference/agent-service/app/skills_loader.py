@@ -38,6 +38,12 @@ class AgentSkill:
     metadata: Dict[str, str] = field(default_factory=dict)
     allowed_tools: List[str] = field(default_factory=list)
 
+    # P0: Tool result budgeting — max chars per tool result before truncation
+    max_result_chars: int = 8000
+
+    # P1: Tool concurrency — "parallel" or "serial" (default serial for safety)
+    concurrency: str = "serial"
+
     # Content
     instructions: str = ""
     path: Path = field(default_factory=Path)
@@ -149,6 +155,15 @@ def parse_skill_md(skill_path: Path) -> Optional[AgentSkill]:
         if "allowed-tools" in frontmatter:
             allowed_tools = frontmatter["allowed-tools"].split()
 
+        # P0: Parse max-result-chars (default 8000)
+        max_result_chars = int(frontmatter.get("max-result-chars", 8000))
+
+        # P1: Parse concurrency mode (default serial)
+        concurrency = frontmatter.get("concurrency", "serial")
+        if concurrency not in ("parallel", "serial"):
+            logger.warning(f"Invalid concurrency '{concurrency}' in {skill_md}, defaulting to serial")
+            concurrency = "serial"
+
         return AgentSkill(
             name=frontmatter["name"],
             description=frontmatter["description"],
@@ -156,6 +171,8 @@ def parse_skill_md(skill_path: Path) -> Optional[AgentSkill]:
             compatibility=frontmatter.get("compatibility"),
             metadata=frontmatter.get("metadata", {}),
             allowed_tools=allowed_tools,
+            max_result_chars=max_result_chars,
+            concurrency=concurrency,
             instructions=instructions,
             path=skill_path,
         )

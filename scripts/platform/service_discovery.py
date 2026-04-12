@@ -32,7 +32,7 @@ def container_ip(*names: str) -> str | None:
                     "inspect",
                     name,
                     "--format",
-                    "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+                    "{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}",
                 ],
                 check=False,
                 capture_output=True,
@@ -41,9 +41,11 @@ def container_ip(*names: str) -> str | None:
             )
         except (OSError, subprocess.SubprocessError):
             return None
-        ip = proc.stdout.strip()
-        if proc.returncode == 0 and ip:
-            return ip
+        if proc.returncode != 0:
+            continue
+        ips = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        if ips:
+            return ips[0]
     return None
 
 

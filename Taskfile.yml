@@ -83,7 +83,12 @@ tasks:
   "start:watchdog":
     desc: Start self-healing watchdog
     cmds:
-      - "{{.DEPLOY}} restart watchdog"
+      - "{{.DEPLOY}} start watchdog"
+
+  "start:sba":
+    desc: Start SBA resource portal
+    cmds:
+      - "{{.DEPLOY}} start sba"
 
   # ===========================================================================
   # Stop
@@ -132,6 +137,18 @@ tasks:
   "restart:monitoring":
     cmds:
       - "{{.DEPLOY}} restart monitoring"
+
+  "restart:devtools":
+    cmds:
+      - "{{.DEPLOY}} restart devtools"
+
+  "restart:sba":
+    cmds:
+      - "{{.DEPLOY}} restart sba"
+
+  "restart:watchdog":
+    cmds:
+      - "{{.DEPLOY}} restart watchdog"
 
   "restart:agent":
     cmds:
@@ -278,3 +295,143 @@ tasks:
     desc: "Preview IDE config generation without writing files"
     cmds:
       - bash scripts/generate-ide-configs.sh --target all --dry-run
+
+  # ===========================================================================
+  # Testing (blast-radius regression testing via GitNexus)
+  # ===========================================================================
+  test:
+    desc: Run all tests
+    cmds:
+      - python3 -m pytest tests/ -v --tb=short
+
+  "test:unit":
+    desc: Run unit tests only (no running services needed)
+    cmds:
+      - python3 -m pytest tests/unit/ -v --tb=short -m unit
+
+  "test:integration":
+    desc: Run integration tests (requires running services)
+    cmds:
+      - python3 -m pytest tests/integration/ -v --tb=short -m integration
+
+  "test:blast-radius":
+    desc: Run only tests affected by current changes (GitNexus blast radius)
+    cmds:
+      - python3 scripts/testing/blast_radius.py --run
+
+  "test:blast-radius:report":
+    desc: Show blast radius report without running tests
+    cmds:
+      - python3 scripts/testing/blast_radius.py
+
+  "test:blast-radius:ci":
+    desc: Generate JSON blast radius report for CI
+    cmds:
+      - python3 scripts/testing/blast_radius.py --ci --output blast-radius-report.json
+
+  "test:security":
+    desc: Run security validation tests
+    cmds:
+      - python3 -m pytest tests/unit/test_security_hardening.py -v --tb=short
+
+  "test:contracts":
+    desc: Run all compose contract tests
+    cmds:
+      - python3 -m pytest tests/unit/test_auth_compose_contract.py tests/unit/test_infra_compose_contract.py tests/unit/test_monitoring_config.py tests/unit/test_platform_wiring.py -v
+
+  # ===========================================================================
+  # Knowledge Graph (GitNexus + Obsidian intelligence layer)
+  # ===========================================================================
+  "knowledge:status":
+    desc: Show GitNexus index status for all repos
+    cmds:
+      - gitnexus list
+
+  "knowledge:reindex":
+    desc: Reindex all 3 SHML repos in GitNexus
+    cmds:
+      - gitnexus analyze /home/axelofwar/Projects/shml-platform
+      - gitnexus analyze /home/axelofwar/Projects/shml-robotics
+      - gitnexus analyze /home/axelofwar/Projects/shml-sba
+      - gitnexus list
+
+  "knowledge:reindex:skills":
+    desc: Reindex with skill generation (slower, regenerates SKILL.md files)
+    cmds:
+      - gitnexus analyze --skills /home/axelofwar/Projects/shml-platform
+      - gitnexus analyze /home/axelofwar/Projects/shml-robotics
+      - gitnexus analyze /home/axelofwar/Projects/shml-sba
+
+  "knowledge:serve":
+    desc: Start GitNexus web UI (interactive knowledge graph explorer)
+    cmds:
+      - gitnexus serve --port 3005
+
+  "knowledge:discover":
+    desc: Run research discovery (arXiv + HuggingFace → Obsidian vault)
+    cmds:
+      - python3 scripts/knowledge/research_discovery.py
+
+  "knowledge:discover:dry-run":
+    desc: Preview research discoveries without writing to vault
+    cmds:
+      - python3 scripts/knowledge/research_discovery.py --dry-run --force
+
+  "knowledge:impact":
+    desc: "Blast radius for a symbol: task knowledge:impact -- <symbol_name>"
+    cmds:
+      - gitnexus impact {{.CLI_ARGS}}
+
+  "knowledge:context":
+    desc: "360-degree view of a symbol: task knowledge:context -- <symbol_name>"
+    cmds:
+      - gitnexus context {{.CLI_ARGS}}
+
+  "knowledge:connmap":
+    desc: Regenerate the platform connection map in Obsidian vault
+    cmds:
+      - python3 scripts/generate_connection_map.py
+
+  # ── Hermes Agent ──────────────────────────────────────────
+
+  "hermes:gateway":
+    desc: Start Hermes gateway (HTTP API on :8642, RBAC via Traefik)
+    cmds:
+      - scripts/hermes-gateway.sh start
+
+  "hermes:gateway:stop":
+    desc: Stop Hermes gateway
+    cmds:
+      - scripts/hermes-gateway.sh stop
+
+  "hermes:gateway:status":
+    desc: Check Hermes gateway status
+    cmds:
+      - scripts/hermes-gateway.sh status
+
+  "hermes:gateway:logs":
+    desc: Follow Hermes gateway logs
+    cmds:
+      - scripts/hermes-gateway.sh logs
+
+  "hermes:workspace":
+    desc: Start Hermes workspace web GUI on :3002
+    cmds:
+      - scripts/hermes-workspace.sh start
+
+  "hermes:workspace:stop":
+    desc: Stop Hermes workspace
+    cmds:
+      - scripts/hermes-workspace.sh stop
+
+  "hermes:all":
+    desc: Start both Hermes gateway + workspace
+    cmds:
+      - scripts/hermes-gateway.sh start
+      - scripts/hermes-workspace.sh start
+
+  "hermes:all:stop":
+    desc: Stop both Hermes gateway + workspace
+    cmds:
+      - scripts/hermes-workspace.sh stop
+      - scripts/hermes-gateway.sh stop

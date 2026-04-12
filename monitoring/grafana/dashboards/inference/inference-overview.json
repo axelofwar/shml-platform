@@ -1,220 +1,342 @@
 {
-  "annotations": { "list": [] },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "id": null,
-  "links": [],
-  "panels": [
-    {
-      "title": "Inference Service Status",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
-      "targets": [
-        {
-          "expr": "up{stack=\"inference\"}",
-          "legendFormat": "{{service}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "options": { "0": { "text": "Down", "color": "red" } }, "type": "value" },
-            { "options": { "1": { "text": "Up", "color": "green" } }, "type": "value" }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
-            ]
-          }
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    "annotations": {
+        "list": []
     },
-    {
-      "title": "Request Rate (all inference services)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "targets": [
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
         {
-          "expr": "sum(rate(http_requests_total{stack=\"inference\"}[5m])) by (service)",
-          "legendFormat": "{{service}}"
+            "title": "Inference Service Status",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "up{stack=\"inference\"}",
+                    "legendFormat": "{{service}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "text": "Down",
+                                    "color": "red"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "1": {
+                                    "text": "Up",
+                                    "color": "green"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
         },
         {
-          "expr": "sum(rate(fastapi_requests_total{stack=\"inference\"}[5m])) by (service)",
-          "legendFormat": "{{service}} (fastapi)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "Request Latency p95",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{stack=\"inference\"}[5m])) by (le, service))",
-          "legendFormat": "{{service}} p95"
+            "title": "Request Rate (all inference services)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 4
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(http_requests_total{stack=\"inference\"}[5m])) by (service)",
+                    "legendFormat": "{{service}}"
+                },
+                {
+                    "expr": "sum(rate(fastapi_requests_total{stack=\"inference\"}[5m])) by (service)",
+                    "legendFormat": "{{service}} (fastapi)"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(fastapi_request_duration_seconds_bucket{stack=\"inference\"}[5m])) by (le, service))",
-          "legendFormat": "{{service}} p95 (fastapi)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "GPU VRAM Utilization",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "targets": [
-        {
-          "expr": "DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL * 100",
-          "legendFormat": "GPU {{gpu}} VRAM %"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "max": 100
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "GPU SM Utilization",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "targets": [
-        {
-          "expr": "DCGM_FI_DEV_GPU_UTIL",
-          "legendFormat": "GPU {{gpu}} SM %"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "max": 100
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "Qwopus (llama.cpp) — Tokens/sec",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "targets": [
-        {
-          "expr": "rate(llamacpp_tokens_predicted_total{service=\"qwopus-coding\"}[5m])",
-          "legendFormat": "Predicted tokens/s"
+            "title": "Request Latency p95",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 4
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{stack=\"inference\"}[5m])) by (le, service))",
+                    "legendFormat": "{{service}} p95"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(fastapi_request_duration_seconds_bucket{stack=\"inference\"}[5m])) by (le, service))",
+                    "legendFormat": "{{service}} p95 (fastapi)"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s"
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
         },
         {
-          "expr": "rate(llamacpp_prompt_tokens_total{service=\"qwopus-coding\"}[5m])",
-          "legendFormat": "Prompt tokens/s"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "Qwopus — KV Cache Usage",
-      "type": "gauge",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "targets": [
-        {
-          "expr": "llamacpp_kv_cache_usage_ratio{service=\"qwopus-coding\"}",
-          "legendFormat": "KV Cache %"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.7 },
-              { "color": "red", "value": 0.9 }
-            ]
-          }
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "Agent Service — Active WebSocket Connections",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 28 },
-      "targets": [
-        {
-          "expr": "agent_websocket_connections_active{service=\"agent-service\"}",
-          "legendFormat": "Active"
-        }
-      ],
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "Agent Service — Workflow Rate",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 28 },
-      "targets": [
-        {
-          "expr": "rate(agent_workflows_total{service=\"agent-service\"}[5m])",
-          "legendFormat": "{{status}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
-      "title": "HTTP Error Rate (4xx + 5xx)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
-      "targets": [
-        {
-          "expr": "sum(rate(http_requests_total{stack=\"inference\", status=~\"4..|5..\"}[5m])) by (service, status)",
-          "legendFormat": "{{service}} {{status}}"
+            "title": "GPU VRAM Utilization",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 12
+            },
+            "targets": [
+                {
+                    "expr": "DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL * 100",
+                    "legendFormat": "GPU {{gpu}} VRAM %"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent",
+                    "max": 100
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
         },
         {
-          "expr": "sum(rate(fastapi_requests_total{stack=\"inference\", status_code=~\"4..|5..\"}[5m])) by (service, status_code)",
-          "legendFormat": "{{service}} {{status_code}} (fastapi)"
+            "title": "GPU SM Utilization",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 12
+            },
+            "targets": [
+                {
+                    "expr": "DCGM_FI_DEV_GPU_UTIL",
+                    "legendFormat": "GPU {{gpu}} SM %"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent",
+                    "max": 100
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
+        },
+        {
+            "title": "Qwopus (llama.cpp) — Tokens/sec",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 20
+            },
+            "targets": [
+                {
+                    "expr": "rate(llamacpp_tokens_predicted_total{service=\"qwopus-coding\"}[5m])",
+                    "legendFormat": "Predicted tokens/s"
+                },
+                {
+                    "expr": "rate(llamacpp_prompt_tokens_total{service=\"qwopus-coding\"}[5m])",
+                    "legendFormat": "Prompt tokens/s"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
+        },
+        {
+            "title": "Qwopus — KV Cache Usage",
+            "type": "gauge",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 20
+            },
+            "targets": [
+                {
+                    "expr": "llamacpp_kv_cache_usage_ratio{service=\"qwopus-coding\"}",
+                    "legendFormat": "KV Cache %"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.7
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.9
+                            }
+                        ]
+                    }
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
+        },
+        {
+            "title": "Agent Service — Active WebSocket Connections",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 8,
+                "x": 0,
+                "y": 28
+            },
+            "targets": [
+                {
+                    "expr": "agent_websocket_connections_active{service=\"agent-service\"}",
+                    "legendFormat": "Active"
+                }
+            ],
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
+        },
+        {
+            "title": "Agent Service — Workflow Rate",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 16,
+                "x": 8,
+                "y": 28
+            },
+            "targets": [
+                {
+                    "expr": "rate(agent_workflows_total{service=\"agent-service\"}[5m])",
+                    "legendFormat": "{{status}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops"
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
+        },
+        {
+            "title": "HTTP Error Rate (4xx + 5xx)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 36
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(http_requests_total{stack=\"inference\", status=~\"4..|5..\"}[5m])) by (service, status)",
+                    "legendFormat": "{{service}} {{status}}"
+                },
+                {
+                    "expr": "sum(rate(fastapi_requests_total{stack=\"inference\", status_code=~\"4..|5..\"}[5m])) by (service, status_code)",
+                    "legendFormat": "{{service}} {{status_code}} (fastapi)"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            }
         }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        }
-      },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    }
-  ],
-  "schemaVersion": 39,
-  "tags": ["inference", "gpu", "llm"],
-  "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Inference Stack Overview",
-  "uid": "inference-overview",
-  "version": 1
+    ],
+    "schemaVersion": 39,
+    "tags": [
+        "inference",
+        "gpu",
+        "llm"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-1h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Inference Stack Overview",
+    "uid": "inference-overview",
+    "version": 1
 }

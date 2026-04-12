@@ -50,11 +50,38 @@ find_best_backup() {
     echo "$best_backup"
 }
 
+postgres_container_for_db() {
+    local db_name=$1
+
+    case "$db_name" in
+        gitlab)
+            echo "${PLATFORM_PREFIX:-shml}-gitlab-postgres"
+            ;;
+        *)
+            echo "${PLATFORM_PREFIX:-shml}-postgres"
+            ;;
+    esac
+}
+
+postgres_admin_user_for_db() {
+    local db_name=$1
+
+    case "$db_name" in
+        gitlab)
+            echo "gitlab"
+            ;;
+        *)
+            echo "postgres"
+            ;;
+    esac
+}
+
 # Check if a database appears to be empty/fresh
 is_database_empty() {
     local db_name=$1
     local db_user=$2
-    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+    local postgres_container
+    postgres_container=$(postgres_container_for_db "$db_name")
 
     if [ "$db_name" = "fusionauth" ]; then
         local user_count
@@ -82,6 +109,13 @@ is_database_empty() {
         return 0
     fi
 
+    if [ "$db_name" = "gitlab" ]; then
+        local table_count
+        table_count=$(docker exec "$postgres_container" psql -U "$db_user" -d "$db_name" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema');" 2>/dev/null | tr -d ' ')
+        [ "${table_count:-0}" -eq 0 ]
+        return $?
+    fi
+
     return 1  # Default: assume not empty
 }
 
@@ -90,7 +124,10 @@ restore_database_from_backup() {
     local db_name=$1
     local db_user=$2
     local backup_file=$3
-    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
+    local postgres_admin_user
+    local postgres_container
+    postgres_container=$(postgres_container_for_db "$db_name")
+    postgres_admin_user=$(postgres_admin_user_for_db "$db_name")
 
     if [ ! -f "$backup_file" ]; then
         log_error "Backup file not found: $backup_file"
@@ -103,8 +140,8 @@ restore_database_from_backup() {
 
     echo "    Restoring $db_name from backup ($backup_size)..."
 
-    docker exec "$postgres_container" psql -U postgres -c "DROP DATABASE IF EXISTS ${db_name};" >/dev/null 2>&1
-    docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1
+    docker exec "$postgres_container" psql -U "$postgres_admin_user" -c "DROP DATABASE IF EXISTS ${db_name};" >/dev/null 2>&1
+    docker exec "$postgres_container" psql -U "$postgres_admin_user" -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1
 
     if [[ "$file_type" == *"PostgreSQL custom database dump"* ]]; then
         cat "$backup_file" | docker exec -i "$postgres_container" pg_restore -U "$db_user" -d "$db_name" --no-owner --no-privileges 2>/dev/null
@@ -134,8 +171,6 @@ restore_database_from_backup() {
 
 # Main function to check and restore all databases
 check_and_restore_databases() {
-    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
-
     log_info "━━━ Checking Database Integrity ━━━"
     echo "Looking for backups from the last ${BACKUP_MAX_AGE_HOURS} hours..."
 
@@ -145,25 +180,36 @@ check_and_restore_databases() {
         "ray_compute:ray_compute:false"
         "inference:inference:false"
         "chat_api:chat_api:false"
+        "gitlab:gitlab:false"
     )
 
     local restored_count=0
 
     for db_config in "${databases[@]}"; do
         local db_name db_user is_critical
+        local postgres_admin_user
+        local postgres_container
         db_name=$(echo "$db_config" | cut -d: -f1)
         db_user=$(echo "$db_config" | cut -d: -f2)
         is_critical=$(echo "$db_config" | cut -d: -f3)
+        postgres_container=$(postgres_container_for_db "$db_name")
+        postgres_admin_user=$(postgres_admin_user_for_db "$db_name")
+
+        if ! docker ps --format '{{.Names}}' | grep -qx "$postgres_container"; then
+            if [ "$db_name" = "gitlab" ]; then
+                continue
+            fi
+        fi
 
         local db_exists
-        db_exists=$(docker exec "$postgres_container" psql -U postgres -t -c "SELECT 1 FROM pg_database WHERE datname='${db_name}';" 2>/dev/null | tr -d ' ')
+        db_exists=$(docker exec "$postgres_container" psql -U "$postgres_admin_user" -t -c "SELECT 1 FROM pg_database WHERE datname='${db_name}';" 2>/dev/null | tr -d ' ')
 
         if [ "$db_exists" != "1" ]; then
             echo "  Database $db_name does not exist, will create from backup..."
             local backup_file
             backup_file=$(find_best_backup "$db_name")
             if [ -n "$backup_file" ]; then
-                docker exec "$postgres_container" psql -U postgres -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1 || true
+                docker exec "$postgres_container" psql -U "$postgres_admin_user" -c "CREATE DATABASE ${db_name} OWNER ${db_user};" >/dev/null 2>&1 || true
                 restore_database_from_backup "$db_name" "$db_user" "$backup_file"
                 restored_count=$((restored_count + 1))
             elif [ "$is_critical" = "true" ]; then
@@ -204,15 +250,9 @@ check_and_restore_databases() {
 }
 
 create_pre_restart_backup() {
-    local postgres_container="${PLATFORM_PREFIX:-shml}-postgres"
     local backup_dir="${SCRIPT_DIR}/backups/postgres/pre-restart"
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
-
-    if ! docker ps -q -f "name=$postgres_container" | grep -q .; then
-        log_warn "PostgreSQL not running, skipping pre-restart backup"
-        return 0
-    fi
 
     echo ""
     echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
@@ -222,15 +262,27 @@ create_pre_restart_backup() {
 
     mkdir -p "$backup_dir"
 
-    local databases=("fusionauth" "mlflow_db" "ray_compute" "inference" "chat_api")
+    local databases=("fusionauth" "mlflow_db" "ray_compute" "inference" "chat_api" "gitlab")
     local backed_up=0
 
     for db in "${databases[@]}"; do
-        if docker exec "$postgres_container" psql -U postgres -lqt | cut -d \| -f 1 | grep -qw "$db"; then
+        local postgres_container
+        local db_user
+        postgres_container=$(postgres_container_for_db "$db")
+        db_user="postgres"
+        if [ "$db" = "gitlab" ]; then
+            db_user="gitlab"
+        fi
+
+        if ! docker ps -q -f "name=^${postgres_container}$" | grep -q .; then
+            continue
+        fi
+
+        if docker exec "$postgres_container" psql -U "$db_user" -lqt | cut -d \| -f 1 | grep -qw "$db"; then
             local backup_file="${backup_dir}/${db}_${timestamp}.sql.gz"
             echo -n "  Backing up $db..."
 
-            if docker exec "$postgres_container" pg_dump -U postgres -Fc "$db" 2>/dev/null | gzip > "$backup_file"; then
+            if docker exec "$postgres_container" pg_dump -U "$db_user" -Fc "$db" 2>/dev/null | gzip > "$backup_file"; then
                 local size
                 size=$(du -h "$backup_file" | cut -f1)
                 echo -e " ${GREEN}✓${NC} ($size)"

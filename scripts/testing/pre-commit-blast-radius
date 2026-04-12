@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GitNexus blast-radius pre-commit hook
+# Runs affected tests only (not full suite) based on knowledge graph analysis
+#
+# Install: cp scripts/testing/pre-commit-blast-radius .git/hooks/pre-commit
+# Or add to .pre-commit-config.yaml
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Skip if SKIP_BLAST_RADIUS is set (e.g., for draft commits)
+if [[ -n "${SKIP_BLAST_RADIUS:-}" ]]; then
+    echo "[blast-radius] Skipped (SKIP_BLAST_RADIUS set)"
+    exit 0
+fi
+
+# Check if gitnexus is available
+if ! command -v gitnexus &>/dev/null; then
+    echo "[blast-radius] gitnexus not found, skipping blast radius analysis"
+    exit 0
+fi
+
+# Check if index exists
+if [[ ! -d "${PLATFORM_ROOT}/.gitnexus" ]]; then
+    echo "[blast-radius] No GitNexus index found. Run: gitnexus analyze"
+    exit 0
+fi
+
+echo "[blast-radius] Analyzing changed files..."
+
+# Run blast radius analysis
+REPORT=$(python3 "${PLATFORM_ROOT}/scripts/testing/blast_radius.py" --ci 2>&1) || true
+
+if [[ -z "${REPORT}" ]]; then
+    echo "[blast-radius] No changes detected or analysis failed"
+    exit 0
+fi
+
+RISK_LEVEL=$(echo "${REPORT}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('risk_level','unknown'))" 2>/dev/null || echo "unknown")
+TEST_COUNT=$(echo "${REPORT}" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('selected_tests',[])))" 2>/dev/null || echo "0")
+
+echo "[blast-radius] Risk: ${RISK_LEVEL} | Tests: ${TEST_COUNT}"
+
+# For high-risk changes, run the tests
+if [[ "${RISK_LEVEL}" == "high" ]]; then
+    echo "[blast-radius] HIGH risk — running affected tests..."
+    python3 "${PLATFORM_ROOT}/scripts/testing/blast_radius.py" --run
+    exit $?
+elif [[ "${RISK_LEVEL}" == "medium" && "${TEST_COUNT}" -gt 0 ]]; then
+    echo "[blast-radius] MEDIUM risk — running affected unit tests..."
+    python3 "${PLATFORM_ROOT}/scripts/testing/blast_radius.py" --run
+    exit $?
+else
+    echo "[blast-radius] LOW risk — skipping tests (run manually with: task test:blast-radius)"
+    exit 0
+fi

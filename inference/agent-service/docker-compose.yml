@@ -9,7 +9,7 @@ services:
     container_name: ${PLATFORM_PREFIX:-shml}-agent-service
     restart: unless-stopped
     env_file:
-      - ../../.env  # Root .env for TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+      - ../../.env # Root .env for TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     environment:
       # Database connection (shml-postgres)
       - POSTGRES_HOST=shml-postgres
@@ -103,7 +103,6 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
       - OTEL_TRACES_SAMPLER=parentbased_traceidratio
       - OTEL_TRACES_SAMPLER_ARG=0.1
-
       # ── Telegram notifications (from ../../.env via env_file) ─────────────
 
     extra_hosts:
@@ -114,9 +113,9 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-      - ./app:/app/app:ro       # Live reload: mount app code read-only
+      - ./app:/app/app:ro # Live reload: mount app code read-only
       - ./skills:/app/skills:ro # Live reload: mount skills read-only
-      - ../../libs:/libs:ro     # Centralized libs (notify.py) for Telegram
+      - ../../libs:/libs:ro # Centralized libs (notify.py) for Telegram
       # SECURITY: Docker socket REMOVED (was critical host-escape vector)
       # Agent uses docker-proxy (read-only GET /containers) via DOCKER_HOST env var
       # SandboxSkill and ShellSkill docker commands route through restricted proxy

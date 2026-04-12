@@ -263,7 +263,7 @@ services:
     secrets:
       - shared_db_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gitlab -d gitlab"]
+      test: [ "CMD-SHELL", "pg_isready -U gitlab -d gitlab" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -392,7 +392,7 @@ services:
     image: gitlab/gitlab-runner:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-platform
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
@@ -416,7 +416,7 @@ services:
     image: gitlab/gitlab-runner:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-robotics
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
@@ -440,7 +440,7 @@ services:
     image: gitlab/gitlab-runner:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-training
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}

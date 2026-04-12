@@ -1,5 +1,5 @@
 #!/bin/bash
-# stop_nemotron.sh
+# stop_qwopus.sh
 # Stop Nemotron-3-Nano coding model service
 
 set -e

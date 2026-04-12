@@ -1,23 +1,23 @@
 #!/bin/bash
-# start_nemotron.sh
-# Quick start script for Nemotron-3-Nano coding model
+# start_qwopus.sh
+# Quick start script for Qwopus coding model (Qwen3.5-27B Q4_K_M)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "🚀 Starting Nemotron-3-Nano-30B-A3B coding model..."
+echo "🚀 Starting Qwopus coding model (Qwen3.5-27B Q4_K_M)..."
 
 # Check if model is downloaded
-MODEL_PATH="../../data/models/nemotron-3/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+MODEL_PATH="../../data/models/qwopus/Qwen3.5-27B-Q4_K_M.gguf"
 if [ ! -f "$MODEL_PATH" ]; then
     echo "❌ Model not found at: $MODEL_PATH"
     echo ""
     echo "Download it first:"
-    echo "  huggingface-cli download unsloth/Nemotron-3-Nano-30B-A3B-GGUF \\"
-    echo "    --include '*UD-Q4_K_XL*' \\"
-    echo "    --local-dir ../../data/models/nemotron-3/"
+    echo "  huggingface-cli download Qwen/Qwen3.5-27B-GGUF \\"
+    echo "    --include '*Q4_K_M*' \\"
+    echo "    --local-dir ../../data/models/qwopus/"
     exit 1
 fi
 
@@ -42,11 +42,11 @@ docker compose up -d
 echo "⏳ Waiting for llama-server to be ready..."
 for i in {1..30}; do
     if curl -sf http://localhost:8010/health > /dev/null 2>&1; then
-        echo "✅ Nemotron-3-Nano is ready!"
+        echo "✅ Qwopus coding model is ready!"
         echo ""
         echo "📊 Service Info:"
         echo "   - API Endpoint: http://localhost:8010/v1"
-        echo "   - Model: Nemotron-3-Nano-30B-A3B (Q4_K_XL)"
+        echo "   - Model: Qwen3.5-27B (Q4_K_M)"
         echo "   - Context: 32K tokens"
         echo "   - GPU: RTX 3090 Ti (cuda:0)"
         echo ""

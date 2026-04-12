@@ -11,6 +11,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Watchdog: Host-side control helper** (2026-04-11)
+  - `scripts/self-healing/watchdog-ctl.sh` — pause/resume/status from host terminal with auto-resume timer
+  - Usage: `watchdog-ctl pause 30m` pauses remediation for 30 minutes then auto-resumes
+
+- **Watchdog: Host systemd service auto-remediation** (2026-04-11)
+  - `check_host_services()` now attempts `systemctl --user restart` via nsenter (privileged helper container)
+  - Upgraded from alert-only to full auto-remediation with structured Telegram cards
+  - Sends `send_alert_card` with success/failure outcome
+
+- **Connection Map: Regenerated with 74 services** (2026-04-11)
+  - Removed undeployed OpenClaw Gateway from EXTRA_SERVICES
+  - Regenerated `docs/obsidian-vault/20-Decisions/CONNECTION_MAP.md` (74 services, 149 connections)
+
+- **Documentation: Carnice-27B + watchdog maintenance lessons** (2026-04-11)
+  - Added 4 new lessons to `LESSONS_LEARNED.md`: watchdog restart loops, Carnice benchmark results, host systemd monitoring, and GGUF vs AWQ performance comparison
+
+- **Monitoring: GPU-manager-aware alert suppression** (2026-04-08)
+  - `inference/agent-service/app/scheduler.py`: `_job_llama_server_watchdog()` now queries GPU manager health before alerting; suppresses alerts when GPU 0 is in training/transitioning state
+  - `inference/agent-service/docker-compose.yml`: Added `GPU_MANAGER_HEALTH_URL` env var
+
+- **Robotics: worktree monitor + worker scaffolding** (2026-04)
+  - `shml-robotics/scripts/worktree_agent_manager.py` — provisions one worktree per GitLab issue, falls back to local refs when GitLab fetch is unavailable, auto-escalates stale workers, and supports review/MR handoff comments
+  - `shml-robotics/scripts/launch_hermes_issue_worker.sh` — launches Hermes in the issue's dedicated worktree with a focused single-issue prompt
+  - `shml-robotics/scripts/run_mujoco_acceptance_in_container.sh` — now supports reusable `command` execution in the prebuilt helper image so Hermes can reuse platform-ready dependencies instead of reinstalling host packages
+  - `shml-robotics/scripts/sync_issue_to_obsidian.py` — syncs robotics issue status into `docs/obsidian-vault/50-Projects/plan.md` with stable wikilinks and review/MR metadata
+  - `shml-robotics/.vscode/tasks.json` + `.vscode/extensions.json` — monitor, escalation, handoff, and worker tasks plus extension recommendations for Copilot, GitLab Workflow, and GitLens
+  - `.github/agents/robotics-board-manager.md` + `.github/agents/robotics-task-worker.md` — custom parent/worker agent roles for the robotics board workflow
+
+- **Knowledge Graph: GitNexus code intelligence layer** (2026-04)
+  - Installed GitNexus v1.5.3, indexed all 3 SHML repos (14,868 + 161 + 89 nodes)
+  - MCP server configured in `mcp/mcp-config.json` — 16 tools for code analysis
+  - 20 auto-generated skill files in `.claude/skills/generated/` from community detection
+  - `deploy/systemd/shml-gitnexus.service` — Web UI on port 3005
+  - `deploy/systemd/shml-gitnexus-reindex.timer` — Auto-reindex every 4h
+
+- **Testing: Blast-radius regression testing** (2026-04)
+  - `scripts/testing/blast_radius.py` — Maps git diffs → affected test targets via code cluster analysis
+  - `scripts/testing/pre-commit-blast-radius` — Pre-commit hook for automatic test selection
+  - Taskfile tasks: `test`, `test:unit`, `test:integration`, `test:blast-radius`, `test:contracts`, `test:security`
+
+- **Knowledge: Research discovery pipeline** (2026-04)
+  - `scripts/knowledge/research_discovery.py` — Daily arXiv + HuggingFace scan
+  - 5 tracked topics: RL/robotics, MLOps, LLM inference, vision/detection, sim-to-real
+  - Writes Obsidian-flavored markdown with wikilinks to `docs/obsidian-vault/10-Research/`
+  - `deploy/systemd/shml-research-discovery.timer` — Daily at 06:00
+
+- **Skills: Obsidian vault agent skills** (2026-04)
+  - Installed 5 obsidian-skills: `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `obsidian-cli`, `defuddle`
+  - Agents can now write vault-native markdown with wikilinks, callouts, properties
+
+- **Taskfile: Knowledge graph management tasks** (2026-04)
+  - `knowledge:status`, `knowledge:reindex`, `knowledge:serve`, `knowledge:discover`
+  - `knowledge:impact`, `knowledge:context`, `knowledge:connmap`
+
+- **Agent Service: P0-P2 ACE workflow improvements** (2026-04-09)
+  - `inference/agent-service/app/agent.py`: Tool result budgeting (`MAX_TOTAL_TOOL_RESULT_CHARS=24K`), system prompt cache split, tool concurrency (parallel/serial classification), error recovery state machine in `call_coding_model()`, Telegram notification via `_notify_task_completion()` on every task completion
+  - `inference/agent-service/app/compaction.py`: NEW — 3-tier message compaction (recent/summary/archive) to control context growth
+  - `inference/agent-service/app/skills_loader.py`: Added `max_result_chars` and `concurrency` fields to `AgentSkill` dataclass
+  - `inference/agent-service/app/scheduler.py`: Replaced duplicate `_send_telegram()` with centralized `libs/notify.py` import, fixed `parents[3]` IndexError
+  - `inference/agent-service/app/context.py`: Fixed pgvector/JSONB column mismatch — `PlaybookBullet.embedding` changed from `Vector(384)` to `JSONB` to match actual DB schema (Alembic migration never run), added defensive list/None handling in `to_context_bullet()`
+  - `inference/agent-service/app/main.py`: Added `"user_role": "elevated-developer"` to initial_state (was missing, defaulting to `viewer` which blocked all skills)
+  - `inference/agent-service/docker-compose.yml`: Added `env_file: ../../.env` for Telegram tokens, removed explicit env overrides that defaulted to empty, added 3 volume mounts for live reload
+
+### Changed
+
+- **Monitoring: Fix false "Coding Server Down" Telegram alerts** (2026-04-08)
+  - `inference/agent-service/app/scheduler.py`: Health URL changed from `http://host-gateway:8000/health` → `http://qwopus-coding:8000/health` (container has no host port mapping)
+  - `inference/agent-service/docker-compose.yml`: `LLAMA_SERVER_HEALTH_URL` default updated to match
+  - `scripts/self-healing/watchdog.sh`: `check_llama_server()` rewritten with container state pre-check and GPU-manager-idle check before alert
+  - `LESSONS_LEARNED.md`: Added "Monitoring & Watchdog Patterns" section with 5 lessons learned
+
+- **Infrastructure: Fix CI runners stuck in "Created" state** (2026-04-08)
+  - `scripts/deploy/start_all_safe.sh`: `start_devtools()` now detects and explicitly starts runner containers stuck in Docker `created` state
+
+- **Obsidian vault: robotics plan freshness** (2026-04)
+  - `docs/obsidian-vault/50-Projects/plan.md` now includes a managed "Recent Robotics Issue Sync" section seeded with issue `#50` review-ready state and related wikilinks
+
+- **ARCHITECTURE.md**: Added "Knowledge Graph & Intelligence Layer" section documenting two-layer architecture (GitNexus code intelligence + Obsidian knowledge layer + connection map infrastructure layer)
+
 - **Agent: Sprint 1 — 43-pattern audit implementation** (commit `fdad720a3`)
   - `inference/nemotron/docker-compose.yml` (T1): restored `--reasoning-format auto`, perf flags — fixes Tier-2 tool-call success
   - `inference/agent-service/app/skills.py` (P26): sort skill pool by `__name__` → stable KV cache prefix

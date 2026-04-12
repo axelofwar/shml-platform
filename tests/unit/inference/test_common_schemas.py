@@ -94,7 +94,7 @@ class TestCommonChatCompletionRequest:
     def test_custom_params(self):
         from common.schemas import ChatCompletionRequest, ChatMessage
         req = ChatCompletionRequest(
-            model="nemotron",
+            model="qwopus-coding",
             messages=[ChatMessage(role="user", content="hi")],
             temperature=0.1,
             max_tokens=100,

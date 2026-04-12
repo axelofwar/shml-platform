@@ -1,0 +1,13 @@
+[Unit]
+Description=GitNexus Reindex All SHML Repos
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=axelofwar
+Environment=HOME=/home/axelofwar
+Environment=PATH=/home/axelofwar/.nvm/versions/node/v22.22.0/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/axelofwar/.nvm/versions/node/v22.22.0/bin/gitnexus analyze /home/axelofwar/Projects/shml-platform
+ExecStart=/home/axelofwar/.nvm/versions/node/v22.22.0/bin/gitnexus analyze /home/axelofwar/Projects/shml-robotics
+ExecStart=/home/axelofwar/.nvm/versions/node/v22.22.0/bin/gitnexus analyze /home/axelofwar/Projects/shml-sba

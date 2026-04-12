@@ -68,7 +68,7 @@ Use the `shml-platform` MCP tools for ML platform operations:
 
 - **Phase 5 Training**: YOLOv8m-P2 on RTX 3090 Ti (cuda:0) - ~24GB VRAM
 - **Vision Model**: Qwen3-VL-8B on RTX 2070 (cuda:1) - ALWAYS AVAILABLE
-- **Coding Model**: Nemotron-3 8B on RTX 3090 Ti (cuda:0) - AFTER TRAINING COMPLETES
+- **Coding Model**: Qwopus-coding (Qwen3.5-27B Q4_K_M) on RTX 3090 Ti (cuda:0) - Yields to training
 
 ## GPU Index Mapping (VERIFIED)
 ```
@@ -83,15 +83,15 @@ cuda:1 = NVIDIA GeForce RTX 2070 (8GB) - Vision/Inference GPU
 | Component | Endpoint | GPU | Privacy |
 |-----------|----------|-----|---------|
 | Vision (Qwen3-VL) | localhost:8000/v1 | RTX 2070 | ✅ Local |
-| Coding (Nemotron-3) | localhost:8001/v1 | RTX 3090 Ti | ✅ Local |
+| Coding (Qwopus) | localhost:8099/v1 | RTX 3090 Ti | ✅ Local |
 | MCP Tools | localhost:8000/mcp | CPU | ✅ Local |
 | MLflow | localhost:5000 | CPU | ✅ Local |
 | Training | Ray Cluster | RTX 3090 Ti | ✅ Local |
 
 **Post-Training Activation:**
 ```bash
-# After Phase 5 completes, start Nemotron-3 on RTX 3090 Ti:
-./scripts/start_nemotron.sh  # Loads on cuda:0, serves on :8001
+# After Phase 5 completes, qwopus-coding (Qwen3.5-27B) is already running on RTX 3090 Ti
+# serving on :8010 via coding-manager (:8011)
 ```
 
 ## Usage Guidelines
@@ -123,7 +123,7 @@ This is the SHML Platform - a unified ML platform for face detection training:
 
 - **Training**: Ray Compute for distributed YOLOv8 training
 - **Tracking**: MLflow for experiment tracking and model registry
-- **Inference**: Qwen3-VL for vision, Nemotron-3 for code (both self-hosted)
+- **Inference**: Qwen3-VL for vision, Qwopus-coding (Qwen3.5-27B) for code (both self-hosted)
 - **Gateway**: Traefik for routing, OAuth2-Proxy for auth
 - **Privacy**: 100% local - no external API calls
 

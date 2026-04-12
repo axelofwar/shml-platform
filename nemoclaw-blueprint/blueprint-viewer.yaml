@@ -43,7 +43,6 @@ network:
     - mlflow-nginx
     - ray-compute-api
     - ray-head
-    - nemotron
     - qwen3-vl-api
 
 mcp:

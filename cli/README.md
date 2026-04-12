@@ -45,7 +45,7 @@ shml agent run "Add tests for user service" --stream
 
 # Quick chat (no ACE workflow)
 shml agent chat "How do I optimize this SQL query?"
-shml agent chat "Explain this error message" -m nemotron
+shml agent chat "Explain this error message" -m qwopus
 
 # Check agent service status
 shml agent status
@@ -100,7 +100,7 @@ shml platform restart ray
 
 # View service logs
 shml platform logs agent-service -f
-shml platform logs nemotron-api --lines 100
+shml platform logs coding-manager --lines 100
 ```
 
 ## Shell Aliases
@@ -162,7 +162,7 @@ Configure the CLI with environment variables:
 
 ```bash
 export SHML_AGENT_URL="http://localhost/api/agent"
-export SHML_NEMOTRON_URL="http://localhost:8010"
+export CODING_MODEL_URL="http://localhost:8010"
 export SHML_DIR="/path/to/shml-platform"
 ```
 

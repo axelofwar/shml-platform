@@ -1,14 +1,14 @@
-# Nemotron-3-Nano-30B-A3B Coding Model
+# Qwopus — Qwen3.5-27B Coding Model
 
-NVIDIA's Nemotron-3-Nano-30B-A3B via llama.cpp GGUF quantization.
+Qwen3.5-27B Q4_K_M via llama.cpp GGUF quantization.
 
 ## Quick Start
 
 ```bash
-# Download model (one-time, ~22GB)
-huggingface-cli download unsloth/Nemotron-3-Nano-30B-A3B-GGUF \
-    --include "*UD-Q4_K_XL*" \
-    --local-dir ../../data/models/nemotron-3/
+# Download model (one-time, ~16.5GB)
+huggingface-cli download Qwen/Qwen3.5-27B-GGUF \
+    --include "*Q4_K_M*" \
+    --local-dir ../../data/models/qwopus/
 
 # Start service
 docker compose up -d
@@ -30,25 +30,19 @@ curl http://localhost:8010/health
 
 | Property | Value |
 |----------|-------|
-| **Total Parameters** | 30B (3.5B active - MoE) |
-| **Architecture** | Mamba2-MoE Hybrid |
-| **Quantization** | Q4_K_XL (~22GB VRAM) |
-| **Context Window** | 32K (input), 128K effective |
-| **SWE-Bench** | 38.8% (vs Qwen2.5-Coder 25%) |
-| **LiveCodeBench** | 68.3% |
-| **AIME25** | 89.1% (reasoning) |
+| **Total Parameters** | 27B |
+| **Architecture** | Transformer (Qwen3.5) |
+| **Quantization** | Q4_K_M (~16.5GB VRAM) |
+| **Context Window** | 65536 tokens |
+| **GPU** | RTX 3090 Ti (cuda:0, 24GB) |
 
 ## GPU Strategy
 
-**Architecture (December 2025):**
-- **RTX 3090 Ti (cuda:0)**: Nemotron-3-Nano-30B-A3B - **PRIMARY CODING MODEL**
-  - Replaces Qwen2.5-Coder-32B (95% vs 90% Claude Sonnet quality)
-  - Yields to Ray training when needed
-  - 22GB VRAM usage
-- **RTX 2070 (cuda:1)**: Qwen2.5-Coder-3B - **FALLBACK** + Agentic Services
-  - 6GB VRAM for fallback coding model
-  - Can dynamically load Qwen3-VL for vision tasks
-  - Available for other inference services during agentic workflows
+**Architecture:**
+- **RTX 3090 Ti (cuda:0)**: Qwen3.5-27B Q4_K_M - **PRIMARY CODING MODEL**
+  - 16.5GB VRAM for weights, ~7.5GB headroom for 65K context KV cache
+  - Yields to Ray training when needed via coding-manager
+- **RTX 2070 (cuda:1)**: watchdog-llm (Qwen3-4B Q4_K_M) — always-on watchdog triage
 
 Before training on RTX 3090 Ti:
 ```bash
@@ -77,19 +71,15 @@ baseURL = "http://localhost:8010/v1"
 
 ### Agent Service
 
-Update `inference/coding-model/app/model_manager_simple.py`:
-```python
-CODING_MODEL_ENDPOINT = "http://qwopus-coding:8010/v1"
-```
+Update via `CODING_MODEL_URL` env var or Docker network DNS `qwopus-coding:8000`.
 
 ## Performance
 
-- **Latency**: ~50-100ms first token (Q4_K_XL on RTX 3090)
+- **Latency**: ~50-100ms first token (Q4_K_M on RTX 3090)
 - **Throughput**: ~30-50 tokens/sec
-- **Memory**: 22GB VRAM (loaded), 24GB available
+- **Memory**: ~16.5GB VRAM weights
 
 ## References
 
-- Unsloth Docs: https://docs.unsloth.ai/models/nemotron-3
-- HuggingFace GGUF: https://huggingface.co/unsloth/Nemotron-3-Nano-30B-A3B-GGUF
+- HuggingFace GGUF: https://huggingface.co/Qwen/Qwen3.5-27B-GGUF
 - llama.cpp: https://github.com/ggerganov/llama.cpp

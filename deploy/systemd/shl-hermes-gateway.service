@@ -1,0 +1,35 @@
+[Unit]
+Description=SHML Hermes AI Gateway (API server on :8642)
+Documentation=https://github.com/axelofwar/shml-platform
+After=network-online.target
+Wants=network-online.target
+# Gateway must be up before workspace tries to connect
+Before=shl-hermes-workspace.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/axelofwar/.hermes/hermes-agent
+
+# Source .hermes .env so API keys / inference URLs are available
+EnvironmentFile=-/home/axelofwar/.hermes/.env
+
+# PATH must include the venv bin dir so `hermes` resolves correctly
+Environment=HOME=/home/axelofwar
+Environment=HERMES_HOME=/home/axelofwar/.hermes
+Environment=PATH=/home/axelofwar/.hermes/hermes-agent/venv/bin:/home/axelofwar/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStartPre=-/bin/rm -f /tmp/hermes-gateway.pid
+ExecStart=/home/axelofwar/.hermes/hermes-agent/venv/bin/hermes gateway run --replace
+
+# Restart aggressively — gateway should always be up
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+# Logs go to journal (journalctl --user -u shl-hermes-gateway)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

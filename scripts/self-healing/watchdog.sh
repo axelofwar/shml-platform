@@ -113,19 +113,27 @@ export NVIDIA_VISIBLE_DEVICES="${WATCHDOG_GPU}"
 # Critical: must be running at all times
 CRITICAL_CONTAINERS=(
     "${PLATFORM_PREFIX}-traefik"
-    "global-prometheus"
-    "unified-grafana"
     "${PLATFORM_PREFIX}-redis"
     "${PLATFORM_PREFIX}-postgres"
     "${PLATFORM_PREFIX}-gitlab"
+    "${PLATFORM_PREFIX}-gitlab-postgres"   # GitLab's database — gitlab dies without it
     "fusionauth"
-    "${PLATFORM_PREFIX}-alertmanager"
-    "gpu-manager"           # GPU resource management (required for training jobs)
-    "gpu-control-proxy"     # GPU proxy layer
+    "${PLATFORM_PREFIX}-role-auth"  # RBAC middleware — its absence renders GitLab/Grafana/all dev services a 502
+    "qwopus-coding"                        # LLM coding model on RTX 3090 Ti — all AI coding depends on this
 )
 
-# Standard: tolerate brief downtime
+# Standard: tolerate brief downtime, alert when crashed but NOT when never deployed.
+# Containers that are never started on this instance produce no alerts — only
+# containers that were running and then disappeared trigger remediation.
 STANDARD_CONTAINERS=(
+    # Monitoring stack (optional — only alert if they were running and crashed)
+    "global-prometheus"                     # Global Prometheus (optional monitoring stack)
+    "unified-grafana"                       # Grafana dashboards (optional monitoring stack)
+    "${PLATFORM_PREFIX}-alertmanager"       # Alertmanager (optional — Telegram alerts are watchdog-direct)
+    # GPU management (optional — GPU yield works via direct qwopus/z-image API)
+    "gpu-manager"                           # Unified GPU manager (optional)
+    "gpu-control-proxy"                     # Docker socket proxy for gpu-manager (optional)
+    # Core platform services
     "mlflow-server"
     "mlflow-prometheus"
     "homer"
@@ -140,16 +148,7 @@ STANDARD_CONTAINERS=(
     "inference-gateway"
     "ray-head"
     "ray-compute-api"
-    "${PLATFORM_PREFIX}-infisical"
-    "${PLATFORM_PREFIX}-nessie"
-    "${PLATFORM_PREFIX}-loki"
-    "${PLATFORM_PREFIX}-embedding-service"
-    "${PLATFORM_PREFIX}-role-auth"
-    "${PLATFORM_PREFIX}-alertmanager-telegram"
-    "${PLATFORM_PREFIX}-feature-scheduler"
-    "webhook-deployer"
     "dozzle"
-    # Services present in running platform but previously untracked:
     "mlflow-api"                            # MLflow enhanced API
     "mlflow-nginx"                          # MLflow reverse proxy
     "ray-compute-ui"                        # Ray dashboard UI
@@ -160,9 +159,16 @@ STANDARD_CONTAINERS=(
     "${PLATFORM_PREFIX}-node-exporter"      # Host metrics exporter
     "dcgm-exporter"                         # GPU metrics exporter
     "postgres-backup"                       # Scheduled DB backup
-    "gitlab-postgres-backup"                # Dedicated GitLab PostgreSQL backup
     "${PLATFORM_PREFIX}-otel-collector"     # OpenTelemetry collector
     "${PLATFORM_PREFIX}-tempo"              # Distributed tracing backend
+    "${PLATFORM_PREFIX}-loki"               # Log aggregation backend
+    "${PLATFORM_PREFIX}-promtail"           # Log shipping agent
+    "coding-manager"                        # Coding model lifecycle manager
+    "${PLATFORM_PREFIX}-watchdog-admin"     # Watchdog ops dashboard
+    # Intentionally excluded (not deployed on this instance):
+    # shml-infisical, shml-nessie, shml-feature-scheduler, webhook-deployer,
+    # pii-blur-api, audio-copyright-api, gitlab-postgres-backup, shml-alertmanager-telegram
+    # Add those to WATCHDOG_EXCLUDED in .env instead.
 )
 
 # Containers with known memory-growth patterns (watch closely)
@@ -215,6 +221,34 @@ HTTP_SERVICES=(
     "audio-copyright-api|http://audio-copyright-api:8000/health|Audio Copyright API"
     "mlflow-api|http://mlflow-api:8000/health|MLflow API"
     "${PLATFORM_PREFIX}-sba-resource-portal|http://${PLATFORM_PREFIX}-sba-resource-portal:3000/|SBA Resource Portal"
+    "qwopus-coding|http://qwopus-coding:8000/health|Qwopus Coding LLM"
+    "coding-manager|http://coding-manager:8000/health|Coding Manager"
+)
+
+# ---------------------------------------------------------------------------
+# Traefik-routed endpoint probes — verifies the FULL chain:
+#   Traefik routing + auth middlewares (oauth2-proxy + role-auth) work end-to-end.
+# Format: restart_target (for alerting/context)|traefik_url|display_label
+# Expected responses: 200/302/401/403 = healthy (auth-gated = redirect to sign-in)
+#                     502/000/500     = broken  (middleware failure or upstream dead)
+# ---------------------------------------------------------------------------
+TRAEFIK_ROUTED_SERVICES=(
+    "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/gitlab/|GitLab via Traefik"
+    "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/grafana/|Grafana via Traefik"
+    "oauth2-proxy|http://shml-traefik:80/chat-ui/|Chat UI via Traefik"
+    "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/mlflow/|MLflow via Traefik"
+)
+
+# ---------------------------------------------------------------------------
+# Host systemd service health probes — services running outside Docker.
+# These are probed via host.docker.internal (requires extra_hosts in compose).
+# Format: service_name|url|display_label
+# These are ALERT-ONLY — watchdog cannot restart systemd services directly,
+# but it can dispatch Hermes and send Telegram alerts.
+# ---------------------------------------------------------------------------
+HOST_SERVICES=(
+    "shl-hermes-gateway|http://host.docker.internal:8642/health|Hermes Gateway"
+    "shl-hermes-workspace|http://host.docker.internal:3000/|Hermes Workspace UI"
 )
 
 if [[ -n "${PROTECTED_CONTAINERS:-}" ]]; then
@@ -623,7 +657,7 @@ dispatch_hermes_resolution() {
     # Uses dispatch.py (unified library) which handles Telegram + Obsidian sync.
     #
     # --network host: Hermes binary connects to localhost:8099 (agent-service
-    # published port). Docker DNS names don't work with --network host, so we 
+    # published port). Docker DNS names don't work with --network host, so we
     # resolve GitLab's bridge IP here (inside the watchdog which is on Docker
     # DNS) and pass that as GITLAB_BASE_URL to the helper container.
     local resolved_gitlab_url="${GITLAB_BASE_URL:-}"
@@ -929,6 +963,35 @@ LLAMA_DOWN_CYCLES=0
 check_llama_server() {
     local health_url="http://qwopus-coding:8000/health"
 
+    # -----------------------------------------------------------------------
+    # Container existence / state pre-check.
+    # qwopus-coding is on-demand: the GPU manager may cleanly stop it to yield
+    # GPU 0 for training, or it may simply not be deployed on this instance.
+    # Only probe the health endpoint when the container is actually running.
+    # -----------------------------------------------------------------------
+    local container_state container_exit
+    container_state=$(docker inspect --format='{{.State.Status}}' qwopus-coding 2>/dev/null) || container_state=""
+
+    if [[ -z "$container_state" ]]; then
+        # Container does not exist — not deployed on this instance; skip silently.
+        LLAMA_DOWN_CYCLES=0
+        return 0
+    fi
+
+    if [[ "$container_state" == "exited" || "$container_state" == "paused" || "$container_state" == "removing" ]]; then
+        container_exit=$(docker inspect --format='{{.State.ExitCode}}' qwopus-coding 2>/dev/null) || container_exit="1"
+        if [[ "$container_exit" == "0" ]]; then
+            # Clean stop (exit 0) — GPU manager yield or on-demand idle: no alert.
+            log "INFO: qwopus-coding cleanly stopped (exit 0) — on-demand idle or GPU yield; skipping alert"
+            LLAMA_DOWN_CYCLES=0
+            echo "$(date +%s) managed-stop" > "$LLAMA_STATE_FILE"
+            return 0
+        fi
+        # Nonzero exit with no training active — container likely crashed; fall
+        # through to the health-check path so the existing alert logic fires.
+        log "WARN: qwopus-coding exited with code ${container_exit} — treating as crash, will alert after 2 cycles"
+    fi
+
     # Probe the health endpoint (3s timeout) via Docker DNS
     local http_code
     http_code=$(curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$health_url" 2>/dev/null) || http_code="000"
@@ -963,8 +1026,7 @@ check_llama_server() {
         return 0
     fi
 
-    log "ALERT: qwopus-coding unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
-
+    # Check GPU manager BEFORE logging the alert — avoids spurious ALERT lines in logs.
     if is_gpu_managed_idle; then
         # GPU manager has intentionally paused qwopus-coding — silently skip, reset counter
         LLAMA_DOWN_CYCLES=0
@@ -973,6 +1035,8 @@ check_llama_server() {
         audit "LLAMA_GPU_MANAGER_IDLE" "qwopus-coding" "GMState=${_GPU_MANAGER_GPU0_STATE} Training=${_GPU_MANAGER_TRAINING_ACTIVE}"
         return 0
     fi
+
+    log "ALERT: qwopus-coding unreachable (HTTP ${http_code}) for ${LLAMA_DOWN_CYCLES} cycles — ${health_url}"
 
     # No training active AND server is down — alert and request Docker restart via agent
     send_alert_card \
@@ -1326,8 +1390,23 @@ check_container_health() {
 
     local status
     status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null) || {
-        return 2
+        # Container does not exist at all (never deployed on this instance).
+        # For STANDARD severity: silently skip — not deployed ≠ crashed.
+        # For CRITICAL severity: still alert (critical services must always run).
+        if [[ "$severity" == "critical" ]]; then
+            log "ALERT: Critical container ${container} does not exist (not deployed?)"
+            return 1
+        fi
+        # Standard/unset — not deployed, no alert
+        return 0
     }
+
+    if [[ -z "$status" ]]; then
+        # docker inspect succeeded but status field is empty — treat as not-running
+        [[ "$severity" == "critical" ]] || return 0
+        log "ALERT: Container ${container} has empty status"
+        return 1
+    fi
 
     if [[ "$status" != "running" ]]; then
         log "ALERT: Container ${container} is ${status}"
@@ -1391,6 +1470,198 @@ check_gitlab_application_health() {
         "GitLab endpoint \`${GITLAB_INTERNAL_HEALTH_URL}\` is not responding.\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
         "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# Auth middleware chain verification
+# Checks that all 3 Traefik middlewares required for developer access are:
+#   1. Registered with Traefik (oauth2-errors, oauth2-auth, role-auth-developer/admin)
+#   2. Their backing containers respond to direct health probes
+# This catches the failure class where containers are "healthy" but the
+# middleware is not registered — the root cause of the role-auth outage.
+# ---------------------------------------------------------------------------
+check_auth_middleware_chain() {
+    local traefik_api="http://shml-traefik:8090/api/http/middlewares"
+    local failed=0
+
+    # --- 1. Fetch Traefik middleware registry ---
+    local middleware_json
+    middleware_json=$(curl -sf --max-time 5 "$traefik_api" 2>/dev/null) || {
+        log "WARN: Cannot reach Traefik API at ${traefik_api} — skipping middleware chain check"
+        return 0
+    }
+
+    # --- 2. Verify each required middleware is registered ---
+    local required_middlewares=("oauth2-auth@docker" "role-auth-developer@docker" "role-auth-admin@docker")
+    for mw in "${required_middlewares[@]}"; do
+        if ! echo "$middleware_json" | grep -qF "\"${mw}\""; then
+            log "ALERT: Traefik middleware ${mw} is NOT registered — developer access broken"
+            audit "AUTH_MIDDLEWARE_MISSING" "$mw" "Not found in Traefik API response"
+            failed=1
+        fi
+    done
+
+    # --- 3. Direct-probe oauth2-proxy health ---
+    local oauth2_code
+    oauth2_code=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
+        "http://oauth2-proxy:4180/oauth2-proxy/ping" 2>/dev/null) || oauth2_code="000"
+    if [[ "$oauth2_code" != "200" ]]; then
+        log "ALERT: oauth2-proxy health probe returned ${oauth2_code} — middleware oauth2-auth@docker broken"
+        failed=1
+        if (( IS_PAUSED == 0 )); then
+            send_telegram_event \
+                "Auth middleware failure: oauth2-proxy" \
+                "All developer-facing services require oauth2-proxy to authenticate users" \
+                "oauth2-proxy, traefik, watchdog" \
+                "oauth2-proxy health endpoint returned HTTP ${oauth2_code} (expected 200)" \
+                "Watchdog issuing controlled restart of oauth2-proxy"
+            audit "AUTH_CHAIN_FAIL" "oauth2-proxy" "HTTP=${oauth2_code}"
+            restart_container "oauth2-proxy" "auth-middleware-chain-probe" || true
+        fi
+    fi
+
+    # --- 4. Direct-probe role-auth health ---
+    local roleauth_code
+    roleauth_code=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
+        "http://role-auth:8080/health" 2>/dev/null) || roleauth_code="000"
+    if [[ "$roleauth_code" != "200" ]]; then
+        log "ALERT: role-auth health probe returned ${roleauth_code} — middlewares role-auth-developer@docker + role-auth-admin@docker broken"
+        failed=1
+        if (( IS_PAUSED == 0 )); then
+            send_telegram_event \
+                "Auth middleware failure: role-auth" \
+                "role-auth is the final gate for all developer-facing services (GitLab, Grafana, etc.)" \
+                "${PLATFORM_PREFIX}-role-auth, traefik, watchdog" \
+                "role-auth health endpoint returned HTTP ${roleauth_code} (expected 200)" \
+                "Watchdog issuing controlled restart of role-auth"
+            audit "AUTH_CHAIN_FAIL" "${PLATFORM_PREFIX}-role-auth" "HTTP=${roleauth_code}"
+            restart_container "${PLATFORM_PREFIX}-role-auth" "auth-middleware-chain-probe" || true
+        fi
+    fi
+
+    if (( failed == 1 )); then
+        send_telegram_event \
+            "Auth middleware chain degraded" \
+            "Restore developer access to GitLab, Grafana, and all role-protected services" \
+            "traefik, oauth2-proxy, role-auth, watchdog" \
+            "One or more Traefik auth middlewares are missing or unhealthy (see above)" \
+            "Restart(s) issued. Run: docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --build"
+        create_gitlab_issue \
+            "Auth Middleware Chain Failure" \
+            "One or more Traefik auth middlewares required for developer access are not functioning.\n\nAffected middlewares: oauth2-auth@docker, role-auth-developer@docker, role-auth-admin@docker\n\nSymptoms: Services return 502 after successful login.\nFix: \`docker compose --env-file .env -f deploy/compose/docker-compose.auth.yml up -d --build\`\n\nDetected by watchdog at $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            "type::bug,priority::critical,status::todo,source::watchdog,component::infra"
+        return 1
+    fi
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Traefik-routed endpoint probes
+# Probes services through Traefik's frontend (port 80 on the Docker network).
+# This validates the FULL chain: routing rule matches + all middlewares active.
+# A 502 here means Traefik reached the middleware but the upstream or middleware
+# itself returned an error — container healthchecks would NOT catch this.
+# ---------------------------------------------------------------------------
+check_traefik_routed_services() {
+    local failed=0
+
+    for entry in "${TRAEFIK_ROUTED_SERVICES[@]}"; do
+        IFS='|' read -r restart_target probe_url label <<< "$entry"
+
+        local http_code
+        http_code=$(curl -sf --max-time 8 -o /dev/null -w "%{http_code}" \
+            "$probe_url" 2>/dev/null) || http_code="000"
+
+        # Auth-gated services redirect to sign-in (302) or return 401 — all are healthy.
+        # 502 = Traefik reached a dead middleware/upstream; 000 = Traefik itself unreachable.
+        if [[ "$http_code" =~ ^(2[0-9][0-9]|3[0-9][0-9]|401|403)$ ]]; then
+            continue
+        fi
+
+        log "TRAEFIK-PROBE: ${label} returned HTTP ${http_code} through Traefik — possible middleware failure"
+        audit "TRAEFIK_PROBE_FAIL" "$restart_target" "Code=${http_code} URL=${probe_url}"
+        failed=1
+
+        if (( IS_PAUSED == 0 )); then
+            send_telegram_event \
+                "Traefik-routed probe failed: ${label}" \
+                "Service is unreachable through the full Traefik + auth middleware stack" \
+                "${restart_target}, traefik, oauth2-proxy, role-auth" \
+                "HTTP ${http_code} probing ${probe_url} (via Traefik frontend)" \
+                "Triggering auth middleware chain check to identify the broken component"
+            # Run the auth chain check — it will identify and restart the broken component
+            check_auth_middleware_chain || true
+        fi
+    done
+
+    return "$failed"
+}
+
+# ---------------------------------------------------------------------------
+# Host systemd service probes (Hermes gateway, workspace, etc.)
+# These run outside Docker — watchdog reaches them via host.docker.internal.
+# Alert-only: watchdog cannot restart systemd services, but it dispatches
+# Hermes and sends Telegram alerts.
+# ---------------------------------------------------------------------------
+check_host_services() {
+    local failed=0
+
+    for entry in "${HOST_SERVICES[@]}"; do
+        IFS='|' read -r svc_name probe_url label <<< "$entry"
+
+        local http_code
+        http_code=$(curl -sf --max-time 8 -o /dev/null -w "%{http_code}" \
+            "$probe_url" 2>/dev/null) || http_code="000"
+
+        if [[ "$http_code" =~ ^(2[0-9][0-9]|3[0-9][0-9]|401|403)$ ]]; then
+            continue
+        fi
+
+        log "HOST-PROBE: ${label} (${svc_name}) returned HTTP ${http_code}"
+        audit "HOST_PROBE_FAIL" "$svc_name" "Code=${http_code} URL=${probe_url}"
+        failed=1
+
+        if (( IS_PAUSED == 0 )); then
+            # Attempt host-side systemd restart via nsenter into PID 1's namespaces.
+            # The watchdog container has /var/run/docker.sock but NOT --pid=host,
+            # so we spawn a privileged helper that can nsenter the host PID namespace.
+            local restart_ok=0
+            local host_uid
+            host_uid=$(stat -c '%u' "${WATCHDOG_HOST_PLATFORM_ROOT}" 2>/dev/null) || host_uid=""
+            if [[ -n "$host_uid" ]]; then
+                log "HOST-REMEDIATE: Attempting systemctl --user restart ${svc_name} via nsenter (uid=${host_uid})"
+                if docker run --rm --privileged --pid=host --network=none \
+                    alpine:3.19 nsenter -t 1 -m -u -i -n -- \
+                    su - "#${host_uid}" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/${host_uid} systemctl --user restart ${svc_name}" 2>&1; then
+                    log "HOST-REMEDIATE: Successfully restarted ${svc_name}"
+                    audit "HOST_RESTART_OK" "$svc_name" "nsenter restart succeeded"
+                    restart_ok=1
+                else
+                    log "HOST-REMEDIATE: Failed to restart ${svc_name} via nsenter"
+                    audit "HOST_RESTART_FAIL" "$svc_name" "nsenter restart failed"
+                fi
+            fi
+
+            local action_text
+            if (( restart_ok )); then
+                action_text="Auto-restarted via nsenter: systemctl --user restart ${svc_name}"
+            else
+                action_text="Auto-restart failed. Manual: systemctl --user restart ${svc_name}"
+            fi
+
+            send_alert_card \
+                --container "$svc_name" \
+                --severity "warning" \
+                --event "host_service_down" \
+                --problem "Systemd service ${svc_name} is not responding (HTTP ${http_code})" \
+                --action "$action_text" \
+                --agent "shml-watchdog" \
+                --outcome "$(if (( restart_ok )); then echo '✅ Restarted'; else echo '❌ Needs manual intervention'; fi)"
+        fi
+    done
+
+    return "$failed"
 }
 
 prefer_managed_stack_restart() {
@@ -2380,11 +2651,31 @@ while true; do
         fi
     fi
 
+    # --- Auth middleware chain check (every 2 cycles) ---
+    # Verifies oauth2-proxy + role-auth are healthy AND registered with Traefik.
+    # This is the check that would have caught the role-auth outage immediately.
+    if (( cycle % 2 == 0 )); then
+        check_auth_middleware_chain || action_count=$((action_count + 1))
+    fi
+
+    # --- Traefik-routed endpoint probes (every 3 cycles) ---
+    # Probes services through the full Traefik+auth stack (not direct container).
+    # A 502 here means something in the chain is broken even if containers look healthy.
+    if (( cycle % 3 == 0 )); then
+        check_traefik_routed_services || action_count=$((action_count + 1))
+    fi
+
     # --- HTTP endpoint probes for ALL services (every 2 cycles) ---
     # Catches cases where containers are "running" but the app is wedged
     # (crashed, OOM'd internally, DB connection lost, etc.)
     if (( cycle % 2 == 0 )); then
         check_http_services || action_count=$((action_count + 1))
+    fi
+
+    # --- Host systemd service probes (every 3 cycles ≈ 3 min) ---
+    # Checks Hermes gateway, workspace, and other non-Docker services.
+    if (( cycle % 3 == 0 )); then
+        check_host_services || action_count=$((action_count + 1))
     fi
 
     # --- Full state discovery (every 30 cycles ≈ 30 min) ---

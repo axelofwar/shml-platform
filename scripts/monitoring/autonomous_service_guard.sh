@@ -242,6 +242,16 @@ check_status() {
     fi
   fi
 
+  # Hermes Gateway (host process on :8642)
+  if ! curl -sf --max-time 3 http://127.0.0.1:8642/health >/dev/null 2>&1; then
+    failures+=("hermes:gateway")
+  fi
+
+  # Hermes Workspace (host process on :3000)
+  if ! curl -sf --max-time 3 http://127.0.0.1:3000/hermes-workspace/ -o /dev/null 2>&1; then
+    failures+=("hermes:workspace")
+  fi
+
   if [[ ${#failures[@]} -eq 0 ]]; then
     log "OK" "All guard checks passed."
     return 0
@@ -310,6 +320,16 @@ remediate_failures() {
       chatui:basepath)
         rebuild_chat_ui || true
         ;;
+      hermes:gateway)
+        log "INFO" "Restarting shl-hermes-gateway via systemctl --user"
+        systemctl --user restart shl-hermes-gateway.service 2>/dev/null || \
+          bash /home/axelofwar/Projects/shml-platform/scripts/hermes-gateway.sh restart || true
+        ;;
+      hermes:workspace)
+        log "INFO" "Restarting shl-hermes-workspace via systemctl --user"
+        systemctl --user restart shl-hermes-workspace.service 2>/dev/null || \
+          bash /home/axelofwar/Projects/shml-platform/scripts/hermes-workspace.sh restart || true
+        ;;
       *)
         log "WARN" "No remediation mapping for $failure"
         ;;
@@ -332,7 +352,7 @@ run_once() {
   cat "$output_file"
 
   if [[ "$MODE" == "remediate" || "$MODE" == "watch" ]]; then
-    mapfile -t failure_lines < <(grep -E '^(container|db|redis|homer|chatui|gitlab):' "$output_file" || true)
+    mapfile -t failure_lines < <(grep -E '^(container|db|redis|homer|chatui|gitlab|hermes):' "$output_file" || true)
     remediate_failures "${failure_lines[@]}"
     check_status || true
   fi

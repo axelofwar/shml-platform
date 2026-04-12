@@ -1,0 +1,40 @@
+[Unit]
+Description=SHML Hermes Workspace (Vite dev UI on :3000 → /hermes-workspace/)
+Documentation=https://github.com/axelofwar/shml-platform
+After=network-online.target shl-hermes-gateway.service
+Wants=network-online.target
+Requires=shl-hermes-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/axelofwar/Projects/hermes-workspace
+
+# Source platform .env for HERMES_API_URL, HERMES_WORKSPACE_BASE, etc.
+EnvironmentFile=-/home/axelofwar/Projects/hermes-workspace/.env
+
+Environment=HOME=/home/axelofwar
+Environment=PORT=3000
+Environment=VITE_BASE=/hermes-workspace/
+Environment=VITE_PRE_CONNECTED=true
+# Node / pnpm path
+Environment=PATH=/home/axelofwar/.nvm/versions/node/v22.22.0/bin:/home/axelofwar/.local/share/pnpm:/home/axelofwar/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStartPre=-/bin/bash -c "fuser -k 3000/tcp 2>/dev/null; rm -f /tmp/hermes-workspace.pid; true"
+ExecStart=/home/axelofwar/.nvm/versions/node/v22.22.0/bin/pnpm dev
+
+# Kill the full process group (pnpm spawns worker children)
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# Restart on any non-zero exit — Vite HMR reloads count as success
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=90
+StartLimitBurst=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

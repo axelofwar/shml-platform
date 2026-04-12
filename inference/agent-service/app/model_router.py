@@ -39,11 +39,11 @@ class TrainingStatus:
     """Check training status from coding-model-manager (GPU yield lifecycle)"""
 
     QWEN_MANAGER_URLS = [
-        os.getenv("CODING_MANAGER_URL", "http://nemotron-manager:8000/status"),
+        os.getenv("CODING_MANAGER_URL", "http://coding-manager:8000/status"),
         "http://localhost:8021/status",
     ]
-    # Legacy alias kept for backwards compatibility
-    NEMOTRON_URLS = QWEN_MANAGER_URLS
+    # Legacy alias — remove once all callers updated
+    CODING_MANAGER_URLS = QWEN_MANAGER_URLS
 
     @classmethod
     def is_training_active(cls) -> bool:
@@ -406,13 +406,13 @@ class ModelRouter:
         task_type = self.detect_task_type(prompt, attachments)
 
         # Check for multi-modal indicators
-        multi_model_patterns = [
+        multi_model_patterns: list[tuple[str, Literal["sequential", "parallel"]]] = [
             (r"\band\b", "sequential"),  # "analyze image and generate code"
             (r"\balso\b", "parallel"),  # "describe image also create..."
             (r"\bthen\b", "sequential"),  # "analyze then generate"
         ]
 
-        strategy = "sequential"
+        strategy: Literal["sequential", "parallel"] = "sequential"
         for pattern, strat in multi_model_patterns:
             if re.search(pattern, prompt.lower()):
                 strategy = strat

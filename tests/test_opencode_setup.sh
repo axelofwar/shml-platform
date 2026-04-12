@@ -47,38 +47,38 @@ else
 fi
 echo
 
-# 3. Check Nemotron service
-echo "3️⃣  Checking Nemotron service..."
-NEMOTRON_URL="http://localhost:8010/health"
+# 3. Check Qwopus coding service
+echo "3️⃣  Checking Qwopus coding service..."
+CODING_URL="http://localhost:8010/health"
 
-if curl -s -f "$NEMOTRON_URL" &> /dev/null; then
-    echo "✅ Nemotron service healthy (port 8010)"
+if curl -s -f "$CODING_URL" &> /dev/null; then
+    echo "✅ Qwopus coding service healthy (port 8010)"
 else
-    echo "❌ Nemotron service not responding"
-    echo "   URL: $NEMOTRON_URL"
+    echo "❌ Qwopus coding service not responding"
+    echo "   URL: $CODING_URL"
     echo "   Run: ./start_all_safe.sh start inference"
     exit 1
 fi
 echo
 
-# 4. Check Nemotron inference
-echo "4️⃣  Testing Nemotron inference..."
+# 4. Test Qwopus inference
+echo "4️⃣  Testing Qwopus inference..."
 INFERENCE_TEST=$(curl -s http://localhost:8010/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "nemotron-coding",
+        "model": "qwopus-coding",
         "messages": [{"role": "user", "content": "Say hello in one word"}],
         "max_tokens": 10,
         "temperature": 0.6
     }' | jq -r '.choices[0].message.content' 2>/dev/null || echo "ERROR")
 
 if [ "$INFERENCE_TEST" = "ERROR" ]; then
-    echo "❌ Nemotron inference failed"
-    echo "   Check: docker logs nemotron-coding"
+    echo "❌ Qwopus inference failed"
+    echo "   Check: docker logs qwopus-coding"
     exit 1
 fi
 
-echo "✅ Nemotron inference working"
+echo "✅ Qwopus inference working"
 echo "   Response: $INFERENCE_TEST"
 echo
 
@@ -110,10 +110,10 @@ echo
 
 # 8. OpenCode config verification
 echo "8️⃣  OpenCode configuration:"
-if grep -q "nemotron-coding" "$CONFIG_DIR/config.toml" 2>/dev/null; then
-    echo "✅ Nemotron provider configured"
+if grep -q "qwopus-coding" "$CONFIG_DIR/config.toml" 2>/dev/null; then
+    echo "✅ Qwopus provider configured"
 else
-    echo "❌ Nemotron provider not found in config"
+    echo "❌ Qwopus provider not found in config"
 fi
 
 if grep -q "qwen3-vl" "$CONFIG_DIR/config.toml" 2>/dev/null; then

@@ -310,3 +310,157 @@ and compare method benchmarks — without leaving the agent loop.
 - "What papers cite QJL (arXiv:2405.07987)? Are any directly applicable to 8B inference on 8GB VRAM?"
 
 Combine with `brave-search` for blog posts and `prometheus` for current platform metrics to build full research → experiment → deploy loops inside the agent.
+
+---
+
+## Coding Model History
+
+| Model | Period | Notes |
+|-------|--------|-------|
+| **Nemotron-3-Nano-30B-A3B** (GGUF Q4_K_XL, ~22.8GB) | 2026-03 | Evaluated as primary coding model on RTX 3090 Ti. `nemotron_h_moe` architecture: 52 layers, only 6 hybrid attention (Mamba2 SSM otherwise). KV cache very small vs pure transformers. Replaced by Qwen3.5-27B Q4_K_M for better context handling, simpler llama.cpp serving, and stronger coding benchmarks. |
+| **Qwen3.5-27B Q4_K_M** (qwopus-coding, ~16.5GB) | 2026-04+ | Current primary coding model on RTX 3090 Ti (cuda:0). Served via `coding-manager` (port 8011) + llama.cpp (port 8010). OpenAI-compatible. Better tool calling than Nemotron. |
+
+---
+
+## Monitoring & Watchdog Patterns (2026-04)
+
+### Two Independent Health-Monitor Paths for Inference Containers
+**Problem:** After fixing `watchdog.sh` to suppress false alerts for qwopus-coding (when GPU manager has it intentionally stopped), Telegram alerts continued every 5 minutes with the exact same text.
+
+**Root cause:** The platform has **two completely independent** health-check systems for the coding server:
+1. `scripts/self-healing/watchdog.sh` → `check_llama_server()` — runs inside the watchdog container, uses Docker DNS (`http://qwopus-coding:8000/health`)
+2. `inference/agent-service/app/scheduler.py` → `_job_llama_server_watchdog()` — runs inside the agent-service container on a 5-minute async scheduler
+
+Fixing one does not fix the other. Always audit all monitoring paths when silencing alerts.
+
+**Lesson:** Before declaring an alert "fixed," search the full repo for the exact alert text:
+```bash
+grep -rn "exact alert text" --include='*.py' --include='*.sh'
+```
+
+### Stale Health-Check URLs After Containerization
+**Problem:** The scheduler probed `http://host-gateway:8000/health` (a Docker `extra_hosts` alias for the host bridge IP). This URL was correct when Qwen3.5 ran as a bare host process. After containerizing as `qwopus-coding`, the container has **no host port mapping** — all traffic routes via Docker DNS.
+
+**Fix:** Change default from `http://host-gateway:8000/health` → `http://qwopus-coding:8000/health` in both:
+- `scheduler.py` default constant
+- `docker-compose.yml` `LLAMA_SERVER_HEALTH_URL` env var
+
+**Lesson:** When migrating a service from host process → Docker container, grep all compose files and application code for the old hostname/port. Both the Python default AND the compose env var override must be updated.
+
+### GPU-Manager-Aware Alert Suppression Pattern
+**Problem:** The scheduler checked only Ray jobs API to decide if training was active. But the GPU manager (`http://gpu-manager:8000/health`) is the authoritative source for GPU state — it knows about training, transitioning, and intentional stops that Ray may not reflect.
+
+**Solution applied (scheduler.py `_job_llama_server_watchdog()`):**
+```
+1. Probe qwopus-coding health → if 200 OK → return (no alert)
+2. Query GPU manager → if training_active=true OR gpu_0_state in (training, transitioning) → return
+3. Query Ray jobs API → if any RUNNING/PENDING jobs → return
+4. Alert (server down in inference mode, no training active)
+```
+
+This mirrors the 3-layer check already in `watchdog.sh` (`is_gpu_managed_idle()` + `is_training_active()`).
+
+**Lesson:** The GPU manager is the single source of truth for "is this GPU intentionally not running inference." Always check it before alerting on inference container health.
+
+### Docker Runner Containers Stuck in "Created" State
+**Problem:** `start_all_safe.sh start devtools` creates GitLab runner containers via `docker compose up -d`, but the runners stay in Docker `created` state — never transitioning to `running`. GitLab API shows them as `online=True` (stale registration), but no CI jobs process.
+
+**Root cause:** The runners depend on GitLab health, which resolves after compose returns. The entrypoint script (`gitlab_runner_entrypoint.sh`) registers then runs — but the container never starts.
+
+**Fix:** Added `created` state detection in `start_devtools()`:
+```bash
+runner_actual_status=$(docker inspect --format='{{.State.Status}}' "$runner_container" 2>/dev/null)
+if [[ "$runner_actual_status" == "created" ]]; then
+    docker start "$runner_container"
+fi
+```
+
+**Lesson:** `docker compose up -d` does not guarantee containers reach `running` state. Always verify with `docker inspect --format='{{.State.Status}}'` and explicitly `docker start` containers stuck in `created`.
+
+### Watchdog Container Pre-Check Pattern
+**Problem:** `check_llama_server()` in `watchdog.sh` was sending Telegram alerts and creating GitLab issues when qwopus-coding was intentionally stopped by the GPU manager.
+
+**Fix pattern (apply to any container health check):**
+```bash
+# 1. Container doesn't exist → skip silently
+docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || return 0
+# 2. Container exited with code 0 → managed stop → skip
+if [[ "$exit_code" == "0" ]]; then return 0; fi
+# 3. Check GPU manager state BEFORE logging ALERT
+is_gpu_managed_idle && return 0
+# 4. Only now: alert
+```
+
+**Lesson:** Order matters. The GPU-managed-idle check must happen **before** the ALERT log entry, not after. Otherwise, log aggregators (Loki/Grafana) show phantom alerts that were actually suppressed downstream.
+
+## Agent Service — ACE Workflow Patterns (2026-04)
+
+### pgvector Column Type vs Actual DB Schema
+**Problem:** `PlaybookBullet.embedding = Column(Vector(384))` in SQLAlchemy ORM, but PostgreSQL column was actually `JSONB` — the Alembic migration `001_pgvector_embedding.py` was never run.
+
+**Symptom:** `'list' object has no attribute 'split'` in pgvector's `Vector._from_db()`.
+
+**Root cause chain:** asyncpg auto-deserializes JSONB → Python list → pgvector's SQLAlchemy `result_processor` calls `from_text(list)` → `str.split(',')` on a list → `AttributeError`.
+
+**Fix:** Changed column declaration to `Column(JSONB)` to match reality. Added defensive handling in `to_context_bullet()` for list/None embeddings.
+
+**Lesson:** Always verify actual DB column types with a raw query (`SELECT column_name, data_type FROM information_schema.columns`) before trusting ORM declarations. If a migration exists but was never run, the ORM and DB will disagree silently until runtime.
+
+### user_role Must Be in initial_state
+**Problem:** The ACE generator node logged `Role 'viewer' blocked skills: ['ShellSkill', 'GitLabSkill', ...]` even though the service should have elevated permissions.
+
+**Root cause:** `initial_state` in `main.py` never set `user_role`, so `state.get("user_role", "viewer")` always defaulted to `viewer`.
+
+**Lesson:** When adding RBAC to a state machine, grep all `state.get("user_role"` call sites to ensure the default matches operational intent. Defensive defaults (like `"viewer"`) are great for security but must be overridden at the entry point.
+
+### Docker env_file vs environment: Precedence
+**Problem:** `TELEGRAM_BOT_TOKEN` was empty inside the container despite being set in `../../.env`.
+
+**Root cause:** `docker-compose.yml` had both `env_file: ../../.env` AND explicit `environment: TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}`. The `environment:` section takes precedence over `env_file`, and `${TELEGRAM_BOT_TOKEN:-}` resolved to empty in the shell (var not exported).
+
+**Fix:** Removed explicit `TELEGRAM_*` declarations from `environment:` and relied on `env_file` alone.
+
+**Lesson:** Docker Compose `environment:` always wins over `env_file:`. If you use `env_file`, don't redeclare the same vars in `environment:` with `${VAR:-}` defaults — the default will override the env_file value.
+
+### Volume Mounts Don't Hot-Reload Python Modules
+**Problem:** Edited `agent.py` on host (via volume mount `./app:/app/app:ro`), expected the running container to use the new code — but it didn't.
+
+**Root cause:** Python imports modules once at startup. The volume mount makes the file visible inside the container, but the Python process has already loaded the old version into memory. A container restart is required.
+
+**Lesson:** Volume mounts for live reload only work with frameworks that have file watchers (uvicorn `--reload`, Next.js dev, etc.). For standard Python services, restart the container after edits.
+
+### Watchdog Restart Loops During Benchmarking (April 2026)
+**Problem:** Stopping `qwopus-coding` to free GPU VRAM for a Carnice-27B benchmark caused the watchdog to immediately restart qwopus — consuming all VRAM before the benchmark could load.
+
+**Root cause:** The container had `restart: unless-stopped` and the watchdog viewed it as CRITICAL (always running). `docker stop` triggers restart policy, and the watchdog's 60s cycle also restarts it.
+
+**Fix:** Created `scripts/self-healing/watchdog-ctl.sh` — a host-side helper:
+- `watchdog-ctl pause 30m` — pause auto-remediation with auto-resume
+- `watchdog-ctl resume` — manually resume
+- The watchdog already had `IS_PAUSED` + control file mechanism; the script just writes to it via `docker exec`
+
+**Lesson:** Always pause the watchdog before planned maintenance: `watchdog-ctl pause 1h`. Use `docker update --restart=no` before `docker stop` to prevent Docker's own restart policy from racing the watchdog.
+
+### Carnice-27B Benchmark Results (April 2026)
+**Setup:** Carnice-27B Q4_K_M (16GB GGUF) via `ghcr.io/ggml-org/llama.cpp:server-cuda` on RTX 3090 Ti.
+
+**Results:**
+- Throughput: ~39 tok/s (vs qwopus ~50-60 tok/s for AWQ)
+- Reasoning: PASS — uses `reasoning_content` field (thinking model)
+- Tool calling: Partial — produces tool-like JSON but not reliable OpenAI function calling
+- Code generation: Needs `max_tokens≥2048` — model consumes tokens in reasoning, leaving `content` empty at low limits
+- Long context: Successfully handled 2000+ token context windows
+
+**Decision:** Keep qwopus-coding (Qwen3.5-27B AWQ via vLLM) as production coding LLM. Carnice is a viable backup for offline/GGUF-only scenarios.
+
+**Lesson:** GGUF Q4 models via llama.cpp are ~30-40% slower than AWQ models via vLLM for the same parameter count. Thinking models need generous `max_tokens` to produce visible output. No prebuilt CUDA llama.cpp binary exists for Linux x86 — use the Docker image `ghcr.io/ggml-org/llama.cpp:server-cuda`.
+
+### Host Systemd Services Invisible to Docker Watchdog (April 2026)
+**Problem:** Hermes Gateway and Hermes Workspace run as systemd user services outside Docker. The watchdog (running inside a container) couldn't see or probe them.
+
+**Fix:**
+1. Added `extra_hosts: ["host.docker.internal:host-gateway"]` to `docker-compose.watchdog.yml`
+2. Added `HOST_SERVICES` array in `watchdog.sh` with HTTP probes via `host.docker.internal`
+3. Added `check_host_services()` with nsenter-based auto-restart (spawns privileged helper container)
+
+**Lesson:** Docker containers can reach host services via `host.docker.internal` with `extra_hosts` in compose. For remediation, `nsenter -t 1 -m -u -i -n` into PID 1 allows running `systemctl --user restart` from inside a privileged container.

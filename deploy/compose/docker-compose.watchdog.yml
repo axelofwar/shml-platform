@@ -71,6 +71,8 @@ services:
       - watchdog-logs:/var/log/watchdog
     networks:
       - platform
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: [ "CMD-SHELL", "test -f /var/log/watchdog/watchdog.log" ]
       interval: 60s

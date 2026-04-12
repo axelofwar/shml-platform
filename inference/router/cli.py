@@ -29,6 +29,28 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from rich.console import Console
+from rich.markdown import Markdown as RichMarkdown
+from rich.panel import Panel
+from rich.theme import Theme
+
+_theme = Theme({"info": "cyan", "warning": "yellow", "error": "red bold"})
+console = Console(theme=_theme)
+
+
+def render_response(text: str, *, title: str = "Hermes", model: str = "") -> None:
+    """Render an LLM response with rich markdown inside a bordered panel."""
+    subtitle = model if model else None
+    panel = Panel(
+        RichMarkdown(text),
+        title=f"[bold cyan]\u2726 {title}[/]",
+        subtitle=subtitle,
+        border_style="cyan",
+        padding=(1, 2),
+        expand=True,
+    )
+    console.print(panel)
+
 
 def load_env():
     """Load environment from .env file in project root."""
@@ -119,18 +141,18 @@ async def test_providers():
         except:
             qwen_status = "❌ Not reachable"
 
-        # Nemotron
+        # Qwopus-coding
         try:
-            r = await client.get("http://localhost:8101/health")
-            nemotron_status = (
+            r = await client.get("http://localhost:8010/health")
+            coding_status = (
                 "✅ Running" if r.status_code == 200 else f"⚠️ Status {r.status_code}"
             )
         except:
-            nemotron_status = "❌ Not reachable"
+            coding_status = "❌ Not reachable"
 
     print(f"\n🖥️ Local Services:")
     print(f"  Qwen3-VL (8100): {qwen_status}")
-    print(f"  Nemotron (8101): {nemotron_status}")
+    print(f"  Qwopus-Coding (8010): {coding_status}")
 
     # Initialize router and check
     print(f"\n🚀 Initializing Router...")
@@ -234,15 +256,15 @@ async def ask(prompt: str, model: Optional[str] = None, stream: bool = False):
     print("-" * 40)
 
     if stream:
+        full_response = ""
         async for chunk in router.complete_stream(request):
-            print(chunk.content, end="", flush=True)
-        print()
+            full_response += chunk.content
+        render_response(full_response, model=model or "auto")
     else:
         response = await router.complete(request)
-        print(response.content)
-        print("-" * 40)
-        print(
-            f"📊 Model: {response.model} | Tokens: {response.usage.get('total_tokens', 'N/A')}"
+        render_response(
+            response.content,
+            model=f"{response.model} | Tokens: {response.usage.get('total_tokens', 'N/A')}",
         )
 
 
@@ -296,12 +318,10 @@ async def chat():
             stream=True,
         )
 
-        print("\n🤖 Assistant: ", end="", flush=True)
         full_response = ""
         async for chunk in router.complete_stream(request):
-            print(chunk.content, end="", flush=True)
             full_response += chunk.content
-        print()
+        render_response(full_response, model=current_model or "auto")
 
         messages.append(Message(role="assistant", content=full_response))
 
@@ -358,8 +378,7 @@ Be concise but thorough."""
     )
 
     plan_response = await router.complete(plan_request)
-    print(f"\n{plan_response.content}")
-    print(f"\n📊 Planning cost: ${plan_response.cost:.6f}")
+    render_response(plan_response.content, title="Hermes — Plan", model=f"gemini | ${plan_response.cost:.6f}")
 
     if not execute:
         print("\n✅ Plan complete. Use --execute to run with local models.")
@@ -380,20 +399,20 @@ Provide working code and clear instructions. Be thorough and practical."""
 
     exec_request = CompletionRequest(
         messages=[Message(role="user", content=execution_prompt)],
-        model="nemotron-mini-4b",
+        model="qwopus-coding",
         temperature=0.7,
         max_tokens=4096,
     )
 
-    print("\n🤖 Implementation:\n")
+    exec_response = ""
     async for chunk in router.complete_stream(exec_request):
-        print(chunk.content, end="", flush=True)
-    print("\n")
+        exec_response += chunk.content
+    render_response(exec_response, title="Hermes — Execute", model="qwopus-coding (local)")
 
-    print("=" * 50)
-    print("✅ Hybrid reasoning complete!")
-    print(f"   Planning: gemini-2.0-flash-exp (${plan_response.cost:.6f})")
-    print(f"   Execution: nemotron-mini-4b (FREE - local)")
+    console.print()
+    console.rule("[bold green]Hybrid Reasoning Complete[/]")
+    console.print(f"  Planning:  gemini-2.0-flash-exp (${plan_response.cost:.6f})")
+    console.print(f"  Execution: qwopus-coding (FREE - local)")
 
 
 async def quick(prompt: str):
@@ -411,9 +430,10 @@ async def quick(prompt: str):
         stream=True,
     )
 
+    full_response = ""
     async for chunk in router.complete_stream(request):
-        print(chunk.content, end="", flush=True)
-    print()
+        full_response += chunk.content
+    render_response(full_response)
 
 
 async def execute(

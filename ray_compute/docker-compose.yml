@@ -22,15 +22,7 @@ services:
     restart: unless-stopped
     shm_size: 2gb
     command: >
-      ray start --head
-      --port=6379
-      --dashboard-host=0.0.0.0
-      --dashboard-port=8265
-      --metrics-export-port=8080
-      --num-cpus=8
-      --num-gpus=${RAY_NUM_GPUS:-1}
-      --object-store-memory=536870912
-      --block
+      ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 --metrics-export-port=8080 --num-cpus=8 --num-gpus=${RAY_NUM_GPUS:-1} --object-store-memory=536870912 --block
     environment:
       - RAY_memory_monitor_refresh_ms=0
       - CUDA_VISIBLE_DEVICES=${RAY_VISIBLE_GPUS:-0}
@@ -81,31 +73,31 @@ services:
       # Grafana organization ID (default: 1)
       - RAY_GRAFANA_ORG_ID=1
     volumes:
-      - ray-data:/tmp/ray          # K8s: PVC ray-data (10Gi)
-      - job-workspaces:/opt/ray/job_workspaces  # K8s: PVC job-workspaces (50Gi)
+      - ray-data:/tmp/ray # K8s: PVC ray-data (10Gi)
+      - job-workspaces:/opt/ray/job_workspaces # K8s: PVC job-workspaces (50Gi)
       - mlflow-artifacts:/mlflow/artifacts
       # nvidia-mps volume removed - MPS disabled for Ray containers
     networks:
       - platform
     expose:
-      - "6379"    # Ray internal
-      - "8265"    # Dashboard (via Traefik /ray)
-      - "8080"    # Metrics
-      - "10001"   # Client port
+      - "6379" # Ray internal
+      - "8265" # Dashboard (via Traefik /ray)
+      - "8080" # Metrics
+      - "10001" # Client port
     deploy:
       resources:
         limits:
           cpus: '8.0'
-          memory: 48G  # Increased from 24G - OOM at epoch 14 with 1280px images
+          memory: 48G # Increased from 24G - OOM at epoch 14 with 1280px images
         reservations:
           cpus: '2.0'
-          memory: 16G  # Increased baseline reservation
+          memory: 16G # Increased baseline reservation
           devices:
             - driver: nvidia
-              device_ids: ['${RAY_PRIMARY_GPU_ID:-0}']
-              capabilities: [gpu]
+              device_ids: [ '${RAY_PRIMARY_GPU_ID:-0}' ]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD", "ray", "status"]
+      test: [ "CMD", "ray", "status" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -177,9 +169,9 @@ services:
       - DEBUG=false
       - LOG_LEVEL=INFO
     volumes:
-      - ray-api-logs:/app/logs        # K8s: PVC ray-api-logs (5Gi)
-      - ray-artifacts:/app/artifacts  # K8s: PVC ray-artifacts (20Gi)
-      - job-workspaces:/opt/ray/job_workspaces  # shared with ray-head
+      - ray-api-logs:/app/logs # K8s: PVC ray-api-logs (5Gi)
+      - ray-artifacts:/app/artifacts # K8s: PVC ray-artifacts (20Gi)
+      - job-workspaces:/opt/ray/job_workspaces # shared with ray-head
       - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - shared_db_password
@@ -191,7 +183,7 @@ services:
       ray-head:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -266,7 +258,7 @@ services:
     depends_on:
       - ray-head
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -306,7 +298,7 @@ services:
       ray-compute-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/ray/ui"]
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/ray/ui" ]
       interval: 30s
       timeout: 10s
       retries: 3

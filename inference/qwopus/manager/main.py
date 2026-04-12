@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 import docker
+import docker.errors
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-NEMOTRON_CONTAINER = os.getenv("NEMOTRON_CONTAINER", "qwopus-coding")
+CODING_CONTAINER = os.getenv("CODING_CONTAINER", "qwopus-coding")
 GPU_INDEX = int(os.getenv("GPU_INDEX", "0"))  # RTX 3090 Ti
 YIELD_WAIT_SECONDS = int(os.getenv("YIELD_WAIT_SECONDS", "5"))
 
@@ -94,16 +95,16 @@ class HealthResponse(BaseModel):
     """Health check response."""
 
     status: str
-    nemotron_status: str
+    coding_model_status: str
     manager_uptime_seconds: float
 
 
 class StatusResponse(BaseModel):
     """Detailed status response."""
 
-    nemotron_container: str
-    nemotron_status: str
-    nemotron_health: Optional[str]
+    coding_container: str
+    coding_model_status: str
+    coding_model_health: Optional[str]
     gpu_index: int
     gpu_memory_used_mb: Optional[int]
     gpu_memory_total_mb: Optional[int]
@@ -187,10 +188,10 @@ async def start_training(request: TrainingStartRequest):
     client = get_docker_client()
 
     try:
-        container = client.containers.get(NEMOTRON_CONTAINER)
+        container = client.containers.get(CODING_CONTAINER)
 
         if container.status == "running":
-            logger.info(f"Stopping {NEMOTRON_CONTAINER}...")
+            logger.info(f"Stopping {CODING_CONTAINER}...")
             container.stop(timeout=30)
 
             # Wait for GPU memory to be freed
@@ -241,7 +242,7 @@ async def start_training(request: TrainingStartRequest):
             )
         else:
             logger.info(
-                f"{NEMOTRON_CONTAINER} already stopped (status: {container.status})"
+                f"{CODING_CONTAINER} already stopped (status: {container.status})"
             )
             gpu_after = get_gpu_memory(GPU_INDEX)
             return TrainingStartResponse(
@@ -255,7 +256,7 @@ async def start_training(request: TrainingStartRequest):
             )
 
     except docker.errors.NotFound:
-        logger.warning(f"Container {NEMOTRON_CONTAINER} not found")
+        logger.warning(f"Container {CODING_CONTAINER} not found")
         gpu_after = get_gpu_memory(GPU_INDEX)
         return TrainingStartResponse(
             status="ready",
@@ -291,10 +292,10 @@ async def end_training(request: TrainingEndRequest):
     client = get_docker_client()
 
     try:
-        container = client.containers.get(NEMOTRON_CONTAINER)
+        container = client.containers.get(CODING_CONTAINER)
 
         if container.status != "running":
-            logger.info(f"Starting {NEMOTRON_CONTAINER}...")
+            logger.info(f"Starting {CODING_CONTAINER}...")
             container.start()
 
             # Wait for health check
@@ -307,7 +308,7 @@ async def end_training(request: TrainingEndRequest):
                         container.attrs.get("State", {}).get("Health", {}).get("Status")
                     )
                     if health == "healthy":
-                        logger.info(f"{NEMOTRON_CONTAINER} is healthy")
+                        logger.info(f"{CODING_CONTAINER} is healthy")
                         return TrainingEndResponse(
                             status="started",
                             job_id=request.job_id,
@@ -333,7 +334,7 @@ async def end_training(request: TrainingEndRequest):
         return TrainingEndResponse(
             status="error",
             job_id=request.job_id,
-            message=f"Container {NEMOTRON_CONTAINER} not found",
+            message=f"Container {CODING_CONTAINER} not found",
             timestamp=datetime.now().isoformat(),
         )
     except Exception as e:
@@ -352,18 +353,18 @@ async def health():
     client = get_docker_client()
 
     try:
-        container = client.containers.get(NEMOTRON_CONTAINER)
-        nemotron_status = container.status
+        container = client.containers.get(CODING_CONTAINER)
+        coding_status = container.status
     except docker.errors.NotFound:
-        nemotron_status = "not_found"
+        coding_status = "not_found"
     except Exception as e:
-        nemotron_status = f"error: {e}"
+        coding_status = f"error: {e}"
 
     uptime = (datetime.now() - _start_time).total_seconds()
 
     return HealthResponse(
         status="healthy",
-        nemotron_status=nemotron_status,
+        coding_model_status=coding_status,
         manager_uptime_seconds=uptime,
     )
 
@@ -374,23 +375,23 @@ async def status():
     client = get_docker_client()
 
     try:
-        container = client.containers.get(NEMOTRON_CONTAINER)
-        nemotron_status = container.status
+        container = client.containers.get(CODING_CONTAINER)
+        coding_status = container.status
         health = container.attrs.get("State", {}).get("Health", {}).get("Status")
     except docker.errors.NotFound:
-        nemotron_status = "not_found"
+        coding_status = "not_found"
         health = None
     except Exception:
-        nemotron_status = "error"
+        coding_status = "error"
         health = None
 
     gpu_info = get_gpu_memory(GPU_INDEX)
     training_active = check_training_active(GPU_INDEX)
 
     return StatusResponse(
-        nemotron_container=NEMOTRON_CONTAINER,
-        nemotron_status=nemotron_status,
-        nemotron_health=health,
+        coding_container=CODING_CONTAINER,
+        coding_model_status=coding_status,
+        coding_model_health=health,
         gpu_index=GPU_INDEX,
         gpu_memory_used_mb=gpu_info.get("memory_used_mb"),
         gpu_memory_total_mb=gpu_info.get("memory_total_mb"),
@@ -436,7 +437,7 @@ async def get_coding_route() -> CodingRouteResponse:
     # 1. Check if Qwopus is available (primary)
     client = get_docker_client()
     try:
-        container = client.containers.get(NEMOTRON_CONTAINER)
+        container = client.containers.get(CODING_CONTAINER)
         if container.status == "running":
             # Verify it's actually healthy - internal Docker port is 8000
             async with httpx.AsyncClient(timeout=3.0) as http_client:
@@ -577,9 +578,9 @@ async def unified_yield_orchestration(
         # RTX 3090 Ti - yield Qwopus
         client = get_docker_client()
         try:
-            container = client.containers.get(NEMOTRON_CONTAINER)
+            container = client.containers.get(CODING_CONTAINER)
             if container.status == "running":
-                logger.info(f"Stopping {NEMOTRON_CONTAINER} for {request.reason}...")
+                logger.info(f"Stopping {CODING_CONTAINER} for {request.reason}...")
                 container.stop(timeout=30)
                 yielded_services.append("qwopus-coding")
 

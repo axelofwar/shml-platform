@@ -10,7 +10,7 @@
 #   - read_only: Makes root filesystem read-only (uses tmpfs for writable dirs)
 #   - Non-root user where possible
 #
-# NOTE: GPU containers (nemotron, qwen3) need NVIDIA capabilities and cannot
+# NOTE: GPU containers (qwopus-coding, watchdog-llm) need NVIDIA capabilities and cannot
 # use read_only due to CUDA driver requirements. They get security_opt only.
 
 services:
@@ -65,12 +65,6 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
-
-  # === PII BLUR ===
-  pii-blur-api:
-    security_opt:
-      - no-new-privileges:true
-    # Note: Cannot drop ALL caps - needs GPU access
 
   # === SAM AUDIO ===
   sam-audio:

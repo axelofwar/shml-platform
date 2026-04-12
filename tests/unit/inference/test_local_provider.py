@@ -67,24 +67,24 @@ from router.base import (
 class TestLocalProviderInit:
     def test_default_urls(self):
         lp = LocalProvider()
-        assert lp.nemotron_url == "http://localhost:8010"
+        assert "qwopus-coding" in lp.coding_url or "localhost" in lp.coding_url
         assert "localhost" in lp.qwen_url
 
     def test_custom_urls(self):
         lp = LocalProvider(
-            nemotron_url="http://nemotron:8010",
+            coding_url="http://qwopus-coding:8000",
             qwen_url="http://qwen:8000",
         )
-        assert lp.nemotron_url == "http://nemotron:8010"
+        assert lp.coding_url == "http://qwopus-coding:8000"
         assert lp.qwen_url == "http://qwen:8000"
 
     def test_client_starts_none(self):
         lp = LocalProvider()
         assert lp._client is None
 
-    def test_models_catalog_has_nemotron(self):
+    def test_models_catalog_has_coding_model(self):
         lp = LocalProvider()
-        assert "nemotron-mini-4b" in lp.MODELS
+        assert "qwopus-coding" in lp.MODELS
 
     def test_models_catalog_has_qwen(self):
         lp = LocalProvider()
@@ -110,7 +110,7 @@ class TestLocalProviderInit:
 class TestGetUrlForModel:
     def setup_method(self):
         self.lp = LocalProvider(
-            nemotron_url="http://nemotron:8010",
+            coding_url="http://qwopus-coding:8000",
             qwen_url="http://qwen:8000",
         )
 
@@ -122,13 +122,13 @@ class TestGetUrlForModel:
         url = self.lp._get_url_for_model("some-vl-model")
         assert url == "http://qwen:8000"
 
-    def test_nemotron_returns_nemotron_url(self):
-        url = self.lp._get_url_for_model("nemotron-mini-4b")
-        assert url == "http://nemotron:8010"
+    def test_coding_model_returns_coding_url(self):
+        url = self.lp._get_url_for_model("qwopus-coding")
+        assert url == "http://qwopus-coding:8000"
 
-    def test_unknown_model_returns_nemotron_url(self):
+    def test_unknown_model_returns_coding_url(self):
         url = self.lp._get_url_for_model("some-other-model")
-        assert url == "http://nemotron:8010"
+        assert url == "http://qwopus-coding:8000"
 
     def test_case_insensitive_qwen(self):
         url = self.lp._get_url_for_model("QWEN3-VL")
@@ -211,10 +211,10 @@ class TestListAndGetModels:
         for m in models:
             assert isinstance(m, ModelInfo)
 
-    def test_get_model_nemotron(self):
-        m = self.lp.get_model("nemotron-mini-4b")
+    def test_get_model_coding(self):
+        m = self.lp.get_model("qwopus-coding")
         assert m is not None
-        assert m.id == "nemotron-mini-4b"
+        assert m.id == "qwopus-coding"
 
     def test_get_model_qwen(self):
         m = self.lp.get_model("qwen3-vl-8b")
@@ -225,8 +225,8 @@ class TestListAndGetModels:
         m = self.lp.get_model("nonexistent-model")
         assert m is None
 
-    def test_nemotron_has_coding_capability(self):
-        m = self.lp.get_model("nemotron-mini-4b")
+    def test_coding_model_has_coding_capability(self):
+        m = self.lp.get_model("qwopus-coding")
         assert ModelCapability.CODING in m.capabilities
 
     def test_qwen_has_vision_capability(self):

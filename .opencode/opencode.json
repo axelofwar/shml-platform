@@ -1,8 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "nemotron/qwopus-coding",
+  "model": "qwopus/qwopus-coding",
   "provider": {
-    "nemotron": {
+    "qwopus": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Qwopus (local via agent-service)",
       "options": {
@@ -15,7 +15,7 @@
           "reasoning": true,
           "attachment": false,
           "limit": {
-            "context": 65536,
+            "context": 131072,
             "output": 16384
           }
         }
@@ -34,5 +34,30 @@
     "todowrite": true,
     "todoread": true,
     "patch": true
+  },
+  "mcp": {
+    "shml-platform": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "timeout": 120000
+    },
+    "gitnexus": {
+      "type": "stdio",
+      "command": "gitnexus",
+      "args": [
+        "mcp"
+      ],
+      "timeout": 30000
+    },
+    "gitlab": {
+      "type": "stdio",
+      "command": "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-gitlab-mcp.sh",
+      "timeout": 30000
+    },
+    "prometheus": {
+      "type": "stdio",
+      "command": "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-prometheus-mcp.sh",
+      "timeout": 15000
+    }
   }
 }

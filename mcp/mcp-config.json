@@ -143,6 +143,23 @@
                 "resources": false,
                 "sampling": false
             }
+        },
+        "gitnexus": {
+            "name": "GitNexus Code Intelligence",
+            "description": "Knowledge graph over all SHML repos (shml-platform, shml-robotics, shml-sba). 16 tools: query, context, impact, detect_changes, rename, cypher, list_repos. Use for blast radius analysis, regression testing, code navigation, and safe refactoring.",
+            "transport": {
+                "type": "stdio",
+                "command": "gitnexus",
+                "args": [
+                    "mcp"
+                ]
+            },
+            "capabilities": {
+                "tools": true,
+                "resources": true,
+                "sampling": false
+            },
+            "_note": "Serves all repos registered in ~/.gitnexus/registry.json. Dev-time only — PolyForm Noncommercial license. Never include in published packages or GitHub mirror."
         }
     },
     "globalConfig": {

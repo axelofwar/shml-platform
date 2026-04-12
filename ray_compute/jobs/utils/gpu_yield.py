@@ -50,8 +50,8 @@ GPU_MANAGER_URLS = [
     "http://localhost:8012",  # Host access (unified)
 ]
 
-NEMOTRON_MANAGER_URLS = [
-    "http://nemotron-manager:8000",  # Inside Docker network
+CODING_MANAGER_URLS = [
+    "http://coding-manager:8000",  # Inside Docker network
     "http://localhost:8011",  # Host access
 ]
 
@@ -246,9 +246,9 @@ def yield_gpu_for_training(
             if verbose:
                 print(f"    GPU manager error at {base_url}: {e}")
 
-    # 2. Fall back to individual Nemotron manager if unified not available
+    # 2. Fall back to individual coding-manager if unified not available
     if not success:
-        for base_url in NEMOTRON_MANAGER_URLS:
+        for base_url in CODING_MANAGER_URLS:
             try:
                 url = f"{base_url}/training/start"
                 req = urllib.request.Request(
@@ -259,14 +259,14 @@ def yield_gpu_for_training(
                 )
 
                 if verbose:
-                    print(f"  → Requesting Nemotron yield from {base_url}...")
+                    print(f"  → Requesting coding-manager yield from {base_url}...")
 
                 with urllib.request.urlopen(req, timeout=timeout + 5) as response:
                     result = json_module.loads(response.read().decode("utf-8"))
 
                     if result.get("status") == "ready":
                         if verbose:
-                            print(f"    ✓ Nemotron yielded successfully")
+                            print(f"    ✓ Coding model yielded successfully")
                             if result.get("gpu_memory_before_mb") and result.get(
                                 "gpu_memory_after_mb"
                             ):
@@ -357,7 +357,7 @@ def reclaim_gpu_after_training(
     """
     Notify inference services that training is complete.
 
-    Call this at the end of training to allow Nemotron and other
+    Call this at the end of training to allow the coding model and other
     inference services to reload their models.
 
     Args:
@@ -418,9 +418,9 @@ def reclaim_gpu_after_training(
             if verbose:
                 print(f"    GPU manager error at {base_url}: {e}")
 
-    # 2. Fall back to individual Nemotron Manager
+    # 2. Fall back to individual coding-manager
     if not success:
-        for base_url in NEMOTRON_MANAGER_URLS:
+        for base_url in CODING_MANAGER_URLS:
             try:
                 url = f"{base_url}/training/end"
                 req = urllib.request.Request(
@@ -431,7 +431,7 @@ def reclaim_gpu_after_training(
                 )
 
                 if verbose:
-                    print(f"  → Notifying Nemotron at {base_url}...")
+                    print(f"  → Notifying coding-manager at {base_url}...")
 
                 with urllib.request.urlopen(req, timeout=120) as response:
                     result = json_module.loads(response.read().decode("utf-8"))
@@ -439,7 +439,7 @@ def reclaim_gpu_after_training(
                     if result.get("status") in ["started", "running"]:
                         if verbose:
                             print(
-                                f"    ✓ Nemotron restarting: {result.get('message', 'ok')}"
+                                f"    ✓ Coding model restarting: {result.get('message', 'ok')}"
                             )
                         success = True
                         break
@@ -567,17 +567,17 @@ def check_gpu_status(gpu_id: int = 0) -> Dict[str, Any]:
             status["services"]["gpu_manager"] = {"reachable": False, "error": str(e)}
 
     # Fall back to individual services
-    # Check Nemotron
-    for base_url in NEMOTRON_MANAGER_URLS:
+    # Check coding-manager
+    for base_url in CODING_MANAGER_URLS:
         try:
             url = f"{base_url}/status"
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=5) as response:
                 result = json_module.loads(response.read().decode("utf-8"))
-                status["services"]["nemotron"] = {"reachable": True, "status": result}
+                status["services"]["coding_manager"] = {"reachable": True, "status": result}
                 break
         except Exception as e:
-            status["services"]["nemotron"] = {"reachable": False, "error": str(e)}
+            status["services"]["coding_manager"] = {"reachable": False, "error": str(e)}
 
     # Check Z-Image
     for base_url in Z_IMAGE_URLS:

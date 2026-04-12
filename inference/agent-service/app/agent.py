@@ -12,6 +12,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from typing import TypedDict, Annotated, List, Dict, Any, Optional, Sequence
+import asyncio
 import operator
 from datetime import datetime
 import logging
@@ -25,9 +26,135 @@ from .skills import get_active_skills, format_skill_contexts, SKILLS, execute_sk
 from .security import get_system_prompt_preamble, filter_output
 from .config import settings
 from .skill_evolution import get_evolution_engine
+from .skills_loader import load_all_skills
+from .compaction import compact_messages
 import re
+import sys
 
 logger = logging.getLogger(__name__)
+
+# ── Telegram notification (import from centralized libs/notify.py) ────────────
+_libs_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "libs")
+if _libs_path not in sys.path:
+    sys.path.insert(0, os.path.abspath(_libs_path))
+try:
+    from notify import send_telegram as _send_telegram_raw
+except ImportError:
+    def _send_telegram_raw(message: str, *, parse_mode: str = "Markdown", **kw) -> bool:
+        logger.debug("Telegram not available (libs/notify.py not found)")
+        return False
+
+
+def _notify_task_completion(
+    task: str,
+    success: bool,
+    answer_preview: str,
+    rubric_scores: dict[str, float] | None = None,
+    tools_used: list[str] | None = None,
+) -> None:
+    """Send Telegram notification about task completion with formatted summary."""
+    status = "completed" if success else "FAILED"
+    icon = "✅" if success else "❌"
+
+    # Build formatted message
+    lines = [
+        f"{icon} *Agent Task {status}*",
+        f"📋 _{task[:100]}{'...' if len(task) > 100 else ''}_",
+    ]
+
+    if rubric_scores:
+        avg = sum(rubric_scores.values()) / len(rubric_scores)
+        lines.append(f"📊 Quality: {avg:.0%}")
+
+    if tools_used:
+        lines.append(f"🔧 Tools: {', '.join(tools_used[:5])}")
+
+    # Truncate preview for Telegram (4096 char limit)
+    max_preview = 500
+    preview = answer_preview[:max_preview]
+    if len(answer_preview) > max_preview:
+        preview += "..."
+    # Escape markdown special chars in preview
+    preview = preview.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+    lines.append(f"\n💬 Response:\n{preview}")
+
+    sent = _send_telegram_raw("\n".join(lines), parse_mode="Markdown")
+    logger.info("Telegram notification %s for task: %s", "sent" if sent else "FAILED", task[:60])
+
+
+# ── Tool result budgeting constants ───────────────────────────────────────────
+MAX_TOTAL_TOOL_RESULT_CHARS = 24000  # Total budget for all tool results in prompt
+DEFAULT_PER_TOOL_BUDGET = 8000       # Default per-tool limit if skill has no override
+TRUNCATION_PREVIEW_CHARS = 2000      # Chars to show when truncating
+
+
+def budget_tool_results(
+    tool_results: list[dict[str, Any]],
+    *,
+    total_budget: int = MAX_TOTAL_TOOL_RESULT_CHARS,
+    skills_map: dict[str, Any] | None = None,
+) -> str:
+    """Format tool results with per-tool budgeting to prevent context blowout.
+
+    Each tool result is truncated to its skill's max_result_chars (or default).
+    The total output is capped at total_budget chars.
+    Truncated results get a preview + note about omitted content.
+    """
+    if not tool_results:
+        return "No tools executed yet"
+
+    if skills_map is None:
+        skills_map = {}
+
+    formatted_parts = []
+    used_chars = 0
+
+    for tr in tool_results:
+        tool_name = tr.get("tool", "unknown")
+        operation = tr.get("operation", "unknown")
+        result_data = tr.get("result", {})
+        success = tr.get("success", False)
+
+        # Get per-tool budget from skill config
+        skill = skills_map.get(tool_name)
+        per_tool_budget = getattr(skill, "max_result_chars", DEFAULT_PER_TOOL_BUDGET)
+
+        # Serialize result
+        if isinstance(result_data, str):
+            result_str = result_data
+        else:
+            result_str = json.dumps(result_data, indent=2)
+
+        # Truncate if needed
+        if len(result_str) > per_tool_budget:
+            preview = result_str[:TRUNCATION_PREVIEW_CHARS]
+            omitted = len(result_str) - TRUNCATION_PREVIEW_CHARS
+            result_str = (
+                f"{preview}\n\n... [{omitted} chars truncated — "
+                f"full result available via tool re-execution]"
+            )
+
+        entry = (
+            f"**{tool_name}.{operation}** "
+            f"({'OK' if success else 'FAILED'}):\n{result_str}"
+        )
+
+        # Check total budget
+        if used_chars + len(entry) > total_budget:
+            remaining = total_budget - used_chars
+            if remaining > 200:
+                entry = entry[:remaining] + "\n... [budget exhausted]"
+                formatted_parts.append(entry)
+            else:
+                formatted_parts.append(
+                    f"... [{len(tool_results) - len(formatted_parts)} more tool results omitted — budget exhausted]"
+                )
+            break
+
+        formatted_parts.append(entry)
+        used_chars += len(entry)
+
+    return "\n\n".join(formatted_parts)
 
 # Shared httpx client - avoids per-call client creation (memory leak prevention)
 # Lazy-initialized on first use, reused across all LLM calls
@@ -304,7 +431,10 @@ class AgentState(TypedDict, total=False):
 
 
 async def call_coding_model(
-    prompt: str, temperature: float = 0.0, max_tokens: int = 2048
+    prompt: str,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+    system_prompt: str | None = None,
 ) -> str:
     """Call Qwen3.5-35B-A3B (thinking enabled) with intelligent routing.
 
@@ -319,9 +449,11 @@ async def call_coding_model(
     - Best quality when primary is available (93.8% eval score vs 79% for Nemotron)
 
     Args:
-        prompt: The prompt to send
+        prompt: The prompt to send (user message — dynamic content)
         temperature: Sampling temperature (Qwen3.5 recommended: 0.6 general / 0.0 code)
         max_tokens: Maximum tokens to generate (does not include thinking tokens)
+        system_prompt: Optional system message (static, cacheable by KV cache).
+                       Security preamble + skill descriptions + tool format go here.
 
     Returns:
         Model response text (thinking tokens stripped by llama.cpp, only content returned)
@@ -339,7 +471,7 @@ async def call_coding_model(
             health_response = await client.get(f"{primary_url}/health", timeout=5.0)
             if health_response.status_code == 200:
                 health_data = health_response.json()
-                if health_data.get("status") != "healthy":
+                if health_data.get("status") not in ("healthy", "ok"):
                     reason = health_data.get("reason", "unknown")
                     logger.info(
                         f"Primary model unavailable (reason: {reason}), routing to fallback"
@@ -371,54 +503,99 @@ async def call_coding_model(
             endpoint = f"{primary_url}/v1/chat/completions"
             model_name = os.getenv("CODING_MODEL_ALIAS", "qwopus-coding")
 
-        # Step 3: Make the inference request
-        try:
-            logger.info(f"Using model: {model_name} at {endpoint}")
-            response = await client.post(
-                endpoint,
-                json={
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            logger.info(f"Successfully generated response with {model_name}")
-            return data["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as e:
-            # If we were using primary and it failed, try fallback
-            if not use_fallback:
-                logger.warning(
-                    f"Primary model failed ({e.response.status_code}), trying fallback"
+        # Step 3: Build messages (system + user split for KV cache efficiency)
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # Step 4: Make the inference request with error recovery state machine
+        last_error = None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Using model: {model_name} at {endpoint} (attempt {attempt + 1})")
+                response = await client.post(
+                    endpoint,
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    },
+                    timeout=300.0,
                 )
-                try:
-                    fallback_response = await client.post(
-                        f"{fallback_url}/v1/chat/completions",
-                        json={
-                            "model": "qwen2.5-coder-3b",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                        },
-                    )
-                    fallback_response.raise_for_status()
-                    data = fallback_response.json()
-                    logger.info(
-                        "Successfully used fallback model after primary failure"
-                    )
-                    return data["choices"][0]["message"]["content"]
-                except Exception as fallback_error:
-                    logger.error(f"Fallback also failed: {fallback_error}")
+                response.raise_for_status()
+                data = response.json()
+                logger.info(f"Successfully generated response with {model_name}")
+                return data["choices"][0]["message"]["content"]
+
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                last_error = e
+
+                # Rate limit → exponential backoff
+                if status == 429:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning(f"Rate limited (429), backing off {wait}s")
+                    await asyncio.sleep(wait)
+                    continue
+
+                # Context overflow → compact and retry
+                if status == 400 and "context" in str(e.response.text).lower():
+                    logger.warning("Context overflow (400), compacting prompt")
+                    # Truncate user prompt to 75%
+                    prompt = prompt[: int(len(prompt) * 0.75)]
+                    messages = []
+                    if system_prompt:
+                        messages.append({"role": "system", "content": system_prompt})
+                    messages.append({"role": "user", "content": prompt})
+                    continue
+
+                # Auth failure → try fallback
+                if status in (401, 403):
+                    logger.warning(f"Auth error ({status}), switching to fallback")
+                    if not use_fallback:
+                        endpoint = f"{fallback_url}/v1/chat/completions"
+                        model_name = "qwen2.5-coder-3b"
+                        use_fallback = True
+                        continue
                     raise
-            else:
-                logger.error(f"Fallback model failed: {e}")
+
+                # Primary failed → try fallback
+                if not use_fallback:
+                    logger.warning(f"Primary failed ({status}), trying fallback")
+                    endpoint = f"{fallback_url}/v1/chat/completions"
+                    model_name = "qwen2.5-coder-3b"
+                    use_fallback = True
+                    continue
                 raise
-        except Exception as e:
-            logger.error(f"Failed to call coding model: {e}")
-            raise
-    raise last_error or Exception("All model endpoints unavailable")
+
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_error = e
+                # Network error → try fallback or retry
+                if not use_fallback:
+                    logger.warning(f"Connection failed: {e}, switching to fallback")
+                    endpoint = f"{fallback_url}/v1/chat/completions"
+                    model_name = "qwen2.5-coder-3b"
+                    use_fallback = True
+                    continue
+                wait = 2 ** attempt
+                logger.warning(f"Connection retry {attempt + 1}/{max_retries} in {wait}s")
+                await asyncio.sleep(wait)
+
+            except httpx.ReadTimeout as e:
+                last_error = e
+                logger.warning(f"Read timeout on attempt {attempt + 1}")
+                # Timeout → retry with same endpoint (might be transient)
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Unexpected error calling model: {e}")
+                last_error = e
+                break
+
+        raise last_error or Exception("All model endpoints unavailable")
 
 
 async def call_vision_model(
@@ -602,6 +779,12 @@ Be thorough and specific."""
             state["error_messages"].append(f"Vision analysis failed: {str(e)}")
             # Continue without vision context
 
+    # P1: Compact session diary to prevent context blowout on multi-turn tasks
+    if state.get("session_diary") and len(state["session_diary"]) > 10:
+        diary_as_msgs = [{"role": "system", "content": entry} for entry in state["session_diary"]]
+        compacted = compact_messages(diary_as_msgs, max_chars=30000, protect_recent=4)
+        state["session_diary"] = [m["content"] for m in compacted]
+
     # Build 3-tier context: session memory -> semantic retrieval -> curator lessons
     tiered_context = state["playbook"].build_tiered_context(
         query=state["current_task"],
@@ -613,6 +796,10 @@ Be thorough and specific."""
         min_utility=0.3,
     )
     context_str = tiered_context["context"]
+
+    # Load skills map for tool result budgeting
+    _loaded_skills = load_all_skills()
+    _skills_map = {s.name: s for s in _loaded_skills.values()}
     logger.info(
         "Tiered context built: "
         f"tier1={tiered_context['tiers']['tier1_session']}, "
@@ -707,7 +894,7 @@ Be thorough and specific."""
 {context_str}
 
 **Tool Results** (if any):
-{json.dumps(state['tool_results'], indent=2) if state['tool_results'] else 'No tools executed yet'}
+{budget_tool_results(state['tool_results'], skills_map=_skills_map)}
 
 **CRITICAL INSTRUCTIONS**:
 ❌ DO NOT output "Analysis", "Action", "Expected Outcome" - these are planning steps
@@ -783,7 +970,7 @@ content = await fetch_with_backoff('https://example.com/file.zip')
 **Task Category**: {state['task_category']}
 {vision_section}
 **Research Results** (already completed):
-{json.dumps(state['tool_results'], indent=2)}
+{budget_tool_results(state['tool_results'], skills_map=_skills_map)}
 
 **Relevant Context from Previous Sessions**:
 {context_str}
@@ -926,11 +1113,30 @@ Params: {{"query": "X topic", "max_results": 5}}
 **START YOUR RESPONSE:**
 """
 
-    # Prepend role-specific security instructions to the prompt
-    prompt = security_preamble + prompt
+    # P0: System prompt cache split — static content in system msg (KV-cacheable),
+    # dynamic content stays in user msg (prompt variable above)
+    system_prompt = f"""{security_preamble}
 
-    # Call LLM
-    response = await call_coding_model(prompt, temperature=0.0)
+**Available Skills**:
+{skills_str}
+
+**TOOL CALL FORMAT (use this EXACT format)**:
+```
+Tool: SkillName
+Operation: operation_name
+Params: {{"key": "value"}}
+```
+
+**ROUTING RULES:**
+- GPU status/memory/utilization → ShellSkill.gpu_status (nvidia-smi directly)
+- System info (CPU, RAM, disk) → ShellSkill.system_info
+- Docker containers → ShellSkill.docker_status
+- Training jobs → RayJobSkill
+- Web research → WebSearchSkill
+"""
+
+    # Call LLM with system/user split
+    response = await call_coding_model(prompt, temperature=0.0, system_prompt=system_prompt)
 
     # Apply output filtering to prevent secret leakage
     response, redacted_count = filter_output(response, user_role)
@@ -976,7 +1182,7 @@ Params: {{"query": "X topic", "max_results": 5}}
         {
             "timestamp": datetime.now().isoformat(),
             "content": response,
-            "context_bullets_used": len(relevant_bullets),
+            "context_bullets_used": sum(tiered_context["tiers"].values()),
             "skills_activated": [
                 skill.__name__
                 for skill in SKILLS
@@ -1018,7 +1224,7 @@ async def reflector_node(state: AgentState) -> AgentState:
 {state['generator_output']}
 
 **Tool Results** (if any):
-{json.dumps(state['tool_results'], indent=2) if state['tool_results'] else 'No tools executed yet'}
+{budget_tool_results(state['tool_results']) if state['tool_results'] else 'No tools executed yet'}
 
 **Evaluate on these rubrics** (score 0-1):
 
@@ -1123,7 +1329,7 @@ async def curator_node(state: AgentState) -> AgentState:
 {state['reflector_output']}
 
 **Tool Results**:
-{json.dumps(state['tool_results'], indent=2) if state['tool_results'] else 'No tools executed'}
+{budget_tool_results(state['tool_results']) if state['tool_results'] else 'No tools executed'}
 
 **Rubric Scores**:
 {json.dumps(state['reflector_rubric_scores'], indent=2) if state['reflector_rubric_scores'] else 'No scores'}
@@ -1312,6 +1518,7 @@ async def synthesizer_node(state: AgentState) -> AgentState:
                 skill_name="ShellSkill",
                 operation="gpu_status",
                 params={"format": "full"},
+                user_role="elevated-developer",
             )
             if shell_result and not shell_result.get("error"):
                 shell_results["gpu_status"] = shell_result
@@ -1556,96 +1763,146 @@ Synthesized Response:"""
         )
 
     logger.info(f"Synthesizer generated final answer ({len(final_answer)} chars)")
+
+    # ── Telegram notification: task completion + response preview ──────────
+    try:
+        tools_used = list({tr.get("tool", "?") for tr in tool_results if tr.get("success")})
+        _notify_task_completion(
+            task=state.get("current_task", "unknown"),
+            success=state.get("success", True),
+            answer_preview=final_answer,
+            rubric_scores=state.get("reflector_rubric_scores"),
+            tools_used=tools_used,
+        )
+    except Exception as tg_err:
+        logger.debug("Telegram notification failed (non-fatal): %s", tg_err)
+
     return state
 
 
 async def tool_execution_node(state: AgentState) -> AgentState:
     """Execute pending tool calls using composable skills.
 
-    Executes tools from the generator's proposed actions.
+    P1: Supports concurrent execution — tools from skills marked
+    concurrency=parallel run via asyncio.gather; serial tools run sequentially.
     """
-    logger.info(
-        f"Tool execution node: {len(state.get('tool_calls_pending', []))} tools pending"
-    )
+    pending = state.get("tool_calls_pending", [])
+    logger.info(f"Tool execution node: {len(pending)} tools pending")
 
     # Stream stage start (if WebSocket connected)
     if state.get("connection_manager") and state.get("ws_session_id"):
         await state["connection_manager"].stream_stage(
             state["ws_session_id"],
             "tools",
-            f"Executing {len(state.get('tool_calls_pending', []))} tool(s)...",
+            f"Executing {len(pending)} tool(s)...",
         )
 
-    if state.get("tool_calls_pending"):
-        for tool_call in state["tool_calls_pending"]:
-            tool_name = tool_call.get("tool")
-            operation = tool_call.get("operation")
-            params = tool_call.get("params", {})
+    if not pending:
+        return state
 
-            logger.info(f"Executing: {tool_name}.{operation}({params})")
+    # Load skill metadata for concurrency classification
+    _loaded_skills = load_all_skills()
+    _skills_map = {s.name: s for s in _loaded_skills.values()}
 
-            try:
-                # Execute skill using the helper function
-                result = await execute_skill(
-                    skill_name=tool_name, operation=operation, params=params
-                )
+    async def _execute_one(tool_call: dict) -> dict:
+        """Execute a single tool call and return result dict."""
+        tool_name = tool_call.get("tool")
+        operation = tool_call.get("operation")
+        params = tool_call.get("params", {})
+        logger.info(f"Executing: {tool_name}.{operation}({params})")
+        try:
+            result = await execute_skill(
+                skill_name=tool_name, operation=operation, params=params,
+                user_role="elevated-developer",
+            )
+            return {
+                "tool": tool_name,
+                "operation": operation,
+                "params": params,
+                "result": result,
+                "timestamp": datetime.now().isoformat(),
+                "success": "error" not in result,
+            }
+        except Exception as e:
+            logger.error(f"Tool execution failed: {tool_name}.{operation} - {e}")
+            return {
+                "tool": tool_name,
+                "operation": operation,
+                "params": params,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "success": False,
+            }
 
-                # Add result to state
-                state["tool_results"].append(
+    # Separate parallel vs serial tools
+    parallel_calls = []
+    serial_calls = []
+    for tc in pending:
+        skill = _skills_map.get(tc.get("tool"))
+        if skill and skill.concurrency == "parallel":
+            parallel_calls.append(tc)
+        else:
+            serial_calls.append(tc)
+
+    all_results = []
+
+    # Execute parallel tools concurrently
+    if parallel_calls:
+        logger.info(f"Executing {len(parallel_calls)} tools in parallel")
+        parallel_results = await asyncio.gather(
+            *[_execute_one(tc) for tc in parallel_calls],
+            return_exceptions=True,
+        )
+        for r in parallel_results:
+            if isinstance(r, Exception):
+                all_results.append({
+                    "tool": "unknown", "operation": "unknown",
+                    "error": str(r), "timestamp": datetime.now().isoformat(),
+                    "success": False,
+                })
+            else:
+                all_results.append(r)
+
+    # Execute serial tools sequentially
+    for tc in serial_calls:
+        result = await _execute_one(tc)
+        all_results.append(result)
+
+    # Process all results
+    for result_dict in all_results:
+        state["tool_results"].append(result_dict)
+
+        tool_name = result_dict.get("tool", "?")
+        operation = result_dict.get("operation", "?")
+
+        if result_dict.get("success"):
+            state["playbook"].add_bullet(
+                content=f"Tool {tool_name}.{operation} result: {str(result_dict.get('result', ''))[:200]}",
+                category="tool_result",
+                source="agent",
+                session_id=state["session_id"],
+            )
+            if state.get("connection_manager") and state.get("ws_session_id"):
+                await state["connection_manager"].send_message(
+                    state["ws_session_id"],
                     {
+                        "type": "tool_result",
+                        "stage": "tools",
+                        "content": f"{tool_name}.{operation} completed",
                         "tool": tool_name,
                         "operation": operation,
-                        "params": params,
-                        "result": result,
-                        "timestamp": datetime.now().isoformat(),
-                        "success": "error" not in result,
-                    }
+                        "result": result_dict.get("result"),
+                        "success": True,
+                    },
                 )
+            logger.info(f"Tool {tool_name}.{operation} executed successfully")
+        else:
+            state["error_messages"].append(
+                f"Tool error: {tool_name}.{operation} - {result_dict.get('error', 'unknown')}"
+            )
 
-                # Add result to playbook for future context
-                state["playbook"].add_bullet(
-                    content=f"Tool {tool_name}.{operation} result: {str(result)[:200]}",
-                    category="tool_result",
-                    source="agent",
-                    session_id=state["session_id"],
-                )
-
-                # Stream tool result (if WebSocket connected)
-                if state.get("connection_manager") and state.get("ws_session_id"):
-                    await state["connection_manager"].send_message(
-                        state["ws_session_id"],
-                        {
-                            "type": "tool_result",
-                            "stage": "tools",
-                            "content": f"{tool_name}.{operation} completed",
-                            "tool": tool_name,
-                            "operation": operation,
-                            "result": result,
-                            "success": True,
-                        },
-                    )
-
-                logger.info(f"Tool {tool_name}.{operation} executed successfully")
-
-            except Exception as e:
-                logger.error(f"Tool execution failed: {tool_name}.{operation} - {e}")
-                state["tool_results"].append(
-                    {
-                        "tool": tool_name,
-                        "operation": operation,
-                        "params": params,
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat(),
-                        "success": False,
-                    }
-                )
-                state["error_messages"].append(
-                    f"Tool error: {tool_name}.{operation} - {str(e)}"
-                )
-
-        # Clear pending tool calls
-        state["tool_calls_pending"] = []
-
+    # Clear pending tool calls
+    state["tool_calls_pending"] = []
     return state
 
 

@@ -23,17 +23,53 @@ import asyncio
 import logging
 import os
 import threading
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+import sys
+import os as _os
+# Add libs/ to path for centralized notify import
+_libs_path = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "libs")
+_libs_path = _os.path.abspath(_libs_path)
+if _libs_path not in sys.path:
+    sys.path.insert(0, _libs_path)
+try:
+    from notify import send_telegram as _send_telegram
+except ImportError:
+    # Fallback: inline implementation for Docker where libs/ may not be mounted
+    def _send_telegram(message: str, *, parse_mode: str = "Markdown") -> bool:
+        """Send a Telegram notification (best-effort, never raises)."""
+        token = _os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = _os.getenv("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            return False
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": parse_mode,
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=payload, method="POST")
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status == 200
+        except Exception as e:
+            logger.warning("Telegram send failed: %s", e)
+            return False
+
 # ── Config ────────────────────────────────────────────────────────────────────
 _QWEN_URL = os.getenv("GATEWAY_URL", "http://qwen-coding:8000")
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
-# llama.cpp coding server — host process on GPU 0, reachable via Docker bridge gateway
-_LLAMA_HEALTH_URL = os.getenv("LLAMA_SERVER_HEALTH_URL", "http://host-gateway:8000/health")
+# qwopus-coding inference container — managed by GPU manager, reachable via Docker DNS
+_LLAMA_HEALTH_URL = os.getenv("LLAMA_SERVER_HEALTH_URL", "http://qwopus-coding:8000/health")
+_GPU_MANAGER_HEALTH_URL = os.getenv("GPU_MANAGER_HEALTH_URL", "http://gpu-manager:8000/health")
 _RAY_HEAD_URL = os.getenv("RAY_HEAD_URL", "http://ray-head:8265")
 _DIARY_DIR = Path(__file__).parent.parent / "data" / "diary"
 _DIARY_DIR.mkdir(parents=True, exist_ok=True)
@@ -122,6 +158,10 @@ async def _job_skill_evolution_nightly() -> None:
         logger.info(
             f"[Scheduler/GEPA] Not enough accumulated lessons ({len(all_lessons)}/{PATTERN_THRESHOLD}), skipping"
         )
+        _send_telegram(
+            f"🧠 *GEPA Nightly* — {len(all_lessons)}/{PATTERN_THRESHOLD} lessons accumulated, "
+            "threshold not reached. No evolution triggered."
+        )
         return
 
     # Use a synthetic session_id for scheduler-triggered runs
@@ -135,6 +175,21 @@ async def _job_skill_evolution_nightly() -> None:
     if results:
         summary = engine.summarize_evolution_results(results)
         logger.info(summary)
+
+    # Telegram summary
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines = [f"🧠 *GEPA Skill Evolution — {today}*"]
+    lines.append(f"Lessons processed: {len(all_lessons)}")
+    lines.append(f"Skill updates: {len(results)}")
+    if results:
+        summary_text = engine.summarize_evolution_results(results)
+        # Truncate to fit Telegram 4096 char limit
+        if len(summary_text) > 500:
+            summary_text = summary_text[:500] + "…"
+        lines.append(f"\n{summary_text}")
+    else:
+        lines.append("No skills evolved tonight.")
+    _send_telegram("\n".join(lines))
 
 
 async def _job_playbook_cleanup_weekly() -> None:
@@ -172,16 +227,17 @@ async def _job_obsidian_connection_map_nightly() -> None:
     spec.loader.exec_module(mod)
     mod.main()
     logger.info("[Scheduler/ConnectionMap] Connection map updated in Obsidian vault")
+    _send_telegram("🗺️ *Connection Map* refreshed in Obsidian vault")
 
 
 async def _job_llama_server_watchdog() -> None:
     """
-    Every-5-minute health probe for the Qwen3.5-27B llama.cpp coding server.
+    Every-5-minute health probe for the qwopus-coding inference container.
 
-    The server runs as a bare HOST process on port 8000 (not a Docker container).
-    It is accessed from the agent-service container via the Docker bridge gateway.
-    Restart is handled by the systemd qwen35-server.service (Restart=on-failure).
-    This job provides early alerting when the server is down without active training.
+    The qwopus-coding container is managed by the GPU manager, which may
+    intentionally stop it during training or mark GPU 0 as transitioning.
+    This job only alerts when the server is down AND the GPU manager
+    confirms GPU 0 is in inference mode (i.e. not training/transitioning).
     """
     import httpx
 
@@ -201,8 +257,30 @@ async def _job_llama_server_watchdog() -> None:
 
     logger.warning(f"[Scheduler/Llama] Server unreachable at {_LLAMA_HEALTH_URL}")
 
-    # Check if training is active (Ray jobs API) before escalating
-    training_active = False
+    # ── Check GPU manager state ────────────────────────────────────────────
+    # The GPU manager knows whether qwopus-coding is intentionally stopped.
+    gpu_managed_idle = False
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            gm_resp = await client.get(_GPU_MANAGER_HEALTH_URL)
+            if gm_resp.status_code == 200:
+                gm = gm_resp.json()
+                training_active = gm.get("training_active", False)
+                gpu0_state = str(gm.get("gpu_0_state", "")).lower()
+                if training_active or gpu0_state in ("training", "transitioning"):
+                    gpu_managed_idle = True
+                    logger.info(
+                        "[Scheduler/Llama] GPU manager reports gpu_0=%s, "
+                        "training_active=%s — server down is expected",
+                        gpu0_state, training_active,
+                    )
+    except Exception as e:
+        logger.debug(f"[Scheduler/Llama] GPU manager unreachable: {e}")
+
+    if gpu_managed_idle:
+        return
+
+    # ── Fallback: check Ray jobs API ───────────────────────────────────────
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             jobs_resp = await client.get(f"{_RAY_HEAD_URL}/api/jobs/")
@@ -212,23 +290,24 @@ async def _job_llama_server_watchdog() -> None:
                     if j.get("status") in ("RUNNING", "PENDING")
                 ]
                 if active:
-                    training_active = True
                     logger.info(
-                        f"[Scheduler/Llama] {len(active)} Ray job(s) active — "
-                        "llama-server down is expected during training"
+                        "[Scheduler/Llama] %d Ray job(s) active — "
+                        "server down is expected during training",
+                        len(active),
                     )
+                    return
     except Exception:
         pass  # Ray head may not be running — don't escalate on Ray unavailability
 
-    if training_active:
-        return
-
-    # Server is down and no training is running — this is unexpected
+    # Server is down, GPU manager says inference mode, no Ray jobs — alert
     logger.error(
-        "[Scheduler/Llama] Qwen3.5 coding server unreachable and GPU 0 is idle. "
-        "Continue.dev requests will fail. "
-        "If qwen35-server.service is enabled, systemd will attempt auto-restart. "
-        "Manual: bash inference/llama-cpp/start-qwen35-cuda.sh"
+        "[Scheduler/Llama] Coding server unreachable and GPU 0 is in inference mode. "
+        "Continue.dev requests will fail."
+    )
+    _send_telegram(
+        "⚠️ *Coding Server Down*\n"
+        f"Qwopus-coding unreachable at `{_LLAMA_HEALTH_URL}` and GPU 0 is in inference mode.\n"
+        "Check: `docker logs qwopus-coding --tail 20`"
     )
 
 
@@ -250,6 +329,10 @@ async def _job_session_diary_export() -> None:
             + '"}\n'
         )
     logger.info("[Scheduler/Diary] Export sentinel written")
+    _send_telegram(
+        f"📓 *Session Diary Export* — {datetime.now().strftime('%Y-%m-%d')}\n"
+        f"Sentinel written to `{export_path.name}`"
+    )
 
 
 # ── Scheduler class ────────────────────────────────────────────────────────────

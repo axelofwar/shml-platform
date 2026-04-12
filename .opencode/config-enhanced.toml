@@ -1,23 +1,23 @@
 # OpenCode Enhanced Configuration - Mobile + Desktop Optimized
 # Auto-detects terminal size for optimal UX
-# Supports: Nemotron-3-Nano-30B (coding) + Qwen3-VL (vision) + MCP tools
+# Supports: Qwopus-27B (coding) + Qwen3-VL (vision) + MCP tools
 
 # =============================================================================
 # Coding Models (Local)
 # =============================================================================
 
 [providers.local-coding]
-# Nemotron-3-Nano-30B-A3B via llama-server
+# Qwen3.5-27B Q4_K_M via agent-service proxy
 type = "openai"
-baseURL = "http://localhost:8010/v1"
+baseURL = "http://localhost:8099/v1"
 
 [[providers.local-coding.models]]
 id = "qwopus-coding"
-name = "Nemotron-3-Nano-30B-A3B (Primary)"
-maxTokens = 32768
-contextWindow = 131072  # 128K effective, 1M total capable
+name = "Qwopus-27B Q4_K_M (Primary)"
+maxTokens = 16384
+contextWindow = 131072  # 128K context with q4_0 KV cache
 supportsAttachments = false
-description = "95% Claude Sonnet quality, SWE-Bench 38.8%"
+description = "Qwen3.5-27B Q4_K_M, RTX 3090 Ti"
 
 [providers.local-fallback]
 # Qwen2.5-Coder-3B fallback (RTX 2070)
@@ -59,10 +59,10 @@ model = "local-coding:qwopus-coding"          # Primary coding
 visionModel = "local-vision:qwen3-vl"           # Vision analysis
 fallbackModel = "local-fallback:qwen-coder-3b"  # Fallback if primary busy
 
-# Context management
-maxContextTokens = 32768   # Conservative for mobile
-autoCompact = true         # Auto-summarize at 50% capacity
-compactThreshold = 16384   # Trigger compaction at 16K tokens
+# Context management — aggressive compaction for large codebases
+maxContextTokens = 131072  # Full 128K available
+autoCompact = true         # Auto-summarize at threshold
+compactThreshold = 65536   # Trigger compaction at 50% (64K tokens)
 
 # Session settings
 autoSave = true            # Persist on disconnect (mobile-friendly)
@@ -88,6 +88,29 @@ AUTH_TOKEN = "${SHML_AUTH_TOKEN}"
 # - mlflow_query: Experiment search, best runs
 # - vision_analyze: Image analysis (RTX 2070, always safe)
 # - vision_then_code: Vision + code (RTX 3090, blocked during training)
+
+# GitNexus Code Intelligence — knowledge graph over all SHML repos
+# 14,868 symbols, 40,672 relationships, 300 execution flows
+# Use `query` for concept search, `context` for symbol deep-dive, `impact` for blast radius
+[mcp.gitnexus]
+type = "stdio"
+command = "gitnexus"
+args = ["mcp"]
+timeout = 30000
+
+# GitLab CE — issues, MRs, pipelines, code search
+# Single source of truth for task tracking
+[mcp.gitlab]
+type = "stdio"
+command = "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-gitlab-mcp.sh"
+timeout = 30000
+
+# Prometheus Metrics — read-only PromQL against global-prometheus
+# Check GPU utilization, container memory, training metrics before acting
+[mcp.prometheus]
+type = "stdio"
+command = "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-prometheus-mcp.sh"
+timeout = 15000
 
 # =============================================================================
 # UI/UX Configuration (Responsive)

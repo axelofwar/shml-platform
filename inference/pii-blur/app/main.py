@@ -1811,7 +1811,7 @@ class YieldResponse(BaseModel):
     reason: Optional[str] = None
     message: str
     models_were_loaded: bool = False
-    nemotron_available: Optional[bool] = None
+    coding_model_available: Optional[bool] = None
 
 
 @app.post("/api/v1/yield", response_model=YieldResponse)
@@ -1828,7 +1828,7 @@ async def unified_yield(
 
     Behavior by reason:
     - TRAINING: Always yield (training jobs have highest priority)
-    - CODING: Smart yield - only if Nemotron unavailable (unless force=True)
+    - CODING: Smart yield - only if Qwopus unavailable (unless force=True)
 
     Models will auto-reload on next PII blur request.
     """
@@ -1836,15 +1836,15 @@ async def unified_yield(
 
     # For coding, check if we actually need to yield
     if reason == YieldReason.CODING and not force:
-        nemotron_available = await check_nemotron_health()
+        coding_model_available = await check_coding_model_health()
 
-        if nemotron_available:
+        if coding_model_available:
             return YieldResponse(
                 status="not_needed",
                 reason=reason.value,
-                message="Nemotron (RTX 3090) is available - no yield required",
+                message="Qwopus coding model (RTX 3090) is available - no yield required",
                 models_were_loaded=models_loaded,
-                nemotron_available=True,
+                coding_model_available=True,
             )
 
     # Check if already yielded
@@ -1854,8 +1854,8 @@ async def unified_yield(
             reason=reason.value,
             message="Models already unloaded - GPU available",
             models_were_loaded=False,
-            nemotron_available=(
-                await check_nemotron_health() if reason == YieldReason.CODING else None
+            coding_model_available=(
+                await check_coding_model_health() if reason == YieldReason.CODING else None
             ),
         )
 
@@ -1873,7 +1873,7 @@ async def unified_yield(
         reason=reason.value,
         message=message_map[reason],
         models_were_loaded=True,
-        nemotron_available=False if reason == YieldReason.CODING else None,
+        coding_model_available=False if reason == YieldReason.CODING else None,
     )
 
 
@@ -1895,21 +1895,21 @@ async def yield_to_coding():
     return {
         "status": result.status,
         "message": result.message,
-        "nemotron_available": result.nemotron_available,
+        "coding_model_available": result.coding_model_available,
     }
 
 
-async def check_nemotron_health() -> bool:
-    """Check if Nemotron coding model is healthy and available."""
+async def check_coding_model_health() -> bool:
+    """Check if Qwopus coding model is healthy and available."""
     import httpx
 
     # Internal Docker network — qwopus-coding service
-    nemotron_urls = [
+    coding_model_urls = [
         "http://qwopus-coding:8000/health",  # Internal Docker network
     ]
 
     async with httpx.AsyncClient(timeout=3.0) as client:
-        for url in nemotron_urls:
+        for url in coding_model_urls:
             try:
                 response = await client.get(url)
                 if response.status_code == 200:
@@ -1929,14 +1929,14 @@ async def coding_status():
     Check availability of coding models and recommend routing.
 
     Returns:
-    - nemotron_available: Primary coding model on RTX 3090
+    - coding_model_available: Primary coding model on RTX 3090
     - pii_models_loaded: Whether PII models are using RTX 2070
     - recommended_action: Which endpoint to use for coding
     """
-    nemotron_available = await check_nemotron_health()
+    coding_model_available = await check_coding_model_health()
     pii_loaded = model_manager.yolo_face is not None
 
-    if nemotron_available:
+    if coding_model_available:
         return {
             "qwopus_available": True,
             "pii_models_loaded": pii_loaded,
@@ -1946,20 +1946,20 @@ async def coding_status():
         }
     elif pii_loaded:
         return {
-            "nemotron_available": False,
+            "coding_model_available": False,
             "pii_models_loaded": True,
             "recommended_action": "yield_then_fallback",
             "yield_endpoint": "http://pii-blur-api:8000/api/v1/yield-to-coding",
             "coding_endpoint": "http://coding-model-fallback:8000/v1",
-            "message": "Nemotron unavailable, PII models loaded - call yield first",
+            "message": "Qwopus unavailable, PII models loaded - call yield first",
         }
     else:
         return {
-            "nemotron_available": False,
+            "coding_model_available": False,
             "pii_models_loaded": False,
             "recommended_action": "use_fallback",
             "coding_endpoint": "http://coding-model-fallback:8000/v1",
-            "message": "Nemotron unavailable, RTX 2070 free for coding fallback",
+            "message": "Qwopus unavailable, RTX 2070 free for coding fallback",
         }
 
 

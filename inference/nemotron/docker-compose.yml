@@ -1,0 +1,153 @@
+services:
+  nemotron-coding:
+    image: ${SHML_REGISTRY_IMAGE_PREFIX:-shml/local}/nemotron-coding:${SHML_IMAGE_TAG:-latest}
+    pull_policy: ${SHML_IMAGE_PULL_POLICY:-missing}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nemotron-coding
+    restart: unless-stopped
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0 # RTX 3090 Ti only
+      - CUDA_VISIBLE_DEVICES=0
+
+    volumes:
+      - ../../data/models/qwopus:/models:ro
+
+    command:
+      - --model
+      - /models/${CODING_MODEL_GGUF:-Qwen3.5-27B.Q4_K_M.gguf}
+      - --alias
+      - ${CODING_MODEL_ALIAS:-nemotron-coding}
+      - --threads
+      - "-1"
+      - --n-gpu-layers
+      - "999"
+      - --ctx-size
+      - "${CODING_MODEL_CTX:-65536}"
+      # KV cache quantization
+      # Architecture: Qwen3.5-27B — pure transformer, all ~36 attention layers have KV.
+      #   GQA: n_kv_heads ≈ 8, head_dim=128. Very different from Nemotron (only 6 attn layers).
+      #
+      # VRAM budget at ctx=65536, 16.5 GB Q4_K_M weights → 7.5 GB headroom on RTX 3090 Ti:
+      #   KV f16 (default): ~9.0 GB → total ~25.5 GB → over 24 GB limit ❌
+      #   KV q8_0 (applied): ~4.5 GB → total ~21.0 GB → 3.0 GB remaining ✅
+      #   KV q4_0 (optional): ~2.25 GB → total ~18.75 GB → 5.25 GB remaining ✅
+      # q8_0 is the sweet spot: 3 GB headroom, negligible quality loss vs f16.
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      # To reduce further (still safe): change both to q4_0 (saves 288 MiB vs f16)
+      - --port
+      - "8000"
+      - --host
+      - 0.0.0.0
+      - --jinja
+      # reasoning-format auto: lets model use extended thinking when needed for tool calls.
+      # Validated by JoelDeTeves (2026-03-28): zero tool-call failures at 100+ T/s on RTX A5000.
+      # Replaces --reasoning-budget 0 (which was silently disabling all chain-of-thought).
+      - --reasoning-format
+      - auto
+      # Flash attention: reduces VRAM overhead for long contexts, prerequisite for 128k ctx.
+      - --flash-attn
+      - --batch-size
+      - "4096"
+      - --ubatch-size
+      - "2048"
+      - --temp
+      - "0.6"
+      - --top-p
+      - "0.95"
+      - --top-k
+      - "20"
+      - --min-p
+      - "0.0"
+      # presence-penalty 0.5: key setting — prevents repetitive tool-call loops.
+      - --presence-penalty
+      - "0.5"
+
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8010:8000"  # REMOVED: was bypassing auth
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ '0' ]
+              capabilities: [ gpu ]
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nemotron.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.nemotron.priority=2147483647"
+      - "traefik.http.services.nemotron.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.nemotron-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.nemotron.middlewares=oauth2-errors,oauth2-auth,nemotron-strip"
+
+    networks:
+      - shml-platform
+
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ==========================================================================
+  # Nemotron Manager - GPU Yield API for Training Integration
+  # Provides /training/start and /training/end endpoints for Ray jobs
+  # ==========================================================================
+  nemotron-manager:
+    build:
+      context: ./manager
+      dockerfile: Dockerfile
+    container_name: nemotron-manager
+    restart: unless-stopped
+
+    environment:
+      - NEMOTRON_CONTAINER=nemotron-coding
+      - GPU_INDEX=0
+      - YIELD_WAIT_SECONDS=5
+      - DOCKER_HOST=tcp://docker-proxy:2375
+
+    # SECURITY: Docker socket removed - using proxy instead
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock  # REMOVED: host-escape vector
+
+    # Run with docker group for socket access
+    user: "1000:984" # UID:docker-GID (adjust GID if different)
+
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8011:8000"  # REMOVED: was bypassing auth
+
+    networks:
+      - shml-platform
+
+    labels:
+      - "traefik.enable=true"
+      # Training yield API - accessible to Ray jobs
+      - "traefik.http.routers.nemotron-manager.rule=PathPrefix(`/api/coding-manager`)"
+      - "traefik.http.routers.nemotron-manager.priority=2147483646"
+      - "traefik.http.services.nemotron-manager.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.nemotron-manager-strip.stripprefix.prefixes=/api/coding-manager"
+      - "traefik.http.routers.nemotron-manager.middlewares=oauth2-errors,oauth2-auth,nemotron-manager-strip"
+
+    healthcheck:
+      test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    depends_on:
+      - nemotron-coding
+
+networks:
+  shml-platform:
+    external: true

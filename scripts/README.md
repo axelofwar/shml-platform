@@ -123,7 +123,6 @@ Environment tuning for `autonomous_service_guard.sh`:
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `setup_google_idp.sh` | Configure Google OAuth | `./setup_google_idp.sh` |
-| `migrate_sfml_to_shml.sh` | Migration script | `./migrate_sfml_to_shml.sh` |
 | `init_mlflow.py` | Initialize MLflow | `python init_mlflow.py` |
 
 ### Security (`security/`)

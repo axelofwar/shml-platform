@@ -56,11 +56,21 @@ dc_pull() {
 
 compose_declared_container_names() {
     local compose_file="$1"
-    grep -E '^[[:space:]]*container_name:' "$compose_file" 2>/dev/null | awk '{print $2}' | tr -d '"' | sort -u
+    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env \
+        -f "$compose_file" config 2>/dev/null | \
+        grep -E '^[[:space:]]*container_name:' | awk '{print $2}' | tr -d '"' | sort -u
+}
+
+compose_declared_services() {
+    local compose_file="$1"
+    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env \
+        -f "$compose_file" config --services 2>/dev/null | sort -u
 }
 
 cleanup_compose_conflicts() {
     local compose_file="$1"
+    local declared_services
+    declared_services=$(compose_declared_services "$compose_file")
 
     while IFS= read -r container_name; do
         [ -z "$container_name" ] && continue
@@ -71,11 +81,15 @@ cleanup_compose_conflicts() {
 
         local existing_project
         local existing_service
+        local existing_status
         existing_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_name" 2>/dev/null || true)
         existing_service=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$container_name" 2>/dev/null || true)
+        existing_status=$(docker inspect -f '{{.State.Status}}' "$container_name" 2>/dev/null || true)
 
-        if [ "$existing_project" != "$COMPOSE_PROJECT_NAME" ] || [ -z "$existing_service" ]; then
-            log_warn "Removing conflicting container: $container_name (project=${existing_project:-none})"
+        if [ "$existing_project" != "$COMPOSE_PROJECT_NAME" ] || [ -z "$existing_service" ] || \
+            ! printf '%s\n' "$declared_services" | grep -Fxq "$existing_service" || \
+            [[ "$existing_status" =~ ^(created|dead|exited)$ ]]; then
+            log_warn "Removing conflicting container: $container_name (project=${existing_project:-none}, service=${existing_service:-none}, status=${existing_status:-unknown})"
             docker rm -f "$container_name" >/dev/null 2>&1 || true
         fi
     done < <(compose_declared_container_names "$compose_file")
@@ -85,17 +99,33 @@ cleanup_compose_conflicts() {
 # Compose Lifecycle Wrappers
 # =============================================================================
 
-# dc_up: pull (with retry+fallback) → cleanup conflicts → start with remove-orphans
+# dc_up: pull (with retry+fallback) → cleanup conflicts → start
+# NOTE: --remove-orphans is intentionally OMITTED here. All compose files
+# share COMPOSE_PROJECT_NAME, so --remove-orphans would kill containers from
+# OTHER compose files (e.g., starting inference would remove traefik, postgres).
+# Orphan cleanup happens explicitly in dc_down and stop_all_services instead.
 # Usage: dc_up <compose_file> [service...]
 dc_up() {
     local compose_file="$1"
+    local output=""
+    local compose_status=0
     shift
     ensure_networks
     cleanup_compose_conflicts "$compose_file"
-    dc_pull "$compose_file"
-    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env \
-        -f "$compose_file" up -d --remove-orphans \
-        --pull "${SHML_IMAGE_PULL_POLICY:-missing}" "$@" 2>&1 | grep -v "orphan" || true
+    dc_pull "$compose_file" || return 1
+    if output=$(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file .env \
+        -f "$compose_file" up -d \
+        --pull "${SHML_IMAGE_PULL_POLICY:-missing}" "$@" 2>&1); then
+        compose_status=0
+    else
+        compose_status=$?
+    fi
+
+    if [ -n "$output" ]; then
+        printf '%s\n' "$output" | grep -v "orphan" || true
+    fi
+
+    return "$compose_status"
 }
 
 # dc_stop: stop containers (preserves container state, fast for temporary stops)

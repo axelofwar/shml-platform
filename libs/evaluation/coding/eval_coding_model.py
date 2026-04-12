@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Qwen3.5-35B-A3B vs Nemotron-3-Nano-30B-A3B — Full Ecosystem Evaluation
+Qwopus (Qwen3.5-27B) vs Qwen3-VL Coding Model Evaluation — Full Ecosystem Evaluation
 ======================================================================
 
 Comprehensive comparison of local coding models across the ENTIRE platform
@@ -26,7 +26,7 @@ Usage:
   ./ray_compute/jobs/evaluation/run_model_ab_eval.sh
 
   # Manual: compare both models (both must be running):
-  python eval_coding_model.py --nemotron-url http://localhost:8010/v1 \
+  python eval_coding_model.py --coding-url http://localhost:8010/v1 \
                                --qwen-url http://localhost:8020/v1 \
                                --output results/coding_model_eval.json
 
@@ -40,7 +40,7 @@ Usage:
   python eval_coding_model.py --dry-run
 
 References:
-  - Nemotron config:  inference/qwopus/docker-compose.yml
+  - Qwopus config:    inference/qwopus/docker-compose.yml
   - Qwen config:      inference/qwen/docker-compose.yml
   - Agent service:    inference/agent-service/app/agent.py (ACE pattern)
   - Skills:           inference/agent-service/app/skills.py (ShellSkill, etc.)
@@ -220,7 +220,7 @@ LONG_CONTEXT_TASKS = [
         "question": "How many experts are activated per token in the MoE layer?",
         "expected": "8 routed",
         "max_tokens": 64,
-        "skip_model": "nemotron",  # Nemotron ctx is 65K
+        "skip_model": "qwopus",  # skip for category tests
     },
 ]
 
@@ -791,7 +791,7 @@ class ModelProfile:
     architecture: str
 
 
-NEMOTRON_PROFILE = ModelProfile(
+QWOPUS_PROFILE = ModelProfile(
     name="Nemotron-3-Nano-30B-A3B",
     url="",
     context_window=65536,
@@ -1305,7 +1305,7 @@ def evaluate_model(
 
 
 def print_comparison(
-    nemotron_results: list[TaskResult],
+    qwopus_results: list[TaskResult],
     qwen_results: list[TaskResult],
 ) -> None:
     """Print side-by-side comparison table."""
@@ -1322,7 +1322,7 @@ def print_comparison(
     }
 
     for cat in categories:
-        n_tasks = [r for r in nemotron_results if r.category == cat and not r.skipped]
+        n_tasks = [r for r in qwopus_results if r.category == cat and not r.skipped]
         q_tasks = [r for r in qwen_results if r.category == cat and not r.skipped]
 
         if not n_tasks and not q_tasks:
@@ -1347,7 +1347,7 @@ def print_comparison(
             print(f"  {nt.task_name:<30s} {n_score:>12s} {q_score:>12s} {winner:>10s}")
 
     # Throughput comparison
-    n_all = [r for r in nemotron_results if not r.skipped and not r.error]
+    n_all = [r for r in qwopus_results if not r.skipped and not r.error]
     q_all = [r for r in qwen_results if not r.skipped and not r.error]
 
     if n_all and q_all:
@@ -1394,8 +1394,8 @@ def print_comparison(
     print(f"\n{'═' * 90}")
 
     # Overall summary
-    n_total_checks = sum(r.checks_passed for r in nemotron_results if not r.skipped)
-    n_total_possible = sum(r.checks_total for r in nemotron_results if not r.skipped)
+    n_total_checks = sum(r.checks_passed for r in qwopus_results if not r.skipped)
+    n_total_possible = sum(r.checks_total for r in qwopus_results if not r.skipped)
     q_total_checks = sum(r.checks_passed for r in qwen_results if not r.skipped)
     q_total_possible = sum(r.checks_total for r in qwen_results if not r.skipped)
 
@@ -1420,7 +1420,7 @@ def parse_args():
         description="Qwen vs Nemotron coding model evaluation"
     )
     parser.add_argument(
-        "--nemotron-url",
+        "--coding-url",
         type=str,
         default="http://localhost:8010/v1",
         help="Nemotron OpenAI-compatible endpoint",
@@ -1434,7 +1434,7 @@ def parse_args():
     parser.add_argument(
         "--target",
         type=str,
-        choices=["both", "nemotron", "qwen"],
+        choices=["both", "qwopus", "qwen"],
         default="both",
         help="Which model(s) to evaluate",
     )
@@ -1490,24 +1490,24 @@ def main():
                 print(f"    - {t['id']}: {t['name']}")
         return 0
 
-    nemotron_results = []
+    qwopus_results = []
     qwen_results = []
 
     global _REQUEST_TIMEOUT, _THINKING_HEADROOM
     _REQUEST_TIMEOUT = args.timeout
     _THINKING_HEADROOM = args.thinking_headroom
 
-    NEMOTRON_PROFILE.url = args.nemotron_url
+    QWOPUS_PROFILE.url = args.coding_url
     QWEN_PROFILE.url = args.qwen_url
 
-    if args.target in ("both", "nemotron"):
-        nemotron_results = evaluate_model(NEMOTRON_PROFILE, args.nemotron_url, tasks)
+    if args.target in ("both", "qwopus"):
+        qwopus_results = evaluate_model(QWOPUS_PROFILE, args.coding_url, tasks)
 
     if args.target in ("both", "qwen"):
         qwen_results = evaluate_model(QWEN_PROFILE, args.qwen_url, tasks)
 
-    if args.target == "both" and nemotron_results and qwen_results:
-        print_comparison(nemotron_results, qwen_results)
+    if args.target == "both" and qwopus_results and qwen_results:
+        print_comparison(qwopus_results, qwen_results)
 
     # Save results
     if args.output:
@@ -1517,11 +1517,11 @@ def main():
         report = {
             "timestamp": datetime.now().isoformat(),
             "models": {
-                "nemotron": asdict(NEMOTRON_PROFILE),
+                "qwopus": asdict(QWOPUS_PROFILE),
                 "qwen": asdict(QWEN_PROFILE),
             },
             "results": {
-                "nemotron": [asdict(r) for r in nemotron_results],
+                "qwopus": [asdict(r) for r in qwopus_results],
                 "qwen": [asdict(r) for r in qwen_results],
             },
         }

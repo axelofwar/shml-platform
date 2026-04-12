@@ -64,12 +64,12 @@ class TestGPUResourceManager:
 
         gpu0 = manager._get_endpoints_for_gpu(0)
         gpu1 = manager._get_endpoints_for_gpu(1)
-        fallback = manager._find_fallback_endpoint("nemotron-manager", 0)
+        fallback = manager._find_fallback_endpoint("coding-manager", 0)
 
         assert len(gpu0) >= 1
         assert gpu1 == []
         assert fallback is not None
-        assert "nemotron-manager" in fallback.name
+        assert "coding-manager" in fallback.name
 
     def test_yield_gpu_for_training_updates_state_and_tries_fallback(self):
         from shml_training.core.gpu_resource import GPUResourceManager, GPUState, ServiceEndpoint

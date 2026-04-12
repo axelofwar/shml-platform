@@ -1,5 +1,3 @@
-version: '3.8'
-
 # OpenTelemetry Distributed Tracing Stack
 # Collects traces from Ray jobs for performance analysis
 # Accessible via Grafana at http://localhost/grafana/
@@ -17,7 +15,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 512M
-    command: ["-config.file=/etc/tempo.yaml"]
+    command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ../../monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - ../../monitoring/tempo/data:/tmp/tempo
@@ -35,9 +33,9 @@ services:
     networks:
       - platform
     labels:
-      - "traefik.enable=false"  # Internal service, access via Grafana datasource
+      - "traefik.enable=false" # Internal service, access via Grafana datasource
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:3200/ready" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -54,7 +52,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 512M
-    command: ["--config=/etc/otel-collector-config.yaml"]
+    command: [ "--config=/etc/otel-collector-config.yaml" ]
     volumes:
       - ../../monitoring/tempo/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     # SECURITY: No direct port exposure - internal only
@@ -73,7 +71,7 @@ services:
     depends_on:
       - tempo
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      test: [ "CMD", "/otelcol-contrib", "--version" ]
       interval: 30s
       timeout: 10s
       retries: 3

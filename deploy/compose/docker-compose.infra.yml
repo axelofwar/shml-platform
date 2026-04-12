@@ -48,6 +48,15 @@ services:
       - "${LAN_IP:-0.0.0.0}:443:443"
       # SECURITY: Bind Traefik API to localhost only (was 0.0.0.0)
       - "127.0.0.1:8090:8080"
+    extra_hosts:
+      # Allow file-provider routes to reach host-level systemd services
+      # (GitNexus on port 3005, etc.)
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Exposed to dynamic.yml Go templates so Traefik routing rules
+      # derive path/port from platform .env rather than hardcoded strings.
+      - HERMES_WORKSPACE_BASE=${HERMES_WORKSPACE_BASE:-/hermes-workspace}
+      - HERMES_WORKSPACE_PORT=${HERMES_WORKSPACE_PORT:-3000}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../../monitoring/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
@@ -58,7 +67,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      test: [ "CMD", "traefik", "healthcheck", "--ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -94,15 +103,15 @@ services:
       # Cache: 60% of heap (default)
       JAVA_OPTS: "-Xmx1g -Xms512m"
     expose:
-      - "19120"  # REST API (Iceberg catalog)
-      - "9000"   # Management/metrics
+      - "19120" # REST API (Iceberg catalog)
+      - "9000" # Management/metrics
     networks:
       - platform
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      test: [ "CMD", "curl", "-f", "http://localhost:19120/api/v2/config" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -130,10 +139,34 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 768M
+          memory: ${POSTGRES_MEM_LIMIT:-1536M}
         reservations:
           cpus: '0.5'
-          memory: 384M
+          memory: ${POSTGRES_MEM_RESERVATION:-512M}
+    # Container-aware PG settings — sized relative to POSTGRES_MEM_LIMIT (default 1536M).
+    # shared_buffers=384MB (25%), effective_cache_size=1100MB (72%), work_mem capped to
+    # prevent 75×work_mem exceeding the limit during concurrent query storms.
+    # max_connections=75 reduces per-connection overhead vs the default 100.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1100MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=75
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - synchronous_commit=off
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -146,7 +179,7 @@ services:
     secrets:
       - shared_db_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -171,7 +204,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -191,17 +224,17 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 512M
+          memory: ${FUSIONAUTH_MEM_LIMIT:-768M}
         reservations:
           cpus: '0.25'
-          memory: 256M
+          memory: ${FUSIONAUTH_MEM_RESERVATION:-384M}
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/fusionauth
       DATABASE_ROOT_USERNAME: postgres
       DATABASE_ROOT_PASSWORD: ${SHARED_DB_PASSWORD}
       DATABASE_USERNAME: fusionauth
       DATABASE_PASSWORD: ${SHARED_DB_PASSWORD}
-      FUSIONAUTH_APP_MEMORY: 384M
+      FUSIONAUTH_APP_MEMORY: ${FUSIONAUTH_APP_MEM:-512M}
       FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_RUNTIME_MODE:-production}
       FUSIONAUTH_APP_URL: https://${PUBLIC_DOMAIN}/auth
       SEARCH_TYPE: database
@@ -216,7 +249,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9011/api/status"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9011/api/status" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -387,15 +420,18 @@ services:
       OAUTH2_PROXY_REDIS_CONNECTION_URL: "redis://shml-redis:6379"
 
       # Cookie security hardening
-      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"   # Prevent JavaScript access
-      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"    # CSRF protection
+      OAUTH2_PROXY_COOKIE_HTTPONLY: "true" # Prevent JavaScript access
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax" # CSRF protection
 
       # Grace period for temporary network issues (5 minutes)
       # Prevents hard logout if FusionAuth temporarily unreachable
       OAUTH2_PROXY_GRACE_PERIOD: "5m"
 
-      # Skip authentication for static assets (performance optimization)
-      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt).*$"
+      # Skip authentication for static assets and workspace API subroutes.
+      # Workspace API routes are already protected by the admin-level RBAC
+      # Traefik middleware (role-auth-admin). Skipping oauth2-proxy here
+      # prevents 401 on AJAX fetches where the session cookie isn't forwarded.
+      OAUTH2_PROXY_SKIP_AUTH_REGEX: "^/(assets|static|favicon\\.ico|robots\\.txt|hermes-workspace/api|hermes-workspace/_serverFn|hermes-workspace/@vite).*$"
 
       # Redirect and URL configuration - using /oauth2-proxy prefix to avoid conflict with FusionAuth's /oauth2
       OAUTH2_PROXY_REDIRECT_URL: https://${PUBLIC_DOMAIN}/oauth2-proxy/callback
@@ -577,7 +613,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -614,7 +650,7 @@ services:
       - "9100"
     pid: host
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -654,7 +690,7 @@ services:
     devices:
       - /dev/kmsg
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -691,7 +727,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -724,7 +760,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9091/-/healthy"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9091/-/healthy" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -761,7 +797,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/')" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -829,7 +865,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -870,7 +906,7 @@ services:
     expose:
       - "80"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -906,13 +942,13 @@ services:
           memory: 16M
     user: "1000:1000"
     environment:
-      INIT_ASSETS: "0"  # Don't overwrite our config
+      INIT_ASSETS: "0" # Don't overwrite our config
     volumes:
       - ../../monitoring/homer:/www/assets:ro
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -944,7 +980,7 @@ services:
           memory: 64M
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api,gitlab
+      POSTGRES_DB: mlflow_db,ray_compute,inference,fusionauth,chat_api
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
       POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
@@ -967,7 +1003,47 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  gitlab-postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    container_name: gitlab-postgres-backup
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '${BACKUP_CPU_LIMIT:-0.5}'
+          memory: ${BACKUP_MEM_LIMIT:-256M}
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    environment:
+      POSTGRES_HOST: gitlab-postgres
+      POSTGRES_DB: gitlab
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      POSTGRES_EXTRA_OPTS: "-Z6 --format=custom"
+      SCHEDULE: "${GITLAB_BACKUP_SCHEDULE:-${BACKUP_SCHEDULE:-0 */6 * * *}}"
+      BACKUP_KEEP_DAYS: "${BACKUP_KEEP_DAYS:-7}"
+      BACKUP_KEEP_WEEKS: "${BACKUP_KEEP_WEEKS:-4}"
+      BACKUP_KEEP_MONTHS: "${BACKUP_KEEP_MONTHS:-6}"
+      HEALTHCHECK_PORT: 8080
+      WEBHOOK_URL: "${BACKUP_WEBHOOK_URL:-}"
+      WEBHOOK_EXTRA_ARGS: ""
+    volumes:
+      - ../../backups/postgres:/backups
+    secrets:
+      - shared_db_password
+    networks:
+      - core
+    depends_on:
+      gitlab-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -988,7 +1064,7 @@ services:
         reservations:
           cpus: '0.05'
           memory: 64M
-    command: ["-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook"]
+    command: [ "-verbose", "-hooks=/etc/webhook/hooks.json", "-hotreload", "-urlprefix=webhook" ]
     environment:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
       FUSIONAUTH_WEBHOOK_SECRET: "${FUSIONAUTH_WEBHOOK_SECRET:-}"
@@ -998,12 +1074,12 @@ services:
     volumes:
       - ../../scripts/webhook:/etc/webhook:ro
       - ../../scripts:/scripts:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # Read-only for security
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only for security
       - .:/opt/${PLATFORM_PREFIX:-shml}-platform:ro
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: [ "CMD-SHELL", "kill -0 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1016,11 +1092,11 @@ services:
       # Webhooks should be publicly accessible (authenticated via secret)
       # Do NOT add oauth2-auth middleware here
 
-  # --------------------------------------------------------------------------
-  # CODE-SERVER - VS Code in Browser for Remote Development
-  # Uses coder/code-server for better extension marketplace compatibility
-  # Admin-only OAuth protection via /ide path
-  # --------------------------------------------------------------------------
+      # --------------------------------------------------------------------------
+      # CODE-SERVER - VS Code in Browser for Remote Development
+      # Uses coder/code-server for better extension marketplace compatibility
+      # Admin-only OAuth protection via /ide path
+      # --------------------------------------------------------------------------
   code-server:
     image: codercom/code-server:latest
     container_name: ${PLATFORM_PREFIX:-shml}-code-server
@@ -1053,7 +1129,7 @@ services:
       - platform
     working_dir: /home/coder/project
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/healthz" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1073,10 +1149,33 @@ services:
   # GITLAB CE (Self-Hosted Git Mirror + Container/Package Registry)
   # ==========================================================================
   # GitLab CE for git disaster recovery mirror, container registry, and PyPI
-  # packages. Uses shared PostgreSQL (database: gitlab) and Redis (db 8).
+  # packages. Uses dedicated PostgreSQL 16 (database: gitlab) and shared Redis (db 8).
   # Accessible at /gitlab via Traefik with developer-level OAuth protection.
   # Container registry available at port 5050.
   # --------------------------------------------------------------------------
+  gitlab-postgres:
+    image: postgres:16-alpine
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitlab
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD_FILE: /run/secrets/shared_db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - gitlab-postgres-data:/var/lib/postgresql/data
+    secrets:
+      - shared_db_password
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U gitlab -d gitlab" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - core
+    expose:
+      - "5432"
+
   gitlab:
     image: gitlab/gitlab-ce:latest
     container_name: ${PLATFORM_PREFIX:-shml}-gitlab
@@ -1115,15 +1214,15 @@ services:
         gitlab_rails['gitlab_default_projects_features_builds'] = true
         gitlab_rails['gitlab_default_projects_features_issues'] = true
 
-        # --- Shared PostgreSQL ---
+        # --- Dedicated GitLab PostgreSQL 16 ---
         gitlab_rails['db_adapter'] = 'postgresql'
         gitlab_rails['db_encoding'] = 'unicode'
-        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_host'] = 'gitlab-postgres'
         gitlab_rails['db_port'] = 5432
         gitlab_rails['db_database'] = 'gitlab'
         gitlab_rails['db_username'] = 'gitlab'
         gitlab_rails['db_password'] = '${SHARED_DB_PASSWORD}'
-        # Reduce connection pressure on shared PostgreSQL
+        # Reduce connection pressure on the dedicated GitLab PostgreSQL instance
         gitlab_rails['db_pool'] = 6
 
         # --- Shared Redis (database 8) ---
@@ -1195,6 +1294,7 @@ services:
       - gitlab-data:/var/opt/gitlab
     networks:
       - platform
+      - core
     expose:
       - "8929"
       - "9168"
@@ -1202,12 +1302,12 @@ services:
       # Container registry - bind to localhost (accessible via Tailscale)
       - "127.0.0.1:5050:5050"
     depends_on:
-      postgres:
+      gitlab-postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:8929/gitlab/users/sign_in" ]
       interval: 60s
       timeout: 15s
       retries: 5
@@ -1232,62 +1332,75 @@ services:
       # Registry is accessed directly at <tailscale-ip>:5050, not through Traefik
       # Docker login: docker login ${PUBLIC_DOMAIN}:5050
 
-  # --------------------------------------------------------------------------
-  # GITLAB RUNNER - Persistent CI runner for mirror/security pipelines
-  # --------------------------------------------------------------------------
-  gitlab-runner:
+      # --------------------------------------------------------------------------
+      # GITLAB RUNNER - Persistent CI runner for mirror/security pipelines
+      # --------------------------------------------------------------------------
+  gitlab-runner-platform:
     image: gitlab/gitlab-runner:latest
-    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-platform
     restart: unless-stopped
-    entrypoint:
-      - /bin/sh
-      - -lc
-      - |
-        set -eu
-        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
-          if [ -z "${GITLAB_RUNNER_REGISTRATION_TOKEN:-}" ]; then
-            echo "GITLAB_RUNNER_REGISTRATION_TOKEN is required for first-time runner registration." >&2
-            exit 1
-          fi
-          gitlab-runner register --non-interactive \
-            --url "${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}" \
-            --registration-token "${GITLAB_RUNNER_REGISTRATION_TOKEN}" \
-            --executor "docker" \
-            --docker-image "${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}" \
-            --description "${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}" \
-            --tag-list "${GITLAB_RUNNER_TAGS:-docker,shml}" \
-            --run-untagged="true" \
-            --locked="false"
-        fi
-        if ! grep -q '^  clone_url = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  url =/a\  clone_url = "'"${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}"'"' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^    network_mode = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^    image =/a\    network_mode = "'"${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}"'"' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^  limit = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  name =/a\  limit = 1' /etc/gitlab-runner/config.toml
-        fi
-        if ! grep -q '^  request_concurrency = ' /etc/gitlab-runner/config.toml; then
-          sed -i '/^  limit =/a\  request_concurrency = 1' /etc/gitlab-runner/config.toml
-        fi
-        if grep -q '^concurrent = ' /etc/gitlab-runner/config.toml; then
-          sed -i 's/^concurrent = .*/concurrent = 1/' /etc/gitlab-runner/config.toml
-        else
-          sed -i '1i concurrent = 1' /etc/gitlab-runner/config.toml
-        fi
-        exec gitlab-runner run --user=gitlab-runner --working-directory=/home/gitlab-runner
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
     environment:
       GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
       GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
-      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_RUNNER_REGISTRATION_TOKEN:-}
-      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_RUNNER_DESCRIPTION:-shml-docker-runner}
-      GITLAB_RUNNER_TAGS: ${GITLAB_RUNNER_TAGS:-docker,shml}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_PLATFORM_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_PLATFORM_RUNNER_DESCRIPTION:-shml-platform-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_PLATFORM_RUNNER_TAGS:-docker,shml,platform}
       GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
       GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_PLATFORM_RUNNER_RUN_UNTAGGED:-true}
     volumes:
+      - ../../scripts:/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - gitlab-runner-config:/etc/gitlab-runner
+      - gitlab-runner-platform-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  gitlab-runner-robotics:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-robotics
+    restart: unless-stopped
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_ROBOTICS_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_ROBOTICS_RUNNER_DESCRIPTION:-shml-robotics-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_ROBOTICS_RUNNER_TAGS:-docker,shml,robotics}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_ROBOTICS_RUNNER_RUN_UNTAGGED:-true}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-robotics-config:/etc/gitlab-runner
+    networks:
+      - platform
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  gitlab-runner-training:
+    image: gitlab/gitlab-runner:latest
+    container_name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-training
+    restart: unless-stopped
+    entrypoint: [ "/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh" ]
+    environment:
+      GITLAB_RUNNER_URL: ${GITLAB_RUNNER_URL:-http://gitlab:8929/gitlab/}
+      GITLAB_RUNNER_CLONE_URL: ${GITLAB_RUNNER_CLONE_URL:-http://gitlab:8929/gitlab}
+      GITLAB_RUNNER_REGISTRATION_TOKEN: ${GITLAB_TRAINING_RUNNER_REGISTRATION_TOKEN:-}
+      GITLAB_RUNNER_DESCRIPTION: ${GITLAB_TRAINING_RUNNER_DESCRIPTION:-shml-training-runner}
+      GITLAB_RUNNER_TAGS: ${GITLAB_TRAINING_RUNNER_TAGS:-docker,shml,training}
+      GITLAB_RUNNER_DOCKER_IMAGE: ${GITLAB_RUNNER_DOCKER_IMAGE:-python:3.11}
+      GITLAB_RUNNER_NETWORK_MODE: ${GITLAB_RUNNER_NETWORK_MODE:-shml-platform}
+      GITLAB_RUNNER_RUN_UNTAGGED: ${GITLAB_TRAINING_RUNNER_RUN_UNTAGGED:-true}
+    volumes:
+      - ../../scripts:/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gitlab-runner-training-config:/etc/gitlab-runner
     networks:
       - platform
     depends_on:
@@ -1301,7 +1414,7 @@ services:
     image: voxel51/fiftyone:latest
     container_name: ${PLATFORM_PREFIX:-shml}-fiftyone
     restart: unless-stopped
-    command: ["python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1"]
+    command: [ "python", "/opt/fiftyone-entrypoint/entrypoint.py", "fiftyone", "app", "launch", "--address", "0.0.0.0", "--port", "5151", "--remote", "--wait", "-1" ]
     deploy:
       resources:
         limits:
@@ -1331,7 +1444,7 @@ services:
       fiftyone-mongodb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5151/')" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1365,7 +1478,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -1401,7 +1514,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9093/-/healthy || exit 1"]
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9093/-/healthy || exit 1" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -1450,7 +1563,7 @@ services:
       alertmanager:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9087 || exit 1"]
+      test: [ "CMD-SHELL", "wget -q -O - http://localhost:9087/metrics >/dev/null || exit 1" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -1465,7 +1578,7 @@ services:
     container_name: ${PLATFORM_PREFIX:-shml}-feature-scheduler
     restart: unless-stopped
     user: "0:0"
-    entrypoint: ["/bin/sh", "/scripts/monitoring/feature_scheduler.sh"]
+    entrypoint: [ "/bin/sh", "/scripts/monitoring/feature_scheduler.sh" ]
     environment:
       RAY_HEAD_ADDRESS: "ray-head:8265"
       MATERIALIZE_INTERVAL: "${MATERIALIZE_INTERVAL:-3600}"
@@ -1484,7 +1597,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "test -f /var/log/feature-scheduler/scheduler.log"]
+      test: [ "CMD-SHELL", "test -f /var/log/feature-scheduler/scheduler.log" ]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -1498,7 +1611,7 @@ services:
     image: docker:cli
     container_name: ${PLATFORM_PREFIX:-shml}-watchdog
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash curl jq procps coreutils util-linux >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh"]
+    entrypoint: [ "/bin/sh", "-c", "apk add --no-cache bash curl jq procps coreutils util-linux >/dev/null 2>&1; exec bash /scripts/self-healing/watchdog.sh" ]
     environment:
       CHECK_INTERVAL: "${WATCHDOG_INTERVAL:-60}"
       MAX_RESTARTS: "${WATCHDOG_MAX_RESTARTS:-3}"
@@ -1520,7 +1633,7 @@ services:
       HOST_SWAP_HIGH_WATERMARK_PCT: "${HOST_SWAP_HIGH_WATERMARK_PCT:-25}"
       DISPLAY_GPU_UTIL_WATERMARK_PCT: "${DISPLAY_GPU_UTIL_WATERMARK_PCT:-60}"
       DISPLAY_GPU_MEMORY_WATERMARK_MIB: "${DISPLAY_GPU_MEMORY_WATERMARK_MIB:-2048}"
-      LOW_PRIORITY_CONTAINERS: "${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,pii-blur-api,shml-fiftyone,shml-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
+      LOW_PRIORITY_CONTAINERS: "${LOW_PRIORITY_CONTAINERS:-qwen3-vl-api,z-image-api,shml-fiftyone,shml-code-server,dozzle,ray-compute-ui,sba-resource-portal}"
       # Agent service URL for autonomous cross-service resolution
       AGENT_SERVICE_URL: "http://agent-service:8000"
       # GitLab application-level health probe (beyond container health)
@@ -1545,7 +1658,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "test -f /var/log/watchdog/watchdog.log"]
+      test: [ "CMD-SHELL", "test -f /var/log/watchdog/watchdog.log" ]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -1559,7 +1672,7 @@ services:
     image: python:3.12-slim
     container_name: ${PLATFORM_PREFIX:-shml}-watchdog-admin
     restart: unless-stopped
-    entrypoint: ["python3", "/scripts/self-healing/watchdog_admin.py"]
+    entrypoint: [ "python3", "/scripts/self-healing/watchdog_admin.py" ]
     environment:
       ADMIN_PORT: "8099"
       BASE_PATH: "/watchdog"
@@ -1590,7 +1703,7 @@ services:
       - "traefik.http.routers.watchdog-admin.middlewares=oauth2-errors,oauth2-auth,role-auth-admin"
       - "traefik.http.services.watchdog-admin.loadbalancer.server.port=8099"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8099/watchdog/health\")' 2>/dev/null"]
+      test: [ "CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8099/watchdog/health\")' 2>/dev/null" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -1604,7 +1717,7 @@ services:
     image: python:3.12-slim
     container_name: ${PLATFORM_PREFIX:-shml}-nightly-test-runner
     restart: unless-stopped
-    entrypoint: ["/bin/bash", "/workspace/scripts/monitoring/nightly_test_runner.sh"]
+    entrypoint: [ "/bin/bash", "/workspace/scripts/monitoring/nightly_test_runner.sh" ]
     working_dir: /workspace
     environment:
       TEST_HOUR: "${TEST_HOUR:-3}"
@@ -1620,12 +1733,12 @@ services:
           cpus: '0.1'
           memory: 64M
     volumes:
-      - .:/workspace:ro
+      - ../../:/workspace:ro
       - test-runner-data:/var/log/test-runner
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "test -f /var/log/test-runner/runner.log"]
+      test: [ "CMD-SHELL", "test -f /var/log/test-runner/runner.log" ]
       interval: 60s
       timeout: 5s
       retries: 3
@@ -1693,8 +1806,14 @@ volumes:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-logs
   gitlab-data:
     name: ${PLATFORM_PREFIX:-shml}-gitlab-data
-  gitlab-runner-config:
-    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-config
+  gitlab-postgres-data:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-postgres-data
+  gitlab-runner-platform-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-platform-config
+  gitlab-runner-robotics-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-robotics-config
+  gitlab-runner-training-config:
+    name: ${PLATFORM_PREFIX:-shml}-gitlab-runner-training-config
 
   # Nightly test runner
   test-runner-data:
@@ -1707,3 +1826,6 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/16
+  core:
+    name: shml-core-net
+    external: true

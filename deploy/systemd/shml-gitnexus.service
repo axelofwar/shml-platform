@@ -1,0 +1,33 @@
+[Unit]
+Description=GitNexus Code Intelligence Server (Web UI + HTTP API)
+Documentation=https://github.com/abhigyanpatwari/GitNexus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=axelofwar
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+
+# GitNexus serve starts HTTP server for web UI on port 3005
+# Serves all repos registered in ~/.gitnexus/registry.json
+ExecStart=/home/axelofwar/.nvm/versions/node/v22.22.0/bin/gitnexus serve --port 3005
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=NODE_ENV=production
+Environment=HOME=/home/axelofwar
+Environment=PATH=/home/axelofwar/.nvm/versions/node/v22.22.0/bin:/usr/local/bin:/usr/bin:/bin
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/axelofwar/.gitnexus
+ReadWritePaths=/home/axelofwar/Projects/shml-platform/.gitnexus
+ReadWritePaths=/home/axelofwar/Projects/shml-robotics/.gitnexus
+ReadWritePaths=/home/axelofwar/Projects/shml-sba/.gitnexus
+
+[Install]
+WantedBy=multi-user.target

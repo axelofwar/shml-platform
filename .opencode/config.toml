@@ -14,7 +14,7 @@ baseURL = "http://localhost:8099/v1"
 id = "qwopus-coding"
 name = "Qwopus-27B (Local via agent-service)"
 maxTokens = 16384
-contextWindow = 65536
+contextWindow = 131072
 
 # Qwen3-VL-8B (Local Vision Model)
 [providers.local-vision]
@@ -31,3 +31,26 @@ supportsAttachments = true
 type = "http"
 url = "http://localhost:8000/mcp"
 timeout = 120000
+
+# GitNexus Code Intelligence — knowledge graph over all SHML repos
+# 14,868 symbols, 40,672 relationships, 300 execution flows
+# Tools: query, context, impact, detect_changes, rename, cypher, list_repos
+[mcp.gitnexus]
+type = "stdio"
+command = "gitnexus"
+args = ["mcp"]
+timeout = 30000
+
+# GitLab CE — issues, MRs, pipelines, code search
+# Self-hosted at /gitlab/. Projects: platform(2), robotics(3), training(4), sba(5)
+[mcp.gitlab]
+type = "stdio"
+command = "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-gitlab-mcp.sh"
+timeout = 30000
+
+# Prometheus Metrics — PromQL queries, alerts, targets
+# 11 tools: query, range_query, label_names, label_values, series, alerts, rules, targets
+[mcp.prometheus]
+type = "stdio"
+command = "/home/axelofwar/Projects/shml-platform/scripts/mcp/run-prometheus-mcp.sh"
+timeout = 15000

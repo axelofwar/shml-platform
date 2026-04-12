@@ -1,6 +1,6 @@
 # OpenCode Configuration for SHML Platform
 
-This directory contains OpenCode configuration for local Nemotron-3 and Qwen3-VL integration.
+This directory contains OpenCode configuration for local Qwopus-coding (Qwen3.5-27B) and Qwen3-VL integration.
 
 ## Quick Start
 
@@ -27,21 +27,21 @@ opencode
 
 ## Model Configuration
 
-### Coding Model (Nemotron-3)
+### Coding Model (Qwopus-coding)
 
 ```toml
 [providers.local-coding]
 type = "openai"
-baseURL = "http://localhost:8010/v1"
+baseURL = "http://localhost:8099/v1"
 
 [[providers.local-coding.models]]
 id = "qwopus-coding"
-name = "Nemotron-3-Nano-30B-A3B (Local)"
+name = "Qwen3.5-27B Q4_K_M (Local)"
 maxTokens = 32768
 contextWindow = 131072
 ```
 
-**Endpoint:** http://localhost:8010/v1  
+**Endpoint:** http://localhost:8099/v1 (agent-service proxy) or http://localhost:8010/v1 (direct llama.cpp)
 **Requires:** `docker compose up -d` in `inference/qwopus/`
 
 ### Vision Model (Qwen3-VL)
@@ -57,7 +57,7 @@ name = "Qwen3-VL-8B (Vision)"
 supportsAttachments = true
 ```
 
-**Endpoint:** http://localhost:8000/api/llm/v1  
+**Endpoint:** http://localhost:8000/api/llm/v1
 **Requires:** Qwen3-VL service running (RTX 2070)
 
 ## MCP Tools

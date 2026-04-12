@@ -384,13 +384,17 @@ class OpenAICompatibilityLayer:
             selection = router.route(
                 prompt=prompt, request_id=f"openai-compat-{uuid.uuid4().hex[:6]}"
             )
-            # Map model_type to endpoint
+            # Map model_type to endpoint.
+            # NOTE: z-image is intentionally excluded — image generation is a
+            # separate endpoint (/v1/images/generations), not chat completions.
+            # If the hybrid router misclassifies a text request as image_gen,
+            # fall back to qwopus-coding to avoid routing to a non-existent/
+            # wrong service and getting a DNS or 400 error.
             model_type = selection.model_type.value
             endpoint_map = {
                 "qwopus-coding": "http://qwopus-coding:8000/v1/chat/completions",
                 "qwen-coder": "http://qwopus-coding:8000/v1/chat/completions",  # legacy alias
                 "qwen3-vl": "http://qwen3-vl-api:8000/v1/chat/completions",
-                "z-image": "http://z-image-api:8000/v1/images/generations",
             }
             endpoint = endpoint_map.get(
                 model_type, "http://qwopus-coding:8000/v1/chat/completions"
@@ -446,6 +450,7 @@ class OpenAICompatibilityLayer:
         model_endpoint, model_name = self._resolve_endpoint(model_preference, prompt)
 
         import httpx
+        from app.tool_selector import select_tools
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             try:
@@ -455,10 +460,19 @@ class OpenAICompatibilityLayer:
                     "max_tokens": max_tokens or 2048,
                     "stream": False,
                 }
+                # Smart tool selection: pick the most relevant tools that fit
+                # within the model's context budget instead of sending all 105.
                 if tools:
-                    body["tools"] = tools
-                if tool_choice is not None:
-                    body["tool_choice"] = tool_choice
+                    selected_tools = select_tools(
+                        tools=tools,
+                        messages=messages,
+                        token_budget=3000,
+                        max_tools=20,
+                    )
+                    if selected_tools:
+                        body["tools"] = selected_tools
+                        if tool_choice is not None:
+                            body["tool_choice"] = tool_choice
 
                 resp = await client.post(model_endpoint, json=body)
 

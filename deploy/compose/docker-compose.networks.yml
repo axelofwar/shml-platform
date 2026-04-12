@@ -80,8 +80,8 @@ networks:
 # agent-service            |          |    ✓     |      ✓        |
 # chat-api                 |          |    ✓     |      ✓        |
 # inference-gateway        |          |    ✓     |      ✓        |
-# nemotron-coding          |          |          |      ✓        |
-# nemotron-manager         |          |          |      ✓        |
+# qwopus-coding            |          |          |      ✓        |
+# coding-manager           |          |          |      ✓        |
 # gpu-manager              |          |          |      ✓        |
 # qwen3-vl-api             |          |          |      ✓        |
 # z-image-api              |          |          |      ✓        |

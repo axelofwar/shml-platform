@@ -2,26 +2,19 @@
 Unified GPU Manager - Coordinates GPU Yield Across All Inference Services
 
 Manages the lifecycle of GPU-bound containers for training integration:
-- RTX 3090 (GPU 0): Nemotron primary coding model
-- RTX 2070 (GPU 1): Qwen3-VL, Z-Image, coding fallback, embeddings, audio, PII blur
+- RTX 3090 (GPU 0): Qwopus primary coding model
+- RTX 2070 (GPU 1): Qwen3-VL, Z-Image, watchdog-llm, coding fallback, embeddings, audio
 
 Training workflow:
 1. Training job calls POST /training/start
-2. Manager stops GPU 0 services requested for yield (Nemotron by default)
+2. Manager stops GPU 0 services requested for yield (qwopus-coding by default)
 3. Manager starts coding-model-fallback on GPU 1 (if requested)
 4. Training completes, calls POST /training/end
-5. Manager stops fallback, restarts Nemotron
-
-PII workflow (when training NOT active):
-1. Manager stops non-PII GPU 1 services to free memory
-2. PII-blur uses the freed GPU 1 capacity
-3. After PII processing, services restore
+5. Manager stops fallback, restarts qwopus-coding
 
 Endpoints:
 - POST /training/start - Yield requested training GPUs, optionally activate fallback
 - POST /training/end - Restore GPU 0 services, optionally deactivate fallback
-- POST /pii/start - Free GPU 1 for PII processing
-- POST /pii/end - Restore GPU 1 shared services
 - GET /health - Manager health with all service statuses
 - GET /status - Detailed GPU and service status
 - GET /services - List all managed services
@@ -50,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # GPU assignments
 GPU_RTX_3090 = 0  # Primary training/inference GPU
-GPU_RTX_2070 = 1  # Fallback/PII GPU
+GPU_RTX_2070 = 1  # Shared inference GPU
 PLATFORM_PREFIX = os.getenv("PLATFORM_PREFIX", "shml")
 
 # Services by GPU - order matters for stop/start
@@ -61,6 +54,7 @@ RTX_3090_SERVICES = [
 RTX_2070_SHARED_SERVICES = [
     "qwen3-vl-api",  # Vision/planning model
     "z-image-api",  # Image generation
+    "watchdog-llm",  # Watchdog triage model (always-on)
     f"{PLATFORM_PREFIX}-embedding-service",  # Embeddings
     "sam-audio",  # Audio separation
 ]
@@ -72,13 +66,10 @@ RTX_2070_OPTIONAL_SERVICES = [
 # Fallback service (activated during training)
 FALLBACK_SERVICE = "coding-model-fallback"
 
-# PII service (uses GPU 1 once the shared services yield)
-PII_SERVICE = "pii-blur-api"
-
-RTX_2070_PII_BLOCKERS = RTX_2070_SHARED_SERVICES + RTX_2070_OPTIONAL_SERVICES
-
 # Audio service (can run on CPU or GPU)
 AUDIO_SERVICE = "sam-audio"
+
+RTX_2070_PII_BLOCKERS = RTX_2070_SHARED_SERVICES + RTX_2070_OPTIONAL_SERVICES
 
 # Timeouts
 YIELD_WAIT_SECONDS = int(os.getenv("YIELD_WAIT_SECONDS", "5"))
@@ -87,7 +78,7 @@ CONTAINER_START_TIMEOUT = 180  # Model loading takes time
 
 app = FastAPI(
     title="Unified GPU Manager",
-    description="Coordinates GPU resources across all inference services for training and PII processing",
+    description="Coordinates GPU resources across all inference services for training",
     version="2.0.0",
 )
 
@@ -113,7 +104,6 @@ class GPUState(str, Enum):
 
     INFERENCE = "inference"  # Normal inference mode
     TRAINING = "training"  # GPU yielded for training
-    PII_PROCESSING = "pii"  # GPU allocated for PII processing
     TRANSITIONING = "transitioning"  # Services starting/stopping
 
 
@@ -184,40 +174,6 @@ class TrainingEndResponse(BaseModel):
     timestamp: str
 
 
-class PIIStartRequest(BaseModel):
-    """Request to free RTX 2070 for PII processing."""
-
-    request_id: str = "unknown"
-    timeout_seconds: int = 30
-
-
-class PIIStartResponse(BaseModel):
-    """Response from PII start request."""
-
-    status: str
-    request_id: str
-    services_stopped: List[str]
-    gpu_1_memory_freed_mb: Optional[int] = None
-    message: Optional[str] = None
-    timestamp: str
-
-
-class PIIEndRequest(BaseModel):
-    """Request to restore RTX 2070 services after PII processing."""
-
-    request_id: str = "unknown"
-
-
-class PIIEndResponse(BaseModel):
-    """Response from PII end request."""
-
-    status: str
-    request_id: str
-    services_started: List[str]
-    message: Optional[str] = None
-    timestamp: str
-
-
 class ServiceStatusResponse(BaseModel):
     """Status of a single service."""
 
@@ -235,7 +191,6 @@ class HealthResponse(BaseModel):
     gpu_0_state: str
     gpu_1_state: str
     training_active: bool
-    pii_active: bool
     manager_uptime_seconds: float
 
 
@@ -251,7 +206,6 @@ class StatusResponse(BaseModel):
     gpu_1_memory_used_mb: Optional[int]
     gpu_1_memory_total_mb: Optional[int]
     training_active: bool
-    pii_active: bool
     fallback_active: bool
     timestamp: str
 
@@ -268,7 +222,7 @@ _gpu_states = {
 
 # Track active jobs
 _active_training_job: Optional[str] = None
-_active_pii_request: Optional[str] = None
+
 
 # Track manager start time
 _start_time = datetime.now()
@@ -323,10 +277,10 @@ def get_container_status(container_name: str) -> ServiceInfo:
         "qwopus-coding": 16.5,  # Qwopus Q4_K_M (Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled)
         "qwen3-vl-api": 8.0,
         "z-image-api": 12.0,
+        "watchdog-llm": 3.0,  # Qwen3-4B Q4_K_M — watchdog triage
         "coding-model-fallback": 6.0,
         "embedding-service": 1.5,
         "sam-audio": 4.0,
-        "pii-blur-api": 3.0,
     }
 
     try:
@@ -568,7 +522,7 @@ async def end_training(request: TrainingEndRequest):
             if await stop_container(FALLBACK_SERVICE):
                 stopped_services.append(FALLBACK_SERVICE)
 
-        # Restart RTX 3090 services (Nemotron is the critical one)
+        # Restart RTX 3090 services (qwopus-coding is the critical one)
         for service in RTX_3090_SERVICES:
             if await start_container(service, wait_healthy=True, timeout=180):
                 started_services.append(service)
@@ -598,128 +552,6 @@ async def end_training(request: TrainingEndRequest):
         )
 
 
-@app.post("/pii/start", response_model=PIIStartResponse)
-async def start_pii_processing(request: PIIStartRequest):
-    """
-    Free RTX 2070 for PII face detection processing.
-
-    Stops GPU 1 shared services to make room for PII-blur.
-    Only available when training is NOT active (fallback needed during training).
-    """
-    global _gpu_states, _active_pii_request
-
-    logger.info(f"PII processing requested: {request.request_id}")
-
-    # Check if training is active
-    if _active_training_job:
-        return PIIStartResponse(
-            status="error",
-            request_id=request.request_id,
-            services_stopped=[],
-            message=f"Cannot free RTX 2070 during training (job: {_active_training_job}) - fallback model is needed",
-            timestamp=datetime.now().isoformat(),
-        )
-
-    if _active_pii_request:
-        return PIIStartResponse(
-            status="error",
-            request_id=request.request_id,
-            services_stopped=[],
-            message=f"PII processing already active: {_active_pii_request}",
-            timestamp=datetime.now().isoformat(),
-        )
-
-    # Get GPU 1 memory before
-    gpu_1_before = get_gpu_memory(GPU_RTX_2070)
-    memory_before = gpu_1_before.get("memory_used_mb", 0)
-
-    _gpu_states[GPU_RTX_2070] = GPUState.TRANSITIONING
-    _active_pii_request = request.request_id
-
-    stopped_services = []
-
-    try:
-        # Stop GPU 1 services that compete with PII-blur for VRAM
-        for service in RTX_2070_PII_BLOCKERS:
-            if await stop_container(service):
-                stopped_services.append(service)
-
-        # Wait for memory to free
-        for _ in range(request.timeout_seconds):
-            await asyncio.sleep(1)
-            gpu_1_after = get_gpu_memory(GPU_RTX_2070)
-            memory_after = gpu_1_after.get("memory_used_mb", memory_before)
-
-            if memory_after < 1000:  # Less than 1GB used = freed
-                break
-
-        _gpu_states[GPU_RTX_2070] = GPUState.PII_PROCESSING
-
-        gpu_1_after = get_gpu_memory(GPU_RTX_2070)
-        memory_freed = memory_before - gpu_1_after.get("memory_used_mb", 0)
-
-        return PIIStartResponse(
-            status="ready",
-            request_id=request.request_id,
-            services_stopped=stopped_services,
-            gpu_1_memory_freed_mb=memory_freed if memory_freed > 0 else None,
-            message=f"RTX 2070 freed for PII processing ({memory_freed}MB freed)",
-            timestamp=datetime.now().isoformat(),
-        )
-
-    except Exception as e:
-        logger.error(f"PII start failed: {e}")
-        _gpu_states[GPU_RTX_2070] = GPUState.INFERENCE
-        _active_pii_request = None
-        return PIIStartResponse(
-            status="error",
-            request_id=request.request_id,
-            services_stopped=stopped_services,
-            message=str(e),
-            timestamp=datetime.now().isoformat(),
-        )
-
-
-@app.post("/pii/end", response_model=PIIEndResponse)
-async def end_pii_processing(request: PIIEndRequest):
-    """
-    Restore RTX 2070 services after PII processing completes.
-    """
-    global _gpu_states, _active_pii_request
-
-    logger.info(f"PII processing end: {request.request_id}")
-
-    started_services = []
-
-    try:
-        # Restore the normal GPU 1 shared services.
-        # Fallback remains training-scoped and is not restarted here.
-        for service in RTX_2070_SHARED_SERVICES:
-            if await start_container(service, wait_healthy=True, timeout=120):
-                started_services.append(service)
-
-        _gpu_states[GPU_RTX_2070] = GPUState.INFERENCE
-        _active_pii_request = None
-
-        return PIIEndResponse(
-            status="restored",
-            request_id=request.request_id,
-            services_started=started_services,
-            message="RTX 2070 services restored",
-            timestamp=datetime.now().isoformat(),
-        )
-
-    except Exception as e:
-        logger.error(f"PII end failed: {e}")
-        return PIIEndResponse(
-            status="error",
-            request_id=request.request_id,
-            services_started=started_services,
-            message=str(e),
-            timestamp=datetime.now().isoformat(),
-        )
-
-
 @app.get("/health", response_model=HealthResponse)
 async def health():
     """Health check with GPU state summary."""
@@ -730,7 +562,6 @@ async def health():
         gpu_0_state=str(_gpu_states[GPU_RTX_3090]),
         gpu_1_state=str(_gpu_states[GPU_RTX_2070]),
         training_active=_active_training_job is not None,
-        pii_active=_active_pii_request is not None,
         manager_uptime_seconds=uptime,
     )
 
@@ -743,7 +574,7 @@ async def status():
     gpu_0_services = [get_container_status(s) for s in RTX_3090_SERVICES]
     gpu_1_services = [
         get_container_status(s)
-        for s in RTX_2070_SHARED_SERVICES + RTX_2070_OPTIONAL_SERVICES + [PII_SERVICE]
+        for s in RTX_2070_SHARED_SERVICES + RTX_2070_OPTIONAL_SERVICES
     ]
 
     # Get GPU memory
@@ -782,7 +613,6 @@ async def status():
         gpu_1_memory_used_mb=gpu_1_memory.get("memory_used_mb"),
         gpu_1_memory_total_mb=gpu_1_memory.get("memory_total_mb"),
         training_active=_active_training_job is not None,
-        pii_active=_active_pii_request is not None,
         fallback_active=fallback_active,
         timestamp=datetime.now().isoformat(),
     )
@@ -795,9 +625,7 @@ async def list_services():
         "gpu_0_services": RTX_3090_SERVICES,
         "gpu_1_services": RTX_2070_SHARED_SERVICES,
         "gpu_1_optional_services": RTX_2070_OPTIONAL_SERVICES,
-        "gpu_1_pii_blockers": RTX_2070_PII_BLOCKERS,
         "fallback_service": FALLBACK_SERVICE,
-        "pii_service": PII_SERVICE,
     }
 
 

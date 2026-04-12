@@ -1,3 +1,5 @@
+{{- $wsBase := env "HERMES_WORKSPACE_BASE" | default "/hermes-workspace" -}}
+{{- $wsPort := env "HERMES_WORKSPACE_PORT" | default "3000" -}}
 # Traefik Dynamic Configuration
 # TLS certificates from Tailscale
 #
@@ -41,7 +43,124 @@ http:
         - web
         - websecure
 
+    # GitNexus Code Intelligence — host-level systemd service on port 3005
+    # Sigma.js WebGL graph visualization + REST API
+    gitnexus:
+      rule: "PathPrefix(`/gitnexus`)"
+      service: "gitnexus@file"
+      priority: 100
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - oauth2-errors@docker
+        - oauth2-auth@docker
+        - gitnexus-stripprefix
+
+    # Hermes Gateway — host-level process on port 8642
+    # OpenAI-compatible API + cron jobs + session management
+    # Role-gated: developer+ required (same as agent-service /cli route)
+    hermes-gateway:
+      rule: "PathPrefix(`/api/hermes`)"
+      service: "hermes-gateway@file"
+      priority: 2147483647
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - oauth2-errors@docker
+        - oauth2-auth@docker
+        - role-auth-developer@docker
+        - hermes-gateway-stripprefix
+
+    # Hermes Gateway — OpenAI-compatible /v1 endpoint (for hermes-workspace)
+    hermes-gateway-v1:
+      rule: "PathPrefix(`/hermes/v1`)"
+      service: "hermes-gateway@file"
+      priority: 2147483646
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - oauth2-errors@docker
+        - oauth2-auth@docker
+        - role-auth-developer@docker
+        - hermes-v1-stripprefix
+
+    # Hermes Gateway — health check (no auth required)
+    hermes-gateway-health:
+      rule: "Path(`/hermes/health`)"
+      service: "hermes-gateway@file"
+      priority: 2147483645
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - hermes-health-rewrite
+
+    # Hermes Workspace — Vite dev UI
+    # Role-gated: admin only (agentic tool workspace)
+    # No stripPrefix — Vite reads HERMES_WORKSPACE_BASE from .env (via vite.config.ts)
+    hermes-workspace:
+      rule: "PathPrefix(`{{ $wsBase }}`)"
+      service: "hermes-workspace@file"
+      priority: 2147483644
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - oauth2-errors@docker
+        - oauth2-auth@docker
+        - role-auth-admin@docker
+
+    # Hermes Workspace API — no auth middleware.
+    # These are server-side TanStack routes + Vite HMR. The HTML page is
+    # already admin-gated above; AJAX calls from the loaded page don't need
+    # re-authentication (oauth2-proxy session cookie isn't forwarded on fetch).
+    hermes-workspace-api:
+      rule: "PathPrefix(`{{ $wsBase }}/api`) || PathPrefix(`{{ $wsBase }}/_serverFn`) || PathPrefix(`{{ $wsBase }}/@vite`)"
+      service: "hermes-workspace@file"
+      priority: 2147483645
+      entryPoints:
+        - web
+        - websecure
+
+  services:
+    gitnexus:
+      loadBalancer:
+        servers:
+          - url: "http://172.30.0.1:3005"
+
+    hermes-gateway:
+      loadBalancer:
+        servers:
+          - url: "http://172.30.0.1:8642"
+
+    hermes-workspace:
+      loadBalancer:
+        servers:
+          - url: "http://172.30.0.1:{{ $wsPort }}"
+
   middlewares:
+    gitnexus-stripprefix:
+      stripPrefix:
+        prefixes:
+          - "/gitnexus"
+
+    hermes-gateway-stripprefix:
+      stripPrefix:
+        prefixes:
+          - "/api/hermes"
+
+    hermes-v1-stripprefix:
+      stripPrefix:
+        prefixes:
+          - "/hermes"
+
+    hermes-health-rewrite:
+      replacePath:
+        path: "/health"
+
     tailscale-https-proto:
       headers:
         customRequestHeaders:

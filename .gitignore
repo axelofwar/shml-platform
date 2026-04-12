@@ -9,6 +9,9 @@
 # Remote access scripts with credentials
 REMOTE_ACCESS_COMPLETE.sh
 
+# Hermes agent home (symlink to ~/.hermes — contains auth tokens, sessions, secrets)
+.hermes-home
+
 # Secret files
 secrets/
 *.secret
@@ -464,3 +467,4 @@ ray_compute/backups/
 **/__pycache__/
 inference/shl-nano
 sba-resource-portal/
+.gitnexus

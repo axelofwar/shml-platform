@@ -1,7 +1,7 @@
 """
 Local Model Provider
 
-Routes to local inference services (Nemotron, Qwen-VL).
+Routes to local inference services (Qwopus-coding, Qwen-VL).
 """
 
 import os
@@ -47,10 +47,10 @@ class LocalProvider(BaseProvider):
 
     def __init__(
         self,
-        nemotron_url: str = os.getenv("CODING_MODEL_URL", "http://qwopus-coding:8000"),
+        coding_url: str = os.getenv("CODING_MODEL_URL", "http://qwopus-coding:8000"),
         qwen_url: str = "http://localhost/api/llm",  # Via Traefik (needs auth) or docker network
     ):
-        self.nemotron_url = nemotron_url
+        self.coding_url = coding_url
         self.qwen_url = qwen_url
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -97,7 +97,7 @@ class LocalProvider(BaseProvider):
         """Get the service URL for a model"""
         if "qwen" in model_id.lower() or "vl" in model_id.lower():
             return self.qwen_url
-        return self.nemotron_url
+        return self.coding_url
 
     def _format_messages(self, messages: List[Message]) -> List[Dict]:
         """Convert to OpenAI format"""

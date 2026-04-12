@@ -171,6 +171,7 @@ class OutputPanel(Static):
     def compose(self) -> ComposeResult:
         yield TabbedContent(
             TabPane("Output", Log(id="output-log", highlight=True)),
+            TabPane("Response", Markdown(id="response-md")),
             TabPane("Plan", Markdown(id="plan-md")),
             TabPane("Cost", Static(id="cost-summary")),
         )
@@ -178,6 +179,13 @@ class OutputPanel(Static):
     def append_output(self, text: str):
         log = self.query_one("#output-log", Log)
         log.write_line(text)
+
+    def set_response(self, response_text: str):
+        """Render a full agent response as formatted markdown."""
+        md = self.query_one("#response-md", Markdown)
+        md.update(response_text)
+        tabs = self.query_one(TabbedContent)
+        tabs.active = "tab-2"
 
     def set_plan(self, plan_text: str):
         md = self.query_one("#plan-md", Markdown)
@@ -404,9 +412,12 @@ class SHMLAgentTUI(App):
         progress.set_progress(100, "Complete!")
 
         output.append_output("")
-        output.append_output("[bold green]═══ Result ═══[/]")
-        output.append_output("GPU Status: RTX 2070 (Qwen-VL) + RTX 3090 (Nemotron)")
-        output.append_output("All services healthy.")
+        output.set_response(
+            f"## Result\n\n"
+            f"**Task:** {task}\n\n"
+            f"GPU Status: RTX 2070 (Qwen-VL) + RTX 3090 (Qwopus)\n\n"
+            f"All services healthy."
+        )
 
         progress.update_stage("return", "complete")
 

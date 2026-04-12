@@ -344,3 +344,80 @@ Browser → Traefik [:80/:443]
 
 > This section will be updated as part of W2 (Data Pipeline Consolidation).
 > See CHANGELOG.md for planned `data-pipelines/` consolidation work.
+
+---
+
+## Knowledge Graph & Intelligence Layer
+
+### GitNexus Code Intelligence
+
+All SHML repositories are indexed into a shared knowledge graph via [GitNexus](https://github.com/abhigyanpatwari/GitNexus):
+
+| Repository | Nodes | Edges | Clusters | Flows |
+|---|---|---|---|---|
+| shml-platform | 14,868 | 40,672 | 850 | 300 |
+| shml-robotics | 161 | 289 | 11 | 7 |
+| shml-sba | 89 | 137 | 7 | 5 |
+
+**Tools available** (via MCP + CLI):
+- `query` — Process-grouped semantic search across codebase
+- `context` — 360-degree symbol view (callers, callees, process participation)
+- `impact` — Blast radius analysis before code changes
+- `detect_changes` — Map git diffs to affected execution flows
+- `rename` — Multi-file coordinated rename via call graph
+
+**Taskfile commands:** `task knowledge:status`, `task knowledge:reindex`, `task knowledge:serve`
+
+### Regression Testing via Blast Radius
+
+The `scripts/testing/blast_radius.py` tool uses GitNexus + git diff to:
+1. Detect changed files in the current working tree
+2. Map them to affected code clusters (inference, auth, monitoring, etc.)
+3. Select the minimal set of tests that cover those clusters
+4. Run only affected tests (pre-commit) or generate CI reports
+
+```bash
+task test:blast-radius          # Run affected tests only
+task test:blast-radius:report   # Show report without running
+task test:blast-radius:ci       # Generate JSON report for CI
+```
+
+### Research Discovery Pipeline
+
+Daily automated scan of arXiv + HuggingFace for relevant papers/models:
+
+| Topic | arXiv Category | HuggingFace Tags |
+|---|---|---|
+| RL & Robotics | cs.RO | reinforcement-learning, robotics |
+| MLOps | cs.LG | mlops, experiment-tracking |
+| LLM Inference | cs.CL | quantization, inference-optimization |
+| Vision & Detection | cs.CV | face-detection, object-detection |
+| Sim-to-Real | cs.RO | sim-to-real, simulation |
+
+Discoveries are written as Obsidian-flavored markdown notes to `docs/obsidian-vault/10-Research/` with wikilinks, properties, and cross-references to platform components.
+
+**Systemd timer:** `shml-research-discovery.timer` (daily at 06:00)
+**Manual:** `task knowledge:discover`
+
+### Two-Layer Knowledge Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Obsidian Vault (Knowledge Layer)                   │
+│  ├── 10-Research/ ← auto-populated by discovery     │
+│  ├── 20-Decisions/ ← ADRs, connection map           │
+│  ├── 30-Experiments/ ← training results             │
+│  └── Wikilinks + Graph View → human navigation      │
+├─────────────────────────────────────────────────────┤
+│  GitNexus (Code Intelligence Layer)                 │
+│  ├── Knowledge graph (nodes, edges, clusters, flows)│
+│  ├── Blast radius → regression test selection       │
+│  ├── WebGL interactive explorer (gitnexus serve)    │
+│  └── MCP tools → agent-accessible code analysis     │
+├─────────────────────────────────────────────────────┤
+│  Connection Map (Infrastructure Layer)              │
+│  ├── 40 services across 8 layers                    │
+│  ├── Mermaid diagram + status tracking              │
+│  └── Gap analysis → planned connections             │
+└─────────────────────────────────────────────────────┘
+```
