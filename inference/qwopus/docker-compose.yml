@@ -65,6 +65,11 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
+      # Reasoning parser: extracts <think>...</think> into reasoning_content field.
+      # Qwen3.5 puts <think> in the prompt template; model generates only </think>.
+      # Without this, thinking tokens leak into the content field as raw text.
+      - --reasoning-parser
+      - qwen3
       - --port
       - "8000"
       - --host
