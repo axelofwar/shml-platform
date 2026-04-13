@@ -5,7 +5,7 @@ services:
     # Model: Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-AWQ-4bit
     # Backend: vLLM v0.19.0 (native Qwen3_5ForConditionalGeneration support)
     # Mode: enforce-eager (no CUDA graphs — required to fit within 24GB VRAM)
-    # VRAM: ~17.78 GB weights + ~4.6 GB KV cache (32K ctx) = ~22.4 GB peak (within 24 GB)
+    # VRAM: ~17.78 GB weights + ~2.5 GB KV cache (32K ctx, HMA) = ~20.3 GB peak (within 24 GB)
     # Vision encoder disabled (image=0,video=0): text-only coding workload
     # Throughput: ~14-21 tok/s (enforce-eager penalty; ~2x faster if CUDA graphs)
     # Benchmarked: 2026-04-09 vs GGUF Q4_K_M (GGUF 1.6-2.3x faster but same quality)
@@ -30,26 +30,24 @@ services:
       - qwopus-coding
       # Max context: 32768 tokens — Hermes system prompt (~5K) + long agent
       # chains (10K+ tool output) + 2048 output tokens fits without truncation.
-      # KV cache at 32K: 2048 blocks × 2.25 MB = 4.6 GB — requires util=0.93.
-      # Hardware ceiling on RTX 3090 Ti (24 GB): ~33K (64K/128K impossible).
+      # KV cache at 32K: ~2.5 GB via HMA (16 full-attention layers only).
+      # Hardware ceiling on RTX 3090 Ti (24 GB): 32K stable, 64K not viable (profiling OOM).
       - --max-model-len
       - "32768"
       - --trust-remote-code
       - --dtype
       - auto
-      # GPU memory fraction: 0.93 — needed for 32K KV cache (4.6 GB from ~5.5 GB budget).
-      # Leaves ~0.9 GB headroom for CUDA/driver overhead. Safe on 24 GB VRAM.
+      # GPU memory fraction: 0.88 — model weights take 17.78 GiB, leaving ~3.8 GiB
+      # for KV cache. HMA only allocates KV for 16/64 attention layers (~64 KB/token).
+      # At 32K context: well within budget. Lowered from 0.93 to avoid CUDA OOM
+      # during vLLM profiling/warmup on RTX 3090 Ti with system GPU processes.
       - --gpu-memory-utilization
-      - "0.93"
-      # CPU KV offloading: 16 GB of host RAM as overflow for KV blocks.
-      # In vLLM v0.19.0 --swap-space was replaced by --kv-offloading-size.
-      # Effect per-request: max_model_len (32K) is still the hard ceiling.
-      # Effect on concurrency: when GPU KV cache fills across multiple parallel
-      # requests, cold blocks spill to CPU RAM instead of evicting (blocking).
-      # Helps agent workloads with multiple concurrent tool-call chains.
-      # Default backend is 'native' (CPU RAM) — no extra flag needed.
-      - --kv-offloading-size
-      - "16G"
+      - "0.88"
+      # KV offloading DISABLED: --kv-offloading-size enables OffloadingConnector
+      # which is incompatible with HMA (Hybrid Memory Architecture) required by
+      # Qwen3.5's DeltaNet hybrid attention (48 linear + 16 full attention layers).
+      # vLLM v0.19.0 error: "Connector OffloadingConnector does not support HMA"
+      # Without HMA, vLLM allocates KV for all 64 layers → instant CUDA OOM.
       # enforce-eager: disables CUDA graph capture (which needs ~1.5 GB extra and hit OOM).
       # Throughput cost: ~1.5-2x slower than graph mode, but required on 24 GB VRAM.
       - --enforce-eager
