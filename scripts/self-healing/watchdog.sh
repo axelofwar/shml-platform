@@ -43,6 +43,7 @@ fi
 CHECK_INTERVAL="${CHECK_INTERVAL:-60}"
 MAX_RESTARTS="${MAX_RESTARTS:-3}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-900}"
+GITLAB_COMMENT_COOLDOWN="${GITLAB_COMMENT_COOLDOWN:-1800}"  # Seconds between repeat notes on the same open issue
 PLATFORM_PREFIX="${PLATFORM_PREFIX:-shml}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://global-prometheus:9090}"
 AGENT_SERVICE_URL="${AGENT_SERVICE_URL:-http://agent-service:8000}"
@@ -143,7 +144,6 @@ STANDARD_CONTAINERS=(
     "${PLATFORM_PREFIX}-ml-slo-exporter"
     "${PLATFORM_PREFIX}-fiftyone"
     "${PLATFORM_PREFIX}-fiftyone-mongodb"
-    "${PLATFORM_PREFIX}-chat-ui"
     "${PLATFORM_PREFIX}-agent-service"
     "inference-gateway"
     "ray-head"
@@ -183,7 +183,6 @@ MEMORY_WATCH_CONTAINERS=(
 # User-facing UIs (for state discovery)
 UI_SERVICES=(
     "homer|/|Landing Page"
-    "${PLATFORM_PREFIX}-chat-ui|/chat-ui/|AI Chat Interface"
     "unified-grafana|/grafana|Monitoring Dashboards"
     "${PLATFORM_PREFIX}-code-server|/ide|VS Code IDE"
     "ray-compute-ui|/ray/ui|Ray Compute UI"
@@ -209,7 +208,6 @@ HTTP_SERVICES=(
     "homer|http://homer:8080/|Homer Dashboard"
     "${PLATFORM_PREFIX}-agent-service|http://${PLATFORM_PREFIX}-agent-service:8000/health|Agent Service"
     "inference-gateway|http://inference-gateway:8000/health|Inference Gateway"
-    "${PLATFORM_PREFIX}-chat-ui|http://${PLATFORM_PREFIX}-chat-ui:80/|Chat UI"
     "${PLATFORM_PREFIX}-chat-api|http://${PLATFORM_PREFIX}-chat-api:8000/health|Chat API"
     "${PLATFORM_PREFIX}-nessie|http://${PLATFORM_PREFIX}-nessie:9000/q/health|Nessie Catalog"
     "${PLATFORM_PREFIX}-loki|http://${PLATFORM_PREFIX}-loki:3100/ready|Loki"
@@ -235,7 +233,6 @@ HTTP_SERVICES=(
 TRAEFIK_ROUTED_SERVICES=(
     "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/gitlab/|GitLab via Traefik"
     "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/grafana/|Grafana via Traefik"
-    "oauth2-proxy|http://shml-traefik:80/chat-ui/|Chat UI via Traefik"
     "${PLATFORM_PREFIX}-role-auth|http://shml-traefik:80/mlflow/|MLflow via Traefik"
 )
 
@@ -460,12 +457,25 @@ create_gitlab_issue() {
 
 ${description}"
 
+    # Cooldown: suppress repeat notes on already-open issues.
+    # Only post --comment if the cooldown file is absent or older than GITLAB_COMMENT_COOLDOWN seconds.
+    local _comment_flag=""
+    local _issue_key
+    _issue_key="$(printf '%s' "${title}" | tr -cs 'a-zA-Z0-9_-' '_' | cut -c1-80)"
+    local _cooldown_file="${STATE_DIR}/${_issue_key}.last_comment"
+    local _now; _now=$(date +%s)
+    local _last=0
+    [[ -f "${_cooldown_file}" ]] && _last=$(date -r "${_cooldown_file}" +%s 2>/dev/null || echo 0)
+    if (( _now - _last >= GITLAB_COMMENT_COOLDOWN )); then
+        _comment_flag="--comment"
+    fi
+
     if ! issue_json=$(GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID}" \
         python3 "$GITLAB_UTIL" upsert-issue "$title" \
             --title "$title" \
             --description "$description" \
             --labels "$labels" \
-            --comment "$update_comment" \
+            ${_comment_flag:+"${_comment_flag}" "${update_comment}"} \
             --reopen 2>/dev/null); then
         log "WARN: GitLab issue creation failed for: ${title}"
         return 0
@@ -477,6 +487,9 @@ ${description}"
     else
         log "GitLab: Upserted issue — ${title}"
     fi
+
+    # Update the cooldown file so the next call within GITLAB_COMMENT_COOLDOWN is silent.
+    [[ -n "${_comment_flag:-}" ]] && touch "${_cooldown_file}" 2>/dev/null || true
 
     return 0
 }
