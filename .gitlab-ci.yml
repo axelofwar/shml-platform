@@ -116,6 +116,7 @@ unit_tests:
   <<: *python_test_setup
   variables:
     GIT_SUBMODULE_STRATEGY: normal
+    GIT_SUBMODULE_FORCE_HTTPS: "true"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
   script:

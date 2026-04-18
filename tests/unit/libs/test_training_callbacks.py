@@ -4,6 +4,7 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import pytest
 
 _root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 if _root not in sys.path:
@@ -13,8 +14,8 @@ _training_root = os.path.join(_root, "libs", "training")
 if _training_root not in sys.path:
     sys.path.insert(0, _training_root)
 
+pytest.importorskip("shml_training", reason="shml_training submodule not initialized")
 from shml_training.core.callbacks import CallbackList, TrainingCallback  # noqa: E402
-
 
 class _RecordingCallback(TrainingCallback):
     def __init__(self, name: str):
