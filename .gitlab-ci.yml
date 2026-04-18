@@ -114,14 +114,15 @@ docs_check:
 unit_tests:
   stage: test
   <<: *python_test_setup
-  variables:
-    GIT_SUBMODULE_STRATEGY: normal
-    GIT_SUBMODULE_FORCE_HTTPS: "true"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
   script:
     - pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
-    - pip install -e libs/training --quiet 2>/dev/null || echo "⚠️ libs/training install failed (submodule may be unavailable)"
+    - |
+      # Inject CI job token for internal submodule (shml-gitlab:8929 → gitlab:8929 with auth)
+      git config --global "url.http://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab:8929/gitlab/.insteadOf" "http://shml-gitlab:8929/gitlab/"
+      git submodule update --init libs/training 2>/dev/null || echo "⚠️ libs/training submodule unavailable"
+      [ -d "libs/training/shml_training" ] && pip install -e libs/training --quiet 2>/dev/null || true
     - |
       if [ -d "tests/unit" ]; then
         pytest tests/unit/ -v --tb=short -x
