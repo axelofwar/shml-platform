@@ -1061,22 +1061,7 @@ start_all_services() {
     fi
     echo ""
 
-    # =========================================================================
-    # Phase 9c: Chat UI Service (Web interface for chat)
-    # =========================================================================
-    log_info "━━━ Phase 9c: Chat UI Service ━━━"
-    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
-        echo "Starting: Chat UI (Web interface)..."
-        ensure_network
-        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
-
-        # Wait for Chat UI to be healthy
-        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT || log_warn "Chat UI may still be starting"
-        log_success "Chat UI service started"
-    else
-        log_warn "Chat UI configuration not found - skipping"
-    fi
-    echo ""
+    # Phase 9c: Chat UI — removed (replaced by Hermes CLI)
 
     # =========================================================================
     # Phase 9d: Code Server (VS Code IDE - Admin Only)
@@ -1375,6 +1360,10 @@ show_status() {
         echo "  Admin-Only Services:"
         echo "  • VS Code IDE:       https://${PUBLIC_DOMAIN}/ide/ (with GitHub Copilot)"
         echo ""
+        echo "  Hermes Agent (Admin-Only):"
+        echo "  • Hermes Dashboard:  https://${PUBLIC_DOMAIN}/hermes-dashboard/"
+        echo "  • Hermes Workspace:  https://${PUBLIC_DOMAIN}/hermes-workspace/"
+        echo ""
         echo "  Inference APIs (OAuth Protected - Developer role):"
         echo "  • Coding Model API:  https://${PUBLIC_DOMAIN}/api/coding/v1/ (OpenAI-compatible)"
     fi
@@ -1402,6 +1391,22 @@ show_status() {
     echo ""
     echo "  Admin-Only Services:"
     echo "  • VS Code IDE:     http://${LAN_IP}/ide/ (with GitHub Copilot)"
+    echo ""
+    # Host services (systemd)
+    echo -e "${CYAN}Host Services (systemd):${NC}"
+    for svc in shl-hermes-gateway shl-hermes-dashboard shl-hermes-workspace; do
+        local state=$(systemctl --user is-active "$svc" 2>/dev/null || echo "inactive")
+        if [[ "$state" == "active" ]]; then
+            echo -e "  ${GREEN}●${NC} $svc: active"
+        else
+            echo -e "  ${RED}●${NC} $svc: $state"
+        fi
+    done
+    echo ""
+    echo "  Hermes Agent (host services):"
+    echo "  • Hermes Dashboard:http://${LAN_IP}/hermes-dashboard/"
+    echo "  • Hermes Workspace:http://${LAN_IP}/hermes-workspace/"
+    echo "  • Hermes Gateway:  http://${LAN_IP}:8642/health"
     echo ""
     echo "  Admin (direct ports):"
     echo "  • FusionAuth:      http://${LAN_IP}:9011/admin/"
@@ -1828,12 +1833,7 @@ start_inference() {
         wait_for_health "${PLATFORM_PREFIX:-shml}-chat-api" $DEFAULT_TIMEOUT
     fi
 
-    # Chat UI (Developer+ access)
-    if [ -f "chat-ui-v2/docker-compose.yml" ]; then
-        echo "Starting chat UI..."
-        docker compose --env-file .env -f chat-ui-v2/docker-compose.yml up -d --force-recreate 2>&1 | grep -v "orphan" || true
-        wait_for_health "${PLATFORM_PREFIX:-shml}-chat-ui" $DEFAULT_TIMEOUT
-    fi
+    # Chat UI removed — replaced by Hermes CLI
 
     update_container_mapping
     log_success "Inference services started"
@@ -2152,7 +2152,6 @@ stop_inference() {
     dc_stop inference/qwopus/docker-compose.yml
     dc_stop inference/chat-api/docker-compose.yml
     dc_stop inference/agent-service/docker-compose.yml
-    dc_stop chat-ui-v2/docker-compose.yml
     log_success "Inference services stopped"
 }
 
@@ -2165,7 +2164,6 @@ down_inference() {
     dc_down inference/qwopus/docker-compose.yml
     dc_down inference/chat-api/docker-compose.yml
     dc_down inference/agent-service/docker-compose.yml
-    dc_down chat-ui-v2/docker-compose.yml
     log_success "Inference containers removed"
 }
 
@@ -2241,6 +2239,31 @@ down_watchdog() {
     log_success "Watchdog containers removed"
 }
 
+start_infisical() {
+    log_info "━━━ Starting Infisical Secrets Manager ━━━"
+    ensure_network
+    dc_up deploy/compose/docker-compose.secrets.yml || {
+        log_error "Infisical compose startup failed"
+        return 1
+    }
+    wait_for_health "${PLATFORM_PREFIX:-shml}-infisical" 60 || {
+        log_warn "Infisical may still be initializing"
+    }
+    log_success "Infisical secrets manager started"
+}
+
+stop_infisical() {
+    log_info "━━━ Stopping Infisical Secrets Manager ━━━"
+    dc_stop deploy/compose/docker-compose.secrets.yml
+    log_success "Infisical stopped"
+}
+
+down_infisical() {
+    log_info "━━━ Removing Infisical Containers ━━━"
+    dc_down deploy/compose/docker-compose.secrets.yml
+    log_success "Infisical containers removed"
+}
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -2278,6 +2301,9 @@ case "${1:-restart}" in
             watchdog)
                 start_watchdog
                 ;;
+            infisical|secrets)
+                start_infisical
+                ;;
             sba|sba-portal|gemini)
                 start_sba_portal
                 ;;
@@ -2288,7 +2314,7 @@ case "${1:-restart}" in
                 ;;
             *)
                 echo "Unknown service: $SERVICE"
-                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, watchdog, sba-portal"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, watchdog, sba-portal, infisical"
                 exit 1
                 ;;
         esac
@@ -2322,6 +2348,9 @@ case "${1:-restart}" in
             watchdog)
                 stop_watchdog
                 ;;
+            infisical|secrets)
+                stop_infisical
+                ;;
             sba|sba-portal|gemini)
                 stop_sba_portal
                 ;;
@@ -2331,7 +2360,7 @@ case "${1:-restart}" in
                 ;;
             *)
                 echo "Unknown service: $SERVICE"
-                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, watchdog, sba-portal"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, watchdog, sba-portal, infisical"
                 exit 1
                 ;;
         esac
@@ -2364,6 +2393,9 @@ case "${1:-restart}" in
             agent|ace)
                 down_agent && start_agent
                 ;;
+            infisical|secrets)
+                down_infisical && start_infisical
+                ;;
             sba|sba-portal|gemini)
                 down_sba_portal && start_sba_portal
                 ;;
@@ -2380,7 +2412,7 @@ case "${1:-restart}" in
                 ;;
             *)
                 echo "Unknown service: $SERVICE"
-                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, sba-portal, watchdog"
+                echo "Available: infra, auth, mlflow, ray, inference, monitoring, devtools, agent, sba-portal, watchdog, infisical"
                 exit 1
                 ;;
         esac
@@ -2397,6 +2429,7 @@ case "${1:-restart}" in
             monitoring|mon)         down_monitoring ;;
             devtools|dev|ide)       down_devtools ;;
             agent|ace)              down_agent ;;
+            infisical|secrets)      down_infisical ;;
             sba|sba-portal)         down_sba_portal ;;
             watchdog)               down_watchdog ;;
             "")
