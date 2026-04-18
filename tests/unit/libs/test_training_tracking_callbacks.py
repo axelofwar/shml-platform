@@ -44,6 +44,7 @@ _training_root = os.path.join(_root, "libs", "training")
 if _training_root not in sys.path:
     sys.path.insert(0, _training_root)
 
+pytest.importorskip("shml_training", reason="shml_training submodule not initialized")
 from shml_training.core.config import CheckpointConfig, TrainingConfig
 from shml_training.integrations.mlflow_callback import MLflowCallback
 from shml_training.integrations.prometheus_callback import PrometheusCallback
