@@ -9,8 +9,11 @@ version / cleared these stubs.
 """
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from unittest.mock import MagicMock
+
+import pytest
 
 _TORCH_CHILD_MODULES = [
     "torch", "torch.nn", "torch.optim", "torch.amp", "torch.cuda",
@@ -30,3 +33,21 @@ if "torch" not in sys.modules:
 for _dep in ["peft", "transformers", "unsloth", "accelerate", "deepspeed"]:
     if _dep not in sys.modules:
         sys.modules[_dep] = MagicMock(name=_dep)
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TRAINING_ROOT = _REPO_ROOT / "libs" / "training"
+_TRAINING_PACKAGE = _TRAINING_ROOT / "shml_training"
+
+if _TRAINING_ROOT.is_dir() and str(_TRAINING_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TRAINING_ROOT))
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if _TRAINING_PACKAGE.is_dir():
+        return
+
+    skip_training = pytest.mark.skip(reason="shml_training submodule not initialized")
+    for item in items:
+        if "/test_training" in item.nodeid:
+            item.add_marker(skip_training)
