@@ -23,7 +23,8 @@ def _config(api_key: str = "test-key") -> SDKConfig:
 
 class TestPlatformSDK:
     @patch("shml.admin.client.HTTPClient")
-    def test_requires_api_key(self, mock_http_client):
+    def test_requires_api_key(self, mock_http_client, monkeypatch):
+        monkeypatch.setenv("FUSIONAUTH_API_KEY", "env-key")
         with pytest.raises(AuthenticationError):
             PlatformSDK(config=_config(api_key=""), auto_introspect=False)
 

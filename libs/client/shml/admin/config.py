@@ -6,7 +6,7 @@ Follows 12-factor app principles with sensible defaults.
 """
 
 import os
-from typing import Optional
+from typing import Any, Optional
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
@@ -34,8 +34,8 @@ class SDKConfig(BaseModel):
     """
 
     # Authentication
-    api_key: str = Field(
-        default="", description="FusionAuth API key for authentication"
+    api_key: Optional[str] = Field(
+        default=None, description="FusionAuth API key for authentication"
     )
 
     # FusionAuth settings
@@ -85,11 +85,11 @@ class SDKConfig(BaseModel):
 
     @field_validator("api_key", mode="before")
     @classmethod
-    def load_api_key(cls, v: str) -> str:
-        """Load API key from environment if not provided."""
-        if v:
-            return v
-        return os.environ.get("FUSIONAUTH_API_KEY", "")
+    def load_api_key(cls, v: Any) -> str:
+        """Load API key from environment only when the field is omitted."""
+        if v is None:
+            return os.environ.get("FUSIONAUTH_API_KEY", "")
+        return v
 
     @field_validator("fusionauth_url", mode="before")
     @classmethod
