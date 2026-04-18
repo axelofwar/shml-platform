@@ -40,7 +40,7 @@ class SDKConfig(BaseModel):
 
     # FusionAuth settings
     fusionauth_url: str = Field(
-        default="http://localhost:9011", description="FusionAuth server URL"
+        default="", description="FusionAuth server URL"
     )
     fusionauth_tenant_id: Optional[str] = Field(
         default=None, description="FusionAuth tenant ID (optional for single-tenant)"
@@ -94,11 +94,10 @@ class SDKConfig(BaseModel):
     @field_validator("fusionauth_url", mode="before")
     @classmethod
     def load_fusionauth_url(cls, v: str) -> str:
-        """Load FusionAuth URL from environment if not provided."""
-        if v and v != "http://localhost:9011":
+        """Load FusionAuth URL from environment only when not explicitly provided."""
+        if v:
             return v.rstrip("/")
-        url = os.environ.get("FUSIONAUTH_URL", v)
-        return url.rstrip("/") if url else "http://localhost:9011"
+        return os.environ.get("FUSIONAUTH_URL", "http://localhost:9011").rstrip("/")
 
     @field_validator("fusionauth_tenant_id", mode="before")
     @classmethod
