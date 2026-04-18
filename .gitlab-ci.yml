@@ -438,6 +438,7 @@ container_registry_build:
   image: docker:27-cli
   services:
     - name: docker:27-dind
+      alias: docker
       command: ["--tls=false"]
   variables:
     DOCKER_HOST: tcp://docker:2375
@@ -594,6 +595,7 @@ training:build-image:
   image: docker:27-cli
   services:
     - name: docker:27-dind
+      alias: docker
       command: ["--tls=false"]
   variables:
     DOCKER_HOST: tcp://docker:2375
@@ -661,15 +663,13 @@ deploy:registry-push:
   image: docker:27-cli
   services:
     - name: docker:27-dind
+      alias: docker
       command: ["--tls=false"]
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
     SHML_IMAGE_TAG: "$CI_COMMIT_SHA"
-  needs:
-    - job: container_registry_build
-      optional: true   # allow deploy even if build job was skipped (no changes)
   before_script:
     - docker info
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
