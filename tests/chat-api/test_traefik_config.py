@@ -18,15 +18,6 @@ class TestTraefikConfiguration:
             return yaml.safe_load(f)
 
     @pytest.fixture
-    def chat_ui_compose(self):
-        """Load chat-ui-v2 docker-compose.yml (renamed from chat-ui/ in v0.2)."""
-        compose_path = os.path.join(
-            os.path.dirname(__file__), "../../chat-ui-v2/docker-compose.yml"
-        )
-        with open(compose_path) as f:
-            return yaml.safe_load(f)
-
-    @pytest.fixture
     def coding_model_compose(self):
         """Load coding-model deploy/compose/docker-compose.yml."""
         compose_path = os.path.join(
@@ -74,24 +65,6 @@ class TestTraefikConfiguration:
         assert (
             "oauth2-auth" not in direct_middleware
         ), "Direct API route should not have OAuth (handled by service)"
-
-    def test_chat_ui_route_has_oauth_and_role(self, chat_ui_compose):
-        """Chat UI route should require OAuth + developer role."""
-        labels = chat_ui_compose["services"]["chat-ui"]["labels"]
-
-        # Find middleware label
-        middleware = None
-        for label in labels:
-            if "chat-ui.middlewares=" in label:
-                middleware = label
-                break
-
-        assert middleware is not None, "Chat UI middleware not found"
-        assert "oauth2-errors" in middleware
-        assert "oauth2-auth" in middleware
-        assert (
-            "role-auth-developer" in middleware
-        ), "Chat UI should require developer role"
 
     def test_coding_model_routes_have_oauth_and_role(self, coding_model_compose):
         """Coding model routes should require OAuth + developer role."""

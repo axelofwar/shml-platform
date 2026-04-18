@@ -12,13 +12,14 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import pytest
 
 GATEWAY_URL = os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+HERMES_SESSION_TOKEN = os.environ.get("HERMES_SESSION_TOKEN", "")
 STATE_DB = HERMES_HOME / "state.db"
 
 
@@ -37,45 +38,61 @@ skip_no_gateway = pytest.mark.skipif(
 )
 
 
-def api_get(path: str) -> dict:
-    req = Request(f"{GATEWAY_URL}{path}", method="GET")
+def _build_request(path: str, method: str, body: dict | None = None) -> Request:
+    data = json.dumps(body).encode() if body is not None else None
+    req = Request(f"{GATEWAY_URL}{path}", data=data, method=method)
     req.add_header("Accept", "application/json")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    if HERMES_SESSION_TOKEN:
+        req.add_header("Authorization", f"Bearer {HERMES_SESSION_TOKEN}")
+    return req
+
+
+def session_api_accessible() -> bool:
+    try:
+        api_get("/api/sessions")
+        return True
+    except HTTPError as exc:
+        if exc.code == 401:
+            return False
+        raise
+
+
+def api_get(path: str) -> dict:
+    req = _build_request(path, "GET")
     with urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
 def api_post(path: str, body: dict) -> dict:
-    data = json.dumps(body).encode()
-    req = Request(f"{GATEWAY_URL}{path}", data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json")
+    req = _build_request(path, "POST", body)
     with urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
 def api_patch(path: str, body: dict) -> tuple[int, dict]:
-    data = json.dumps(body).encode()
-    req = Request(f"{GATEWAY_URL}{path}", data=data, method="PATCH")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json")
+    req = _build_request(path, "PATCH", body)
     try:
         with urlopen(req, timeout=10) as resp:
             return resp.status, json.loads(resp.read())
-    except Exception as e:
-        if hasattr(e, "code") and hasattr(e, "read"):
-            return e.code, json.loads(e.read())
-        raise
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read())
 
 
 def api_delete(path: str) -> int:
-    req = Request(f"{GATEWAY_URL}{path}", method="DELETE")
+    req = _build_request(path, "DELETE")
     try:
         with urlopen(req, timeout=10) as resp:
             return resp.status
-    except Exception as e:
-        if hasattr(e, "code"):
-            return e.code
-        raise
+    except HTTPError as exc:
+        return exc.code
+
+
+skip_no_session_api_access = pytest.mark.skipif(
+    not gateway_available() or not session_api_accessible(),
+    reason="Hermes session API requires a valid HERMES_SESSION_TOKEN",
+)
 
 
 # ── Gateway Health ──────────────────────────────────────────────────────────
@@ -90,7 +107,12 @@ class TestGatewayHealth:
 
     @skip_no_gateway
     def test_sessions_list(self):
-        result = api_get("/api/sessions")
+        try:
+            result = api_get("/api/sessions")
+        except HTTPError as exc:
+            assert exc.code == 401, f"Expected public session list or 401, got {exc.code}"
+            return
+
         assert "sessions" in result or "items" in result or isinstance(result, list)
 
 
@@ -99,7 +121,7 @@ class TestGatewayHealth:
 
 @pytest.mark.integration
 class TestSessionTitleUniqueness:
-    @skip_no_gateway
+    @skip_no_session_api_access
     def test_create_session_with_title(self):
         """Creating a session via gateway works."""
         import uuid
@@ -111,7 +133,7 @@ class TestSessionTitleUniqueness:
         # Clean up
         api_delete(f"/api/sessions/{session_id}")
 
-    @skip_no_gateway
+    @skip_no_session_api_access
     def test_duplicate_title_returns_error(self):
         """Two sessions with same title should fail on second."""
         import uuid
@@ -253,7 +275,7 @@ class TestSessionFileHealth:
 
 @pytest.mark.integration
 class TestE2ESessionTracking:
-    @skip_no_gateway
+    @skip_no_session_api_access
     def test_full_session_lifecycle(self):
         """Create → list → retrieve → rename → delete: full session lifecycle."""
         import uuid

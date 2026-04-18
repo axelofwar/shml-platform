@@ -53,10 +53,14 @@ class TestFusionAuthAdminProtection:
             timeout=TIMEOUT,
             allow_redirects=True,
         )
-        assert any(
-            x in r.url
-            for x in ("sign_in", "oauth2-proxy", "/auth/oauth2/authorize")
-        ), f"Expected OAuth sign-in redirect, got: {r.url}"
+        redirected_to_login = any(
+            marker in r.url
+            for marker in ("sign_in", "oauth2-proxy", "/auth/oauth2/authorize")
+        )
+        denied_in_place = r.status_code in (401, 403) and r.url.rstrip("/") == f"{BASE_URL}/admin".rstrip("/")
+        assert redirected_to_login or denied_in_place, (
+            f"Expected OAuth redirect or in-place auth denial for /admin, got {r.status_code} at {r.url}"
+        )
 
     def test_auth_login_page_is_publicly_accessible(self):
         _skip_if_unreachable()

@@ -449,7 +449,10 @@ class TestComposeWarningGuards:
             assert service_name in content
         for volume_name in self.EXPECTED_GITLAB_RUNNER_VOLUMES:
             assert volume_name in content
-        assert 'entrypoint: ["/bin/sh", "/scripts/platform/gitlab_runner_entrypoint.sh"]' in content
+        assert re.search(
+            r'entrypoint:\s*\[\s*"/bin/sh",\s*"/scripts/platform/gitlab_runner_entrypoint\.sh"\s*\]',
+            content,
+        )
         assert "- ../../scripts:/scripts:ro" in content
 
     def test_tracing_compose_drops_obsolete_version_key(self, tracing_compose_content):
@@ -459,8 +462,14 @@ class TestComposeWarningGuards:
         assert not logging_compose_content.lstrip().startswith("version:")
 
     def test_observability_healthchecks_do_not_require_wget(self, tracing_compose_content, logging_compose_content):
-        assert '["CMD", "/otelcol-contrib", "--version"]' in tracing_compose_content
-        assert '["CMD", "promtail", "-version"]' in logging_compose_content
+        assert re.search(
+            r'test:\s*\[\s*"CMD",\s*"/otelcol-contrib",\s*"--version"\s*\]',
+            tracing_compose_content,
+        )
+        assert re.search(
+            r'test:\s*\[\s*"CMD",\s*"promtail",\s*"-version"\s*\]',
+            logging_compose_content,
+        )
 
     def test_nightly_test_runner_mounts_repo_root(self, monitoring_compose_content, infra_compose_content):
         assert "- ../../:/workspace:ro" in monitoring_compose_content

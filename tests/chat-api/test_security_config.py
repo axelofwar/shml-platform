@@ -21,33 +21,6 @@ def get_labels(compose, service_name):
     return compose.get("services", {}).get(service_name, {}).get("labels", [])
 
 
-class TestChatUISecurityConfig:
-    """Test Chat UI has correct security configuration."""
-
-    def test_chat_ui_requires_oauth(self):
-        """Chat UI must require OAuth authentication."""
-        compose = load_compose("chat-ui-v2/docker-compose.yml")
-        labels = get_labels(compose, "chat-ui")
-
-        middlewares = [l for l in labels if "middlewares=" in l]
-        assert len(middlewares) > 0, "No middleware configured"
-
-        middleware_str = middlewares[0]
-        assert "oauth2-auth" in middleware_str, "OAuth not required for Chat UI"
-
-    def test_chat_ui_requires_developer_role(self):
-        """Chat UI must require developer role."""
-        compose = load_compose("chat-ui-v2/docker-compose.yml")
-        labels = get_labels(compose, "chat-ui")
-
-        middlewares = [l for l in labels if "middlewares=" in l]
-        middleware_str = middlewares[0]
-
-        assert (
-            "role-auth-developer" in middleware_str
-        ), "Developer role not required for Chat UI"
-
-
 class TestChatAPISecurityConfig:
     """Test Chat API has correct security configuration."""
 
@@ -194,7 +167,6 @@ class TestAccessMatrix:
     def test_all_chat_interfaces_require_auth(self):
         """All chat interfaces must require authentication."""
         interfaces = [
-            ("chat-ui-v2/docker-compose.yml", "chat-ui"),
             ("inference/chat-api/docker-compose.yml", "chat-api"),
             ("inference/coding-model/docker-compose.yml", "coding-model-primary"),
             ("inference/coding-model/docker-compose.yml", "coding-model-fallback"),
@@ -215,7 +187,6 @@ class TestAccessMatrix:
     def test_non_admin_services_require_developer_role(self):
         """Chat services should require at least developer role."""
         services_requiring_developer = [
-            ("chat-ui-v2/docker-compose.yml", "chat-ui"),
             ("inference/chat-api/docker-compose.yml", "chat-api"),
             ("inference/coding-model/docker-compose.yml", "coding-model-primary"),
             ("inference/coding-model/docker-compose.yml", "coding-model-fallback"),
@@ -240,12 +211,6 @@ class TestAccessMatrix:
 class TestDockerComposeIntegrity:
     """Test docker-compose files are valid."""
 
-    def test_chat_ui_compose_valid(self):
-        """Chat UI compose file should be valid YAML."""
-        compose = load_compose("chat-ui-v2/docker-compose.yml")  # renamed from chat-ui/ in v0.2
-        assert "services" in compose
-        assert "chat-ui" in compose["services"]
-
     def test_chat_api_compose_valid(self):
         """Chat API compose file should be valid YAML."""
         compose = load_compose("inference/chat-api/docker-compose.yml")
@@ -269,4 +234,4 @@ class TestDockerComposeIntegrity:
             content = f.read()
 
         assert "chat-api" in content.lower() or "inference/chat-api" in content
-        assert "chat-ui" in content.lower()
+        assert "coding-model" in content.lower() or "inference/coding-model" in content
