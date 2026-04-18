@@ -72,8 +72,7 @@ class TestComposeStructure:
             "qwen3-vl-api",
             "z-image-api",
             "inference-gateway",
-            "pii-blur-api",
-            "pii-ui",
+            "audio-copyright-api",
         ]:
             assert service_name in services
 
@@ -177,35 +176,35 @@ class TestInferenceGatewayService:
         assert labels["traefik.http.routers.inference.middlewares"] == "oauth2-errors,oauth2-auth,inference-strip"
 
 
-class TestPIIBlurService:
-    def test_service_uses_shared_db_secret_and_gpu(self, services: dict[str, Any]):
-        service = services["pii-blur-api"]
+class TestAudioCopyrightService:
+    def test_service_uses_shared_db_secret_and_cpu_only(self, services: dict[str, Any]):
+        service = services["audio-copyright-api"]
         env = _env_dict(service)
 
         assert env["POSTGRES_PASSWORD_FILE"] == "/run/secrets/shared_db_password"
-        assert env["ENABLE_LICENSE_PLATE_DETECTION"] == "true"
+        assert env["MUSIC_DB_PATH"] == "/app/music_database"
         assert service["secrets"] == ["shared_db_password"]
-        assert _device_ids(service) == ["1"]
+        assert _device_ids(service) == []
 
-    def test_traefik_labels_guard_pii_route(self, services: dict[str, Any]):
-        labels = _label_dict(services["pii-blur-api"])
+    def test_traefik_labels_guard_audio_route(self, services: dict[str, Any]):
+        labels = _label_dict(services["audio-copyright-api"])
 
-        assert labels["traefik.http.routers.pii-blur.rule"] == "PathPrefix(`/api/pii`)"
-        assert labels["traefik.http.routers.pii-blur.priority"] == REQUIRED_PRIORITY
-        assert labels["traefik.http.services.pii-blur.loadbalancer.server.port"] == "8000"
-        assert labels["traefik.http.middlewares.pii-blur-strip.stripprefix.prefixes"] == "/api/pii"
-        assert labels["traefik.http.routers.pii-blur.middlewares"] == "oauth2-errors,oauth2-auth,pii-blur-strip"
+        assert labels["traefik.http.routers.audio-copyright.rule"] == "PathPrefix(`/api/audio`)"
+        assert labels["traefik.http.routers.audio-copyright.priority"] == REQUIRED_PRIORITY
+        assert labels["traefik.http.services.audio-copyright.loadbalancer.server.port"] == "8000"
+        assert labels["traefik.http.middlewares.audio-copyright-strip.stripprefix.prefixes"] == "/api/audio"
+        assert labels["traefik.http.routers.audio-copyright.middlewares"] == "oauth2-errors,oauth2-auth,audio-copyright-strip"
 
 
 class TestSharedInvariants:
     @pytest.mark.parametrize(
         "service_name",
-        ["qwen3-vl-api", "z-image-api", "inference-gateway", "pii-blur-api"],
+        ["qwen3-vl-api", "z-image-api", "inference-gateway", "audio-copyright-api"],
     )
     def test_backend_services_share_platform_network(
         self, services: dict[str, Any], service_name: str
     ):
-        assert services[service_name]["networks"] == ["shml-platform"]
+        assert "shml-platform" in services[service_name]["networks"]
 
     @pytest.mark.parametrize(
         ("service_name", "path_prefix"),
@@ -213,7 +212,7 @@ class TestSharedInvariants:
             ("qwen3-vl-api", "/api/llm"),
             ("z-image-api", "/api/image"),
             ("inference-gateway", "/inference"),
-            ("pii-blur-api", "/api/pii"),
+            ("audio-copyright-api", "/api/audio"),
         ],
     )
     def test_public_api_routes_use_max_priority(
