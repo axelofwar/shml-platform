@@ -360,7 +360,7 @@ fusionauth_live_tests:
         echo "FusionAuth is accessible!"
         FUSIONAUTH_URL="$FA_URL" \
         FUSIONAUTH_API_KEY="$FUSIONAUTH_API_KEY" \
-        pytest tests/platform_sdk/test_integration.py -v --tb=short
+        pytest tests/integration/test_fusionauth_admin_flow.py -v --tb=short -m integration -x
       else
         echo "⚠️ FusionAuth not accessible — skipping live tests"
       fi
