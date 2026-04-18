@@ -114,10 +114,13 @@ docs_check:
 unit_tests:
   stage: test
   <<: *python_test_setup
+  variables:
+    GIT_SUBMODULE_STRATEGY: normal
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web"'
   script:
     - pip install pytest pytest-asyncio pytest-cov httpx aiohttp pydantic fastapi
+    - pip install -e libs/training --quiet 2>/dev/null || echo "⚠️ libs/training install failed (submodule may be unavailable)"
     - |
       if [ -d "tests/unit" ]; then
         pytest tests/unit/ -v --tb=short -x
