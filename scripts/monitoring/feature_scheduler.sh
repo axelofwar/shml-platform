@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Source centralized Telegram helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 INTERVAL="${MATERIALIZE_INTERVAL:-3600}"          # Default: 1 hour
 RAY_HEAD="${RAY_HEAD_ADDRESS:-ray-head:8265}"      # Ray Job Submission API
 JOB_NAME="feature-materialize"

@@ -44,10 +44,14 @@ try:
 except ImportError:
     requests = None  # type: ignore[assignment]
 
+# Centralised notification — see libs/notify.py
+_libs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "libs")
+if os.path.isdir(_libs_dir) and _libs_dir not in sys.path:
+    sys.path.insert(0, _libs_dir)
+from notify import send_telegram  # noqa: E402
+
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://global-prometheus:9090")
 MLFLOW_URL = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 WORKSPACE = os.getenv("WORKSPACE_DIR", "/workspace")
 
 
@@ -396,7 +400,8 @@ def generate_plan(recommendations: list[Recommendation]) -> str:
 
 def send_telegram_summary(recommendations: list[Recommendation]) -> None:
     """Send condensed summary to Telegram."""
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT and requests):
+    if not send_telegram:
+        logger.warning("Telegram not available — skipping summary")
         return
 
     p0 = sum(1 for r in recommendations if r.priority == "P0")
@@ -415,14 +420,7 @@ def send_telegram_summary(recommendations: list[Recommendation]) -> None:
     if len(recommendations) > 5:
         msg += f"\n_...and {len(recommendations) - 5} more_"
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT, "text": msg, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    send_telegram(msg, parse_mode="Markdown")
 
 
 # ---------------------------------------------------------------------------

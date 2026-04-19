@@ -23,10 +23,7 @@ from pathlib import Path
 _libs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "libs")
 if os.path.isdir(_libs_dir) and _libs_dir not in sys.path:
     sys.path.insert(0, _libs_dir)
-try:
-    from notify import send_telegram as _notify_telegram
-except ImportError:
-    _notify_telegram = None  # type: ignore[assignment]
+from notify import send_telegram as _notify_telegram  # noqa: E402
 
 try:
     import psutil

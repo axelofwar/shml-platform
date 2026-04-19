@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+# Source centralized Telegram helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 USER_EMAIL="${1:-unknown}"
 USER_NAME="${2:-${USER_EMAIL%%@*}}"
 USER_ID="${3:-unknown}"
@@ -52,28 +56,8 @@ resolve_app_name() {
 APP_NAME=$(resolve_app_name)
 
 # ---------------------------------------------------------------------------
-# Telegram notification
+# Telegram notification (uses centralized helper from telegram.sh)
 # ---------------------------------------------------------------------------
-send_telegram() {
-    local message="$1"
-    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-        curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "text=${message}" \
-            -d "parse_mode=HTML" > /dev/null 2>&1 || true
-    else
-        log "WARNING: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — skipping notification"
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-log "New user registration event: ${EVENT_TYPE}"
-log "  Email: ${USER_EMAIL}"
-log "  Username: ${USER_NAME}"
-log "  User ID: ${USER_ID}"
-log "  Application: ${APP_NAME}"
 
 # Build notification message
 MSG="👤 <b>New User Registration</b>
