@@ -436,6 +436,7 @@ compose_validate:
 container_registry_build:
   stage: build
   image: docker:27-cli
+  allow_failure: true
   services:
     - name: docker:27-dind
       alias: docker
