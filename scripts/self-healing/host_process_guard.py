@@ -100,11 +100,10 @@ def gather_process_memory() -> dict[str, dict]:
 # Alert helpers (uses Telegram env vars set by watchdog environment)
 # ---------------------------------------------------------------------------
 
-def send_telegram(message: str) -> None:
-    if _notify_telegram is not None:
-        _notify_telegram(message, parse_mode="HTML")
-    else:
-        print(f"TELEGRAM_UNAVAIL: {message[:120]}", file=sys.stderr)
+
+def _send_alert(message: str) -> None:
+    """Send a Telegram alert using the centralized notify module."""
+    _notify_telegram(message, parse_mode="HTML")
 
 
 def create_gitlab_issue(title: str, body: str) -> None:
@@ -176,7 +175,7 @@ def main() -> int:
                            f"RSS: {prev['rss_mb']} MB → {rss_mb} MB over {int(elapsed/60)}min\n"
                            f"PIDs: {pid_count}")
                     print(f"LEAK: {name}: {growth_per_hr} MB/hr (was {prev['rss_mb']} MB, now {rss_mb} MB)")
-                    send_telegram(msg)
+                    _send_alert(msg)
                     create_gitlab_issue(
                         f"Host Memory Leak: {name}",
                         f"Host process `{name}` is leaking memory.\n\n"
