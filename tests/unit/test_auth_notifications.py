@@ -119,9 +119,8 @@ class TestNotificationScript:
         with open(script_path) as f:
             content = f.read()
         assert "send_telegram" in content
-        assert "TELEGRAM_BOT_TOKEN" in content
-        assert "TELEGRAM_CHAT_ID" in content
-        assert "api.telegram.org" in content
+        # Telegram credentials and API calls are in the sourced telegram.sh helper
+        assert "telegram.sh" in content
 
     def test_script_logs_registration(self, script_path):
         with open(script_path) as f:
