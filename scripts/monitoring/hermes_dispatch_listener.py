@@ -318,8 +318,12 @@ def _run_hermes_freeform(chat_id: int, prompt: str) -> None:
     deadline = start + FREEFORM_TIMEOUT
 
     try:
+        # --quiet suppresses hermes' ~3KB startup banner (ASCII logo, tools
+        # list, skills list, MCP servers) that would otherwise dominate the
+        # captured stdout and crowd the real response out of the truncation
+        # window. With -Q, stdout is just the response box.
         proc = subprocess.Popen(
-            [str(HERMES_BIN), "chat", "--yolo", "-q", prompt],
+            [str(HERMES_BIN), "chat", "--yolo", "--quiet", "-q", prompt],
             cwd=str(PLATFORM_ROOT),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "TERM": "dumb"},
