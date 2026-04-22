@@ -51,15 +51,11 @@ if [[ -f "$_env_file" ]]; then
     set +eu; set -a; source "$_env_file" 2>/dev/null || true; set +a; set -eu
 fi
 
-notify() {
-    local msg="$1"
-    if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]]; then
-        curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="$TELEGRAM_CHAT_ID" \
-            -d parse_mode=Markdown \
-            -d text="$msg" >/dev/null 2>&1 || true
-    fi
-}
+# Source centralized Telegram helper
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
+# Wrapper to preserve existing call sites
+notify() { send_telegram --parse-mode Markdown "$1"; }
 
 # ── 1. Autoresearch status ───────────────────────────────────────────────────
 AR_RUNNING=false

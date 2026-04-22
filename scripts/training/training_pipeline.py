@@ -49,12 +49,10 @@ except ImportError:
     requests = None  # type: ignore[assignment]
 
 # Centralised notification — see libs/notify.py
-try:
-    from notify import send_telegram
-except ImportError:
-    def send_telegram(msg: str, **_kw: Any) -> bool:  # type: ignore[misc]
-        logger.warning("libs/notify.py not available — Telegram disabled")
-        return False
+_libs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "libs")
+if os.path.isdir(_libs_dir) and _libs_dir not in sys.path:
+    sys.path.insert(0, _libs_dir)
+from notify import send_telegram  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

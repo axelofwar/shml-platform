@@ -5,6 +5,10 @@
 
 set -e
 
+# Source centralized Telegram helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 # Arguments from webhook
 REPO="$1"
 REF="$2"
@@ -32,19 +36,6 @@ fi
 
 log() {
     echo "[${TIMESTAMP}] $1" | tee -a "$LOG_FILE"
-}
-
-# Send Telegram notification
-send_telegram() {
-    local message="$1"
-    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-        # URL encode the message
-        local encoded_message=$(echo "$message" | sed 's/ /%20/g; s/\n/%0A/g')
-        curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "text=${message}" \
-            -d "parse_mode=HTML" > /dev/null 2>&1 || true
-    fi
 }
 
 # Send Email notification (using system mail if available)

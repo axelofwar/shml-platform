@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# Source centralized Telegram helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 TEST_HOUR="${TEST_HOUR:-3}"                  # Hour (UTC) to run tests
 TEST_DIR="${TEST_DIR:-/workspace/tests}"
 RESULTS_DIR="/var/log/test-runner"
@@ -19,17 +23,6 @@ mkdir -p "$RESULTS_DIR"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" | tee -a "$RESULTS_DIR/runner.log"
-}
-
-send_telegram() {
-    local msg="$1"
-    if [[ "${TELEGRAM_ENABLED:-}" == "true" && -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-        curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${msg}" \
-            -d parse_mode=Markdown \
-            > /dev/null 2>&1 || log "WARN: Telegram send failed"
-    fi
 }
 
 run_tests() {

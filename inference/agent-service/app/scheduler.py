@@ -42,7 +42,8 @@ if _libs_path not in sys.path:
 try:
     from notify import send_telegram as _send_telegram
 except ImportError:
-    # Fallback: inline implementation for Docker where libs/ may not be mounted
+    # NOTE: inline — cannot import libs/ from container (agent-service Docker image
+    # does not mount the platform libs/ directory)
     def _send_telegram(message: str, *, parse_mode: str = "Markdown") -> bool:
         """Send a Telegram notification (best-effort, never raises)."""
         token = _os.getenv("TELEGRAM_BOT_TOKEN")

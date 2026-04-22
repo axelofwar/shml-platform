@@ -37,6 +37,9 @@ if [[ -f "$SERVICE_DISCOVERY" ]]; then
     source "$SERVICE_DISCOVERY"
 fi
 
+# Source centralized Telegram helper
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -288,22 +291,8 @@ _sev_icon() {
     esac
 }
 
-_html_escape() {
-    printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
-}
-
-# Low-level send — JSON body + HTML parse mode (safe with all special chars)
-send_telegram() {
-    local msg="$1"
-    [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]] && return 0
-    local payload
-    payload=$(jq -n --arg chat "${TELEGRAM_CHAT_ID}" --arg text "$msg" \
-        '{chat_id: $chat, text: $text, parse_mode: "HTML"}') || return 0
-    curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        > /dev/null 2>&1 || log "WARN: Telegram send failed"
-}
+# send_telegram(), _html_escape() are provided by scripts/lib/telegram.sh
+# (sourced above). The functions below build on them.
 
 # Rich structured event card — named params, 5-section layout.
 # Usage: send_alert_card \

@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Source centralized Telegram helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/telegram.sh"
+
 INTERVAL="${MATERIALIZE_INTERVAL:-3600}"          # Default: 1 hour
 RAY_HEAD="${RAY_HEAD_ADDRESS:-ray-head:8265}"      # Ray Job Submission API
 JOB_NAME="feature-materialize"
@@ -22,17 +26,6 @@ mkdir -p "$LOG_DIR"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $1" | tee -a "$LOG_DIR/scheduler.log"
-}
-
-send_telegram() {
-    local msg="$1"
-    if [[ "${TELEGRAM_ENABLED:-}" == "true" && -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-        curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${msg}" \
-            -d parse_mode=Markdown \
-            > /dev/null 2>&1 || true
-    fi
 }
 
 submit_job() {
