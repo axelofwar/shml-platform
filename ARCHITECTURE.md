@@ -347,6 +347,77 @@ Browser → Traefik [:80/:443]
 
 ---
 
+## Notification & Dispatch
+
+### Outbound (one-way)
+
+All platform services emit Telegram alerts through a single canonical path:
+
+- **Python callers** → `from libs.notify import send_telegram`
+- **Bash callers** → `source "$(dirname "$0")/../lib/telegram.sh"`
+
+Both helpers read `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` from the environment
+and silently no-op when either is missing. The bash helper uses jq-based JSON
+encoding and supports `--parse-mode HTML|Markdown` (HTML default). Consolidated
+under issue #563; previous inline `send_telegram()` implementations in watchdog,
+training pipeline, host-process guard, webhook scripts, etc., were deduplicated
+into these two canonical helpers. One documented exception: the
+`inference/agent-service/app/scheduler.py` container image cannot mount `libs/`
+and falls back to an inline `urllib` implementation gated with a `# NOTE:`.
+
+### Bidirectional (two-way) — Hermes dispatch listener
+
+Issue #564 adds a long-polling Telegram listener that lets the owner dispatch
+Hermes tasks from their phone. The transport is deliberately simple:
+
+- **Service**: `scripts/monitoring/hermes_dispatch_listener.py`
+- **Systemd**: `deploy/systemd/shml-hermes-dispatch-listener.service`
+  (user-scope; `Requires=shl-hermes-gateway.service`)
+- **Protocol**: long-poll `getUpdates` (no public webhook, no Traefik route,
+  no oauth2-proxy integration required)
+- **Allowlist**: only messages whose `chat.id` equals `TELEGRAM_DISPATCH_CHAT_ID`
+  (fallback: `TELEGRAM_CHAT_ID`) are processed. Everything else is silently
+  dropped — no reply, no log spam, no side-effects. This is the only access
+  control for the dispatch surface.
+- **Replies**: go back via `libs.notify.send_telegram_reply(chat_id, ...)`
+  targeting the originating chat, never the shared alerts channel.
+- **Offset persistence**: `$REPO/.cache/hermes_dispatch_listener_offset.json`
+  so a restart does not replay messages.
+
+**Command surface**:
+
+| Command | Handler | Latency |
+|---|---|---|
+| `@hermes ping` | inline | &lt;1s |
+| `@hermes help` | inline | &lt;1s |
+| `@hermes status` | `docker ps` + `nvidia-smi` + `df -h /` | ~2s |
+| `@hermes gpu` | `nvidia-smi` | ~2s |
+| `@hermes issue: <title>` | GitLab API create in `shml/platform` with `source::telegram,assignee::agent` labels | ~1s |
+| *anything else* | background worker thread → `hermes --yolo -q <prompt>`; ack immediately, result on completion | up to `HERMES_TG_FREEFORM_TIMEOUT_S` (default 300s) |
+
+**Install (user-scope)**:
+
+```bash
+systemctl --user link \
+    $PWD/deploy/systemd/shml-hermes-dispatch-listener.service
+systemctl --user daemon-reload
+systemctl --user enable --now shml-hermes-dispatch-listener.service
+journalctl --user -u shml-hermes-dispatch-listener -f
+```
+
+**Environment vars** (all in `.env.example`):
+
+- `TELEGRAM_BOT_TOKEN` — bot API token (reused across outbound + dispatch)
+- `TELEGRAM_CHAT_ID` — outbound alerts channel
+- `TELEGRAM_DISPATCH_CHAT_ID` — owner's private DM with the bot (defaults to
+  `TELEGRAM_CHAT_ID` if unset; set explicitly when the two chats differ)
+- `HERMES_TG_ALLOW_FREEFORM` — `0` disables free-form dispatch
+- `HERMES_TG_FREEFORM_TIMEOUT_S` — per-task timeout, default 300
+- `HERMES_BIN` — override hermes CLI path
+  (default `~/.hermes/hermes-agent/venv/bin/hermes`)
+
+---
+
 ## Knowledge Graph & Intelligence Layer
 
 ### GitNexus Code Intelligence

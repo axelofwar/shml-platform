@@ -62,6 +62,48 @@ def send_telegram(
         return False
 
 
+def send_telegram_reply(
+    chat_id: str | int,
+    message: str,
+    *,
+    parse_mode: str = "Markdown",
+    disable_notification: bool = False,
+    reply_to_message_id: int | None = None,
+) -> bool:
+    """Send a Telegram message to a specific chat_id (used by the dispatch listener).
+
+    Unlike send_telegram() which posts to the shared TELEGRAM_CHAT_ID announcement
+    channel, this function targets an explicit chat (the chat the owner DM'd from)
+    so bidirectional replies do not leak into the alerts channel.
+
+    Returns True if the message was sent successfully.
+    """
+    token = _BOT_TOKEN or os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        logger.debug("Telegram not configured (TELEGRAM_BOT_TOKEN missing)")
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    params: dict[str, str] = {
+        "chat_id": str(chat_id),
+        "text": message,
+        "parse_mode": parse_mode,
+        "disable_notification": str(disable_notification).lower(),
+    }
+    if reply_to_message_id is not None:
+        params["reply_to_message_id"] = str(reply_to_message_id)
+    payload = urllib.parse.urlencode(params).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception as e:
+        logger.warning("Telegram reply to %s failed: %s", chat_id, e)
+        return False
+
+
 def send_mr_ready_notification(
     mr_url: str,
     title: str,

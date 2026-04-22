@@ -1,0 +1,36 @@
+[Unit]
+Description=SHML Hermes Telegram dispatch listener (#564)
+Documentation=https://shml-platform.tail38b60a.ts.net/gitlab/shml/platform/-/issues/564
+After=network-online.target shl-hermes-gateway.service
+Wants=network-online.target
+Requires=shl-hermes-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/axelofwar/Projects/shml-platform
+
+EnvironmentFile=-/home/axelofwar/Projects/shml-platform/.env
+
+Environment=HOME=/home/axelofwar
+Environment=PYTHONPATH=/home/axelofwar/Projects/shml-platform
+Environment=PATH=/home/axelofwar/.hermes/hermes-agent/venv/bin:/home/axelofwar/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/usr/bin/python3 /home/axelofwar/Projects/shml-platform/scripts/monitoring/hermes_dispatch_listener.py
+
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening — keep the surface tight for a long-running owner-only service
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/axelofwar/Projects/shml-platform/.cache
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
