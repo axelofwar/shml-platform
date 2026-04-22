@@ -2,82 +2,95 @@ services:
   qwopus-coding:
     # ==========================================================================
     # Qwopus-Coding — Primary Coding LLM (RTX 3090 Ti, GPU 0)
-    # Model: Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-AWQ-4bit
-    # Backend: vLLM v0.19.0 (native Qwen3_5ForConditionalGeneration support)
-    # Mode: enforce-eager (no CUDA graphs — required to fit within 24GB VRAM)
-    # VRAM: ~17.78 GB weights + ~2.5 GB KV cache (32K ctx, HMA) = ~20.3 GB peak (within 24 GB)
-    # Vision encoder disabled (image=0,video=0): text-only coding workload
-    # Throughput: ~14-21 tok/s (enforce-eager penalty; ~2x faster if CUDA graphs)
-    # Benchmarked: 2026-04-09 vs GGUF Q4_K_M (GGUF 1.6-2.3x faster but same quality)
-    # Why AWQ: Opus reasoning distill — better multi-step code reasoning chains
+    # Model: Qwen3.5-27B.Q4_K_M.gguf
+    # Backend: llama.cpp server-cuda (promoted from vLLM, 2026-04-20)
+    # Context: 81920 tokens (q4_0 quantised KV cache)
+    #   q4_0 KV at 80K: ~2.6 GB vs fp16 ~10.5 GB — 4x VRAM savings
+    # VRAM: Q4_K_M ~15.4 GB weights + q4_0 KV at 80K ~2.6 GB = ~18.0 GB
+    # Throughput: 37-38 tok/s (1.8-2.5x faster than vLLM enforce-eager)
+    # Tool calling: Jinja template from embedded GGUF (Qwen3 im_start format)
+    # GPU: RTX 3090 Ti (cuda:0, SM86, 24 GB VRAM)
+    #
+    # Promotion criteria met (2026-04-20 Phase B2):
+    #   1. Planning score: 88+/100 (same as B1 baseline)
+    #   2. Tool-call correct selection: 7/7
+    #   3. Security detection: >=5/6
+    #   4. Long-context recall at 80K+
+    #   5. Throughput: 37-38 tok/s (floor: 10-20)
+    #   6. Context window: 81920 tokens (floor: 70-90K)
+    #
+    # Previous backend: vLLM v0.19.0 (AWQ 4-bit, 44688 ctx)
+    # Backup of vLLM config: docker-compose.vllm-backup.yml
+    # Benchmarking config: docker-compose.turboquant.yml
+    #
+    # NOTE: turbo4 KV cache available via TheTom/llama-cpp-turboquant image
+    #   when available, swap image and use --cache-type-k turbo4 --cache-type-v turbo4
     # ==========================================================================
-    image: vllm/vllm-openai:v0.19.0
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: qwopus-coding
     restart: unless-stopped
-    shm_size: '4gb'
+
+    shm_size: '2gb'
 
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0 # RTX 3090 Ti only
+      - NVIDIA_VISIBLE_DEVICES=0
       - CUDA_VISIBLE_DEVICES=0
 
     volumes:
-      - /home/axelofwar/Projects/shml-platform-storage/data/models/qwopus-awq:/models/qwopus-awq:ro
+      - /home/axelofwar/Projects/shml-platform-storage/data/models/qwopus:/models/qwopus:ro
 
     command:
+      # Model
       - --model
-      - /models/qwopus-awq
-      - --served-model-name
-      - qwopus-coding
-      # Max context: 32768 tokens — Hermes system prompt (~5K) + long agent
-      # chains (10K+ tool output) + 2048 output tokens fits without truncation.
-      # KV cache at 32K: ~2.5 GB via HMA (16 full-attention layers only).
-      # Hardware ceiling on RTX 3090 Ti (24 GB): 32K stable, 64K not viable (profiling OOM).
-      - --max-model-len
-      - "32768"
-      - --trust-remote-code
-      - --dtype
-      - auto
-      # GPU memory fraction: 0.88 — model weights take 17.78 GiB, leaving ~3.8 GiB
-      # for KV cache. HMA only allocates KV for 16/64 attention layers (~64 KB/token).
-      # At 32K context: well within budget. Lowered from 0.93 to avoid CUDA OOM
-      # during vLLM profiling/warmup on RTX 3090 Ti with system GPU processes.
-      - --gpu-memory-utilization
-      - "0.88"
-      # KV offloading DISABLED: --kv-offloading-size enables OffloadingConnector
-      # which is incompatible with HMA (Hybrid Memory Architecture) required by
-      # Qwen3.5's DeltaNet hybrid attention (48 linear + 16 full attention layers).
-      # vLLM v0.19.0 error: "Connector OffloadingConnector does not support HMA"
-      # Without HMA, vLLM allocates KV for all 64 layers → instant CUDA OOM.
-      # enforce-eager: disables CUDA graph capture (which needs ~1.5 GB extra and hit OOM).
-      # Throughput cost: ~1.5-2x slower than graph mode, but required on 24 GB VRAM.
-      - --enforce-eager
-      # Disable vision encoder profiling — saves ~4.5 GB VRAM, text-only inference.
-      # Re-enable by removing these two args if multimodal input is needed.
-      - --limit-mm-per-prompt
-      - '{"image":0,"video":0}'
-      # Max concurrent sequences: 4 is sufficient for serial agent workloads.
-      - --max-num-seqs
-      - "4"
-      # Tool calling: enable auto tool choice + Qwen3 Coder XML parser.
-      # Required for Hermes agent and any OpenAI-tools client (sends tools=[...]).
-      # Qwen3.5 outputs XML-format tool calls: <function=name><parameter=key>value</parameter></function>
-      # The qwen3_coder parser (vLLM v0.19.0) matches this exact format.
-      - --enable-auto-tool-choice
-      - --tool-call-parser
-      - qwen3_coder
-      # Reasoning parser: extracts <think>...</think> into reasoning_content field.
-      # Qwen3.5 puts <think> in the prompt template; model generates only </think>.
-      # Without this, thinking tokens leak into the content field as raw text.
-      - --reasoning-parser
-      - qwen3
+      - /models/qwopus/Qwen3.5-27B.Q4_K_M.gguf
+      # Full GPU offload — all 46 layers to VRAM (Q4_K_M weight tiles fit in 15.4 GB)
+      - --n-gpu-layers
+      - "999"
+      # 80K context window — 1.83x more than previous vLLM 44688 ceiling
+      # q4_0 KV at 81920: ~2.6 GB vs fp16 ~10.5 GB — 4x savings
+      - --ctx-size
+      - "81920"
+      # q4_0: 4-bit quantised K and V cache (standard llama.cpp, all backends)
+      # This is the key flag that enables 80K+ context on 24 GB
+      # NOTE: swap to turbo4 when TheTom/llama-cpp-turboquant image is available
+      - --cache-type-k
+      - q4_0
+      - --cache-type-v
+      - q4_0
+      # Thread count: 8 physical cores for pre-fill; GPU handles generation
+      - --threads
+      - "8"
+      # Batch size for parallel pre-fill (prompt processing)
+      # Higher = faster TTFT for long prompts; 512 is safe for 80K ctx
+      - --batch-size
+      - "512"
+      # Ubatch: micro-batch for generation (token-by-token decode)
+      - --ubatch-size
+      - "128"
+      # Max concurrent sequences. llama.cpp divides --ctx-size EQUALLY across
+      # slots, so --parallel 4 at 81920 = 20480 per request — which clips
+      # agent loops (hermes + MCP tool chains) that easily reach 30-40K tokens.
+      # Set to 1 so a single request gets the full 81920-token context. The
+      # only clients today are hermes (one human) and the chat-ui; concurrent
+      # batch workloads route through coding-manager's yield API, not raw
+      # /v1/chat/completions. Bump to 2 if a real multi-user scenario shows up.
+      - --parallel
+      - "1"
+      # Flash attention — reduces VRAM during pre-fill, mandatory for long ctx
+      - --flash-attn
+      - "on"
+      # Keep model BOS/EOS in VRAM (prevents reload on new sessions)
+      - --keep
+      - "-1"
+      # Chat template: use the GGUF's embedded Jinja template (Qwen3 im_start format)
+      # The GGUF embeds the full tool-use + thinking template; --jinja enables it.
+      # Do NOT use --chat-template with --jinja — they conflict (causes 3-token prompts).
+      - --jinja
+      # Port: 8000 — drop-in replacement for vLLM (same port, same container name)
       - --port
       - "8000"
       - --host
       - "0.0.0.0"
-
-    # SECURITY: No direct port exposure - access through Traefik only
-    # ports:
-    #   - "8010:8000"  # REMOVED: bypasses auth
 
     deploy:
       resources:
@@ -92,14 +105,9 @@ services:
               device_ids: [ '0' ]
               capabilities: [ gpu ]
 
-    labels:
-      - "logging=promtail"
-      - "traefik.enable=true"
-      - "traefik.http.routers.coding-model.rule=PathPrefix(`/api/coding`)"
-      - "traefik.http.routers.coding-model.priority=2147483647"
-      - "traefik.http.services.coding-model.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.coding-model-strip.stripprefix.prefixes=/api/coding"
-      - "traefik.http.routers.coding-model.middlewares=oauth2-errors,oauth2-auth,coding-model-strip"
+    # SECURITY: No direct port exposure - access through Traefik only
+    # ports:
+    #   - "8010:8000"  # REMOVED: bypasses auth
 
     networks:
       - shml-platform
@@ -109,7 +117,16 @@ services:
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 180s # vLLM AWQ takes ~3min to load model + run profiling
+      start_period: 120s # GGUF loads faster than AWQ profiling — expect ~90s
+
+    labels:
+      - "logging=promtail"
+      - "traefik.enable=true"
+      - "traefik.http.routers.coding-model.rule=PathPrefix(`/api/coding`)"
+      - "traefik.http.routers.coding-model.priority=2147483647"
+      - "traefik.http.services.coding-model.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.coding-model-strip.stripprefix.prefixes=/api/coding"
+      - "traefik.http.routers.coding-model.middlewares=oauth2-errors,oauth2-auth,coding-model-strip"
 
   # ==========================================================================
   # Coding Manager - GPU Yield API for Training Integration
