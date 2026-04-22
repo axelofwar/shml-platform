@@ -60,7 +60,14 @@ HERMES_BIN = Path(
     )
 )
 ALLOW_FREEFORM = os.environ.get("HERMES_TG_ALLOW_FREEFORM", "1") == "1"
-FREEFORM_TIMEOUT = int(os.environ.get("HERMES_TG_FREEFORM_TIMEOUT_S", "300"))
+# Hard ceiling on a single free-form hermes invocation. Default bumped to 900s
+# because agentic hermes queries (MCP fan-out, long tool loops) routinely need
+# 3-10 minutes; 300s was clipping real work at the boundary.
+FREEFORM_TIMEOUT = int(os.environ.get("HERMES_TG_FREEFORM_TIMEOUT_S", "900"))
+# Interval for "still working" progress pings back to the user while a
+# free-form job runs. 0 disables. Default 180s (3 min) — spaced so a typical
+# 2-5 min query gets at most 1-2 pings.
+FREEFORM_PROGRESS_S = int(os.environ.get("HERMES_TG_FREEFORM_PROGRESS_S", "180"))
 POLL_LONG_TIMEOUT = int(os.environ.get("HERMES_TG_POLL_TIMEOUT_S", "25"))
 # Emit a heartbeat log line this often so operators can distinguish
 # "healthy + idle" from "wedged" at a glance. Default: every 5 minutes.
@@ -113,8 +120,12 @@ def _reply(chat_id: int, text: str, *, parse_mode: str = "Markdown") -> None:
     delay = 1.0
     for attempt in range(1, attempts + 1):
         if send_telegram_reply(chat_id, text, parse_mode=parse_mode):
-            if attempt > 1:
-                logger.info("reply to chat_id=%s succeeded on attempt %d", chat_id, attempt)
+            # Log every successful outbound so operators can confirm a message
+            # landed without inferring from the absence of failure warnings.
+            logger.info(
+                "reply to chat_id=%s ok (attempt=%d, %d chars)",
+                chat_id, attempt, len(text),
+            )
             return
         if attempt < attempts:
             time.sleep(delay)
@@ -260,7 +271,14 @@ def _handle_freeform(chat_id: int, text: str) -> None:
         _reply(chat_id, f"hermes CLI not found at `{HERMES_BIN}`")
         return
     _freeform_q.put((chat_id, text))
-    _reply(chat_id, f"🧠 queued for hermes (timeout {FREEFORM_TIMEOUT}s) — I'll reply when done")
+    if FREEFORM_PROGRESS_S > 0:
+        ack = (
+            f"🧠 queued for hermes (timeout {FREEFORM_TIMEOUT}s, "
+            f"progress every {FREEFORM_PROGRESS_S}s) — I'll reply when done"
+        )
+    else:
+        ack = f"🧠 queued for hermes (timeout {FREEFORM_TIMEOUT}s) — I'll reply when done"
+    _reply(chat_id, ack)
 
 
 COMMANDS = {
@@ -275,42 +293,123 @@ COMMANDS = {
 # ---------------------------------------------------------------------------
 # Worker: free-form dispatch via hermes CLI
 # ---------------------------------------------------------------------------
+def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
+    """SIGKILL the entire process group so hermes' MCP sidecars die with it.
+
+    Without this, Python's subprocess.run timeout only kills the immediate
+    child; any grandchildren (e.g. scripts/mcp/run_shml_platform_mcp.py)
+    become orphaned and hold the stdout/stderr pipes open, making
+    Popen.communicate() wait ~30s+ before returning.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        # Already dead, or Popen was created without start_new_session.
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _run_hermes_freeform(chat_id: int, prompt: str) -> None:
+    """Run one hermes free-form job, streaming progress pings back to Telegram."""
+    start = time.monotonic()
+    last_progress = start
+    deadline = start + FREEFORM_TIMEOUT
+
+    try:
+        proc = subprocess.Popen(
+            [str(HERMES_BIN), "chat", "--yolo", "-q", prompt],
+            cwd=str(PLATFORM_ROOT),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "TERM": "dumb"},
+            start_new_session=True,  # own process group → killpg on timeout
+        )
+    except Exception as e:
+        logger.exception("failed to spawn hermes")
+        _reply(chat_id, f"worker spawn error: {e}")
+        return
+
+    logger.info("hermes started pid=%s chat_id=%s prompt=%r",
+                proc.pid, chat_id, prompt[:80])
+
+    timed_out = False
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            break
+        now = time.monotonic()
+        if now >= deadline:
+            logger.warning("hermes pid=%s hit %ss cap — killing process group",
+                           proc.pid, FREEFORM_TIMEOUT)
+            _kill_process_group(proc)
+            timed_out = True
+            # Let Popen clean up; brief wait is fine because children are dead.
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                logger.error("hermes pid=%s still alive 15s after SIGKILL", proc.pid)
+            break
+        if (FREEFORM_PROGRESS_S > 0
+                and now - last_progress >= FREEFORM_PROGRESS_S):
+            elapsed = int(now - start)
+            _reply(
+                chat_id,
+                f"🧠 still working ({elapsed}s elapsed, cap {FREEFORM_TIMEOUT}s)",
+            )
+            last_progress = now
+        if _stop_event.is_set():
+            logger.info("stop event set — killing in-flight hermes pid=%s", proc.pid)
+            _kill_process_group(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return
+        # Small sleep so the poll loop doesn't busy-spin but still reacts
+        # within ~1s to stop signals / completion.
+        time.sleep(1.0)
+
+    out, err = proc.communicate()
+    duration = time.monotonic() - start
+    out = (out or "").strip()
+    err = (err or "").strip()
+
+    if timed_out:
+        header = f"⏱ hermes exceeded {FREEFORM_TIMEOUT}s — aborted ({duration:.1f}s)"
+        tail_src = (err or out).strip()
+        if tail_src:
+            tail = tail_src[-800:]
+            _reply(chat_id, f"{header}\n```\n{tail}\n```")
+        else:
+            _reply(chat_id, header)
+        return
+
+    if proc.returncode == 0 and out:
+        preview = out if len(out) <= 3500 else out[:3500] + "\n…(truncated)"
+        _reply(chat_id, f"✅ hermes done ({duration:.1f}s)\n```\n{preview}\n```")
+    else:
+        tail = (err or out or "(no output)")[-1500:]
+        _reply(
+            chat_id,
+            f"❌ hermes exit={proc.returncode} ({duration:.1f}s)\n```\n{tail}\n```",
+        )
+
+
 def _freeform_worker() -> None:
     while not _stop_event.is_set():
         try:
             chat_id, prompt = _freeform_q.get(timeout=1.0)
         except queue.Empty:
             continue
-        start = time.time()
         try:
-            proc = subprocess.run(
-                [str(HERMES_BIN), "chat", "--yolo", "-q", prompt],
-                cwd=str(PLATFORM_ROOT),
-                capture_output=True, text=True,
-                timeout=FREEFORM_TIMEOUT,
-                env={**os.environ, "TERM": "dumb"},
-                check=False,
-            )
-            duration = time.time() - start
-            out = (proc.stdout or "").strip()
-            err = (proc.stderr or "").strip()
-            if proc.returncode == 0 and out:
-                preview = out if len(out) <= 3500 else out[:3500] + "\n…(truncated)"
-                _reply(
-                    chat_id,
-                    f"✅ hermes done ({duration:.1f}s)\n```\n{preview}\n```",
-                )
-            else:
-                tail = (err or out or "(no output)")[-1500:]
-                _reply(
-                    chat_id,
-                    f"❌ hermes exit={proc.returncode} ({duration:.1f}s)\n```\n{tail}\n```",
-                )
-        except subprocess.TimeoutExpired:
-            _reply(chat_id, f"⏱ hermes exceeded {FREEFORM_TIMEOUT}s — aborted")
+            _run_hermes_freeform(chat_id, prompt)
         except Exception as e:
             logger.exception("freeform worker error")
-            _reply(chat_id, f"worker error: {e}")
+            try:
+                _reply(chat_id, f"worker error: {e}")
+            except Exception:
+                logger.exception("even the error _reply failed")
         finally:
             _freeform_q.task_done()
 

@@ -134,3 +134,56 @@ def test_issue_handler_requires_title(monkeypatch):
     )
     mod._handle_issue(111111, "")
     assert sent and "usage" in sent[0].lower()
+
+
+def test_run_hermes_freeform_success(monkeypatch, tmp_path):
+    """Happy path: fake hermes exits 0 with stdout → ✅ reply sent."""
+    mod = _load_listener(monkeypatch)
+    fake = tmp_path / "fake-hermes"
+    fake.write_text("#!/bin/sh\necho 'hello from fake hermes'\nexit 0\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(mod, "HERMES_BIN", fake)
+    monkeypatch.setattr(mod, "FREEFORM_TIMEOUT", 10)
+    monkeypatch.setattr(mod, "FREEFORM_PROGRESS_S", 0)  # disable pings
+    monkeypatch.setenv("HERMES_TG_REPLY_RETRIES", "1")
+    sent: list[str] = []
+    monkeypatch.setattr(
+        mod, "send_telegram_reply",
+        lambda chat_id, text, **_: sent.append(text) or True,
+    )
+
+    mod._run_hermes_freeform(111111, "whatever")
+
+    assert sent, "no reply captured"
+    assert sent[-1].startswith("✅ hermes done")
+    assert "hello from fake hermes" in sent[-1]
+
+
+def test_run_hermes_freeform_timeout_kills_process_group(monkeypatch, tmp_path):
+    """Slow fake hermes → ⏱ reply sent; process does not linger past wait()."""
+    import time as _time
+
+    mod = _load_listener(monkeypatch)
+    fake = tmp_path / "slow-hermes"
+    # Sleep longer than the timeout so the watcher loop has to kill it.
+    fake.write_text("#!/bin/sh\nsleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(mod, "HERMES_BIN", fake)
+    monkeypatch.setattr(mod, "FREEFORM_TIMEOUT", 2)
+    monkeypatch.setattr(mod, "FREEFORM_PROGRESS_S", 0)
+    monkeypatch.setenv("HERMES_TG_REPLY_RETRIES", "1")
+    sent: list[str] = []
+    monkeypatch.setattr(
+        mod, "send_telegram_reply",
+        lambda chat_id, text, **_: sent.append(text) or True,
+    )
+
+    t0 = _time.monotonic()
+    mod._run_hermes_freeform(111111, "slow job")
+    elapsed = _time.monotonic() - t0
+
+    # Should be killed promptly after the 2s cap (plus ~1s poll granularity).
+    # If the process-group kill regressed, this would push past 30s.
+    assert elapsed < 8, f"worker hung for {elapsed:.1f}s (process-group kill broken?)"
+    assert sent, "no reply captured"
+    assert sent[-1].startswith("⏱ hermes exceeded")
