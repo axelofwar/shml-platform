@@ -62,6 +62,9 @@ HERMES_BIN = Path(
 ALLOW_FREEFORM = os.environ.get("HERMES_TG_ALLOW_FREEFORM", "1") == "1"
 FREEFORM_TIMEOUT = int(os.environ.get("HERMES_TG_FREEFORM_TIMEOUT_S", "300"))
 POLL_LONG_TIMEOUT = int(os.environ.get("HERMES_TG_POLL_TIMEOUT_S", "25"))
+# Emit a heartbeat log line this often so operators can distinguish
+# "healthy + idle" from "wedged" at a glance. Default: every 5 minutes.
+HEARTBEAT_INTERVAL_S = int(os.environ.get("HERMES_TG_HEARTBEAT_S", "300"))
 TELEGRAM_API = "https://api.telegram.org"
 STATE_PATH = Path(
     os.environ.get(
@@ -381,6 +384,9 @@ def main() -> int:
 
     offset = _load_offset()
     backoff = 1.0
+    last_heartbeat = time.monotonic()
+    polls_since_heartbeat = 0
+    messages_since_heartbeat = 0
     while not _stop_event.is_set():
         try:
             resp = _tg_get(
@@ -390,6 +396,7 @@ def main() -> int:
                 timeout=POLL_LONG_TIMEOUT + 10,
             )
             backoff = 1.0
+            polls_since_heartbeat += 1
         except urllib.error.URLError as e:
             logger.warning("getUpdates network error: %s — backoff=%.1fs", e, backoff)
             _stop_event.wait(backoff)
@@ -418,11 +425,23 @@ def main() -> int:
             if not text:
                 continue
             logger.info("accepted msg from chat_id=%s: %r", chat_id, text[:100])
+            messages_since_heartbeat += 1
             try:
                 _route_message(chat_id, text)
             except Exception:
                 logger.exception("route_message crashed")
         _save_offset(offset)
+
+        now = time.monotonic()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL_S:
+            logger.info(
+                "heartbeat: alive, offset=%s, polls=%d, messages=%d, freeform_queue=%d",
+                offset, polls_since_heartbeat, messages_since_heartbeat,
+                _freeform_q.qsize(),
+            )
+            last_heartbeat = now
+            polls_since_heartbeat = 0
+            messages_since_heartbeat = 0
 
     logger.info("shutdown clean; offset=%s", offset)
     return 0
